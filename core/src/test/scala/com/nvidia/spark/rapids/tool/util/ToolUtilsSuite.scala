@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,10 @@
 package com.nvidia.spark.rapids.tool.util
 
 import java.io.File
+import java.net.InetSocketAddress
+import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
+import java.util.Base64
 import java.util.Calendar
 
 import scala.concurrent.duration._
@@ -25,6 +28,7 @@ import scala.xml.XML
 
 import com.nvidia.spark.rapids.tool.ToolTestUtils
 import com.nvidia.spark.rapids.tool.profiling.{ProfileOutputWriter, ProfileResult}
+import com.sun.net.httpserver.HttpServer
 import org.scalatest.AppendedClues.convertToClueful
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers.{contain, convertToAnyShouldWrapper, equal, not}
@@ -104,10 +108,10 @@ class ToolUtilsSuite extends AnyFunSuite with Logging {
 
   //
   test("list available mvn releases") {
-    // use mvn repo url got testing
+    // Use Maven Central explicitly because the expected values below read from that URL.
     val artifactID = "rapids-4-spark_2.12"
     val baseURL = ToolTestUtils.RAPIDS_MVN_BASE_URL
-    val nvReleases = WebCrawlerUtil.getMvnReleasesForNVPackage(artifactID)
+    val nvReleases = WebCrawlerUtil.getMvnReleasesForNVPackage(artifactID, Map.empty)
     // get all the links on the page
     val allLinks = WebCrawlerUtil.getPageLinks(baseURL, None).mkString("\n")
     val versionPattern = "(\\d{2}\\.\\d{2}\\.\\d+)/".r
@@ -116,10 +120,11 @@ class ToolUtilsSuite extends AnyFunSuite with Logging {
   }
 
   test("get latest release") {
-    // use mvn repo url got testing
+    // Use Maven Central explicitly because the expected value below reads from that URL.
     val artifactID = "rapids-4-spark_2.12"
     val baseURL = ToolTestUtils.RAPIDS_MVN_BASE_URL
-    val latestRelease = WebCrawlerUtil.getLatestMvnReleaseForNVPackage(artifactID) match {
+    val latestRelease = WebCrawlerUtil.getLatestMvnReleaseForNVPackage(
+      artifactID, Map.empty) match {
       case Some(v) => v
       case None => fail("Could not find pull the latest release successfully")
     }
@@ -130,6 +135,58 @@ class ToolUtilsSuite extends AnyFunSuite with Logging {
     val actualRelease = allVersions.last.text
     actualRelease.matches("\\d{2}\\.\\d{2}\\.\\d+") shouldBe true
     latestRelease shouldBe actualRelease
+  }
+
+  test("Maven base URL defaults to Maven Central") {
+    WebCrawlerUtil.getMavenBaseUrl(Map.empty) shouldBe "https://repo1.maven.org/maven2"
+  }
+
+  test("Maven base URL can be overridden by environment") {
+    WebCrawlerUtil.getMavenBaseUrl(
+      Map("RAPIDS_TOOLS_MAVEN_BASE_URL" -> "https://mirror.example/maven/")) shouldBe
+      "https://mirror.example/maven"
+  }
+
+  test("Maven artifact URL uses default Maven Central when environment is unset") {
+    assume(sys.env.get("RAPIDS_TOOLS_MAVEN_BASE_URL").forall(_.trim.isEmpty))
+    WebCrawlerUtil.getMVNArtifactURL("rapids.plugin") shouldBe
+      "https://repo1.maven.org/maven2/com/nvidia/rapids-4-spark_2.12"
+  }
+
+  test("Maven metadata request uses configured basic auth") {
+    val user = "maven-user"
+    val password = "maven-password"
+    val token = Base64.getEncoder.encodeToString(
+      s"$user:$password".getBytes(StandardCharsets.UTF_8))
+    val expectedAuth = s"Basic $token"
+    val server = HttpServer.create(new InetSocketAddress("localhost", 0), 0)
+
+    try {
+      server.createContext("/com/nvidia/test-artifact/maven-metadata.xml", exchange => {
+        val response =
+          if (exchange.getRequestHeaders.getFirst("Authorization") == expectedAuth) {
+            exchange.sendResponseHeaders(200, 0)
+            "<metadata><versioning><latest>26.04.0</latest></versioning></metadata>"
+          } else {
+            exchange.sendResponseHeaders(401, 0)
+            "unauthorized"
+          }
+        val bytes = response.getBytes(StandardCharsets.UTF_8)
+        exchange.getResponseBody.write(bytes)
+        exchange.close()
+      })
+      server.start()
+
+      val env = Map(
+        "RAPIDS_TOOLS_MAVEN_BASE_URL" -> s"http://localhost:${server.getAddress.getPort}",
+        "RAPIDS_TOOLS_MAVEN_USERNAME" -> user,
+        "RAPIDS_TOOLS_MAVEN_PASSWORD" -> password)
+
+      WebCrawlerUtil.getLatestMvnReleaseForNVPackage("test-artifact", env) shouldBe
+        Some("26.04.0")
+    } finally {
+      server.stop(0)
+    }
   }
 
   test("Hadoop Configuration should load system properties") {

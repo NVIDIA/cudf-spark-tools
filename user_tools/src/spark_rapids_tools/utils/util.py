@@ -14,6 +14,7 @@
 
 """Utility and helper methods"""
 
+import base64
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -289,6 +290,61 @@ class Utilities:
     # Flag used to disable running tools in parallel. This is a temporary hack to reduce possibility
     # of OOME. Later we can re-enable it.
     conc_mode_enabled: ClassVar[bool] = False
+    maven_central_base_url: ClassVar[str] = 'https://repo1.maven.org/maven2'
+    maven_base_url_env: ClassVar[str] = 'RAPIDS_TOOLS_MAVEN_BASE_URL'
+    maven_username_env: ClassVar[str] = 'RAPIDS_TOOLS_MAVEN_USERNAME'
+    maven_password_env: ClassVar[str] = 'RAPIDS_TOOLS_MAVEN_PASSWORD'
+
+    @classmethod
+    def get_maven_base_url(cls) -> str:
+        env_value = os.environ.get(cls.maven_base_url_env)
+        if env_value is None or env_value.strip() == '':
+            return cls.maven_central_base_url
+        return env_value.strip().rstrip('/')
+
+    @classmethod
+    def resolve_maven_url(cls, url: str) -> str:
+        if not isinstance(url, str):
+            return url
+        default_base = cls.maven_central_base_url
+        configured_base = cls.get_maven_base_url()
+        if configured_base == default_base:
+            return url
+        if url == default_base:
+            return configured_base
+        if url.startswith(f'{default_base}/'):
+            return f'{configured_base}/{url[len(default_base) + 1:]}'
+        return url
+
+    @classmethod
+    def is_maven_url(cls, url: str) -> bool:
+        if not isinstance(url, str):
+            return False
+        maven_base_url = cls.get_maven_base_url()
+        return url == maven_base_url or url.startswith(f'{maven_base_url}/')
+
+    @classmethod
+    def get_maven_basic_auth_header(cls) -> Optional[str]:
+        user = os.environ.get(cls.maven_username_env)
+        password = os.environ.get(cls.maven_password_env)
+        if user is None or user.strip() == '' or password is None or password == '':
+            return None
+        token = base64.b64encode(f'{user.strip()}:{password}'.encode()).decode()
+        return f'Basic {token}'
+
+    @classmethod
+    def get_maven_http_headers(cls, url: str) -> dict:
+        auth_header = cls.get_maven_basic_auth_header()
+        if auth_header is None or not cls.is_maven_url(url):
+            return {}
+        return {'Authorization': auth_header}
+
+    @classmethod
+    def build_maven_url_request(cls, url: str):
+        request = urllib.request.Request(url)
+        for header, value in cls.get_maven_http_headers(url).items():
+            request.add_header(header, value)
+        return request
 
     @classmethod
     def get_latest_mvn_jar_from_metadata(cls, url_base: str,
@@ -314,7 +370,7 @@ class Utilities:
         defined_version = Version(loaded_version)
         jar_version = Version(loaded_version)
         xml_path = f'{url_base}/maven-metadata.xml'
-        with urllib.request.urlopen(xml_path, context=context) as resp:
+        with urllib.request.urlopen(cls.build_maven_url_request(xml_path), context=context) as resp:
             xml_content = resp.read()
             xml_root = elem_tree.fromstring(xml_content)
             for version_elem in xml_root.iter('version'):

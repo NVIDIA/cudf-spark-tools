@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -267,7 +267,7 @@ class ToolContext(YAMLPropertiesContainer):
         if self.use_local_tools_jar():
             return self._get_tools_jar_from_local()
         self.logger.info('Tools JAR not found in local context. Downloading from Maven.')
-        mvn_base_url = self.get_value('sparkRapids', 'mvnUrl')
+        mvn_base_url = Utilities.resolve_maven_url(self.get_value('sparkRapids', 'mvnUrl'))
         jar_version = Utilities.get_latest_mvn_jar_from_metadata(mvn_base_url)
         rapids_url = self.get_value('sparkRapids', 'repoUrl').format(mvn_base_url, jar_version, jar_version)
         return rapids_url

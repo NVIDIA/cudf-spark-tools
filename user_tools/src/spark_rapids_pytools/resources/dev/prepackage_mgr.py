@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -91,8 +91,9 @@ class PrepackageMgr:   # pylint: disable=too-few-public-methods
             self.dest_dir = FSUtil.get_abs_path(self.dest_dir)
 
     def _get_spark_rapids_jar_url(self) -> str:
-        jar_version = Utilities.get_latest_mvn_jar_from_metadata(self._mvn_base_url)  # pylint: disable=no-member
-        return (f'{self._mvn_base_url}/'  # pylint: disable=no-member
+        mvn_base_url = Utilities.resolve_maven_url(self._mvn_base_url)  # pylint: disable=no-member
+        jar_version = Utilities.get_latest_mvn_jar_from_metadata(mvn_base_url)
+        return (f'{mvn_base_url}/'
                 f'{jar_version}/rapids-4-spark-tools_2.12-{jar_version}.jar')
 
     def _fetch_resources(self) -> dict:
@@ -147,7 +148,7 @@ class PrepackageMgr:   # pylint: disable=too-few-public-methods
             dest_folder = self.tools_resources_dir if is_tools_resource else self.dest_dir
             print(f'Creating download task: {resource_name}')
             # All the downloadTasks enforces download
-            download_tasks.append(DownloadTask(src_url=res_uri,     # pylint: disable=no-value-for-parameter)
+            download_tasks.append(DownloadTask(src_url=Utilities.resolve_maven_url(res_uri),  # pylint: disable=no-value-for-parameter
                                                dest_folder=dest_folder,
                                                configs={'forceDownload': True}))
         # Begin downloading the resources

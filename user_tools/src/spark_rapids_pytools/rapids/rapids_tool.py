@@ -713,7 +713,8 @@ class RapidsJarTool(RapidsTool, Generic[ToolResultHandlerT]):
             download_configs['timeOut'] = default_download_timeout
             if dep.verification is not None:
                 verify_opts = dict(dep.verification)
-            download_task = DownloadTask(src_url=dep.uri,     # pylint: disable=no-value-for-parameter)
+            src_url = Utilities.resolve_maven_url(dep.uri)
+            download_task = DownloadTask(src_url=src_url,     # pylint: disable=no-value-for-parameter)
                                          dest_folder=dest_folder,
                                          verification=verify_opts,
                                          configs=download_configs)

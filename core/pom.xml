@@ -35,10 +35,10 @@
         </license>
     </licenses>
     <scm>
-        <connection>scm:git:https://github.com/NVIDIA/cudf-spark-tools.git</connection>
-        <developerConnection>scm:git:git@github.com:NVIDIA/cudf-spark-tools.git</developerConnection>
+        <connection>scm:git:https://github.com/NVIDIA/spark-rapids-tools.git</connection>
+        <developerConnection>scm:git:git@github.com:NVIDIA/spark-rapids-tools.git</developerConnection>
         <tag>HEAD</tag>
-        <url>https://github.com/NVIDIA/cudf-spark-tools</url>
+        <url>https://github.com/NVIDIA/spark-rapids-tools</url>
     </scm>
     <developers>
         <developer>

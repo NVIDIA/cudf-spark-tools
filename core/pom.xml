@@ -25,7 +25,7 @@
     <description>RAPIDS Accelerator for Apache Spark tools</description>
     <version>26.04.7</version>
     <packaging>jar</packaging>
-    <url>http://github.com/NVIDIA/spark-rapids-tools</url>
+    <url>http://github.com/NVIDIA/cudf-spark-tools</url>
 
     <licenses>
         <license>

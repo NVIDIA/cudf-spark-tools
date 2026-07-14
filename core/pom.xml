@@ -23,7 +23,7 @@
     <artifactId>rapids-4-spark-tools_2.12</artifactId>
     <name>RAPIDS Accelerator for Apache Spark tools</name>
     <description>RAPIDS Accelerator for Apache Spark tools</description>
-    <version>26.04.7-SNAPSHOT</version>
+    <version>26.04.8-SNAPSHOT</version>
     <packaging>jar</packaging>
     <url>http://github.com/NVIDIA/cudf-spark-tools</url>
 

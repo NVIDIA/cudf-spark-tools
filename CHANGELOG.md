@@ -1,6 +1,15 @@
 
 <br/>
 
+## Release [v26.04.7](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.04.7)
+Generated on 2026-07-14
+### User Tools
+
+- cudf-spark-tools rename ([#2109](https://github.com/NVIDIA/cudf-spark-tools/pull/2109))
+
+
+<br/>
+
 ## Release [v26.04.6](https://github.com/NVIDIA/spark-rapids-tools/tree/v26.04.6)
 Generated on 2026-06-16
 - no changes

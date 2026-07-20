@@ -16,7 +16,7 @@
 
 from spark_rapids_pytools.build import get_version, get_spark_dep_version
 
-VERSION = '26.04.8'
+VERSION = '26.06.1'
 # defines the default runtime build version for the user tools environment
 SPARK_DEP_VERSION = '357'
 __version__ = get_version(VERSION)

@@ -323,3 +323,7 @@ MapZipWith,1.5
 Uuid,1.5
 Invoke,1.5
 MapFromEntries,1.5
+ArrayAggregate,1.5
+Hex,1.5
+Sha2,1.5
+StringDecode,1.5

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Union, Optional
 
 from spark_rapids_tools import CspEnv
+from spark_rapids_tools.utils import AbstractPropContainer
 from spark_rapids_pytools.cloud_api.dataproc_job import DataprocLocalRapidsJob
 from spark_rapids_pytools.cloud_api.gstorage import GStorageDriver
 from spark_rapids_pytools.cloud_api.sp_types import PlatformBase, CMDDriverBase, \
@@ -505,7 +506,7 @@ class DataprocCluster(ClusterBase):
             for worker_node in worker_nodes_from_conf:
                 worker_props = {
                     'name': worker_node,
-                    'props': JSONPropertiesContainer(prop_arg=raw_worker_prop, file_load=False),
+                    'props': AbstractPropContainer(props=raw_worker_prop),
                     # set the node zone based on the wrapper defined zone
                     'zone': self.zone
                 }
@@ -516,7 +517,7 @@ class DataprocCluster(ClusterBase):
         raw_master_props = self.props.get_value('config', 'masterConfig')
         master_props = {
             'name': master_nodes_from_conf[0],
-            'props': JSONPropertiesContainer(prop_arg=raw_master_props, file_load=False),
+            'props': AbstractPropContainer(props=raw_master_props),
             # set the node zone based on the wrapper defined zone
             'zone': self.zone
         }

@@ -14,10 +14,10 @@
 
 """Wrapper for the S3 File system"""
 
-import os
 from typing import Any
 
 from spark_rapids_tools.storagelib.cspfs import register_fs_class, CspFs
+from spark_rapids_tools.storagelib.s3.aws_config import resolve_s3_endpoint_override
 
 
 @register_fs_class('s3', 'S3FileSystem')
@@ -45,7 +45,7 @@ class S3Fs(CspFs):
         """
         Create S3FileSystem handler with automatic endpoint detection.
         """
-        endpoint_url = os.environ.get('AWS_ENDPOINT_URL_S3') or os.environ.get('AWS_ENDPOINT_URL')
+        endpoint_url = resolve_s3_endpoint_override()
         if endpoint_url and 'endpoint_override' not in kwargs:
             # Only set endpoint_override if it's not already explicitly provided
             kwargs['endpoint_override'] = endpoint_url

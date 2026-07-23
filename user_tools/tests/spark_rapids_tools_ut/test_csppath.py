@@ -22,6 +22,8 @@ from pydantic_core import PydanticCustomError
 
 from spark_rapids_tools.storagelib import CspFs, CspPath
 from spark_rapids_tools.storagelib.local.localpath import LocalPath
+from spark_rapids_tools.storagelib.s3.aws_config import resolve_s3_endpoint_override
+from spark_rapids_tools.storagelib.s3.s3fs import S3Fs
 from spark_rapids_tools.storagelib.s3.s3path import S3Path
 
 
@@ -102,3 +104,132 @@ class TestCspPathFileInfoCaching:
 
         assert created_path.exists() is True
         assert created_path.is_file() is True
+
+
+class TestS3EndpointResolution:
+    """Verify S3-compatible endpoint override precedence."""
+
+    def test_s3_endpoint_env_takes_precedence_over_profile_config(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[default]\n"
+            "endpoint_url = https://profile.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_ENDPOINT_URL", "https://env.example")
+        monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "https://s3-env.example")
+
+        assert resolve_s3_endpoint_override() == "https://s3-env.example"
+
+    def test_s3_endpoint_resolves_active_profile_endpoint_url(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[default]\n"
+            "endpoint_url = https://default.example\n"
+            "[profile swiftstack]\n"
+            "endpoint_url = https://swiftstack.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+
+        assert resolve_s3_endpoint_override() == "https://swiftstack.example"
+
+    def test_s3_endpoint_resolves_default_profile_endpoint_url(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[default]\n"
+            "endpoint_url = https://default-profile.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_DEFAULT_PROFILE", "default")
+
+        assert resolve_s3_endpoint_override() == "https://default-profile.example"
+
+    def test_s3_endpoint_resolves_profile_services_s3_endpoint(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[profile swiftstack]\n"
+            "services = local-services\n"
+            "[services local-services]\n"
+            "s3 =\n"
+            "  endpoint_url = https://services-s3.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+
+        assert resolve_s3_endpoint_override() == "https://services-s3.example"
+
+    def test_s3_endpoint_resolves_profile_nested_s3_endpoint(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[profile swiftstack]\n"
+            "endpoint_url = https://profile.example\n"
+            "s3 =\n"
+            "  endpoint_url = https://nested-s3.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+
+        assert resolve_s3_endpoint_override() == "https://nested-s3.example"
+
+    def test_s3_endpoint_ignores_invalid_profile_config(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text("endpoint_url = https://invalid.example\n", encoding="utf-8")
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+
+        assert resolve_s3_endpoint_override() is None
+
+    def test_s3_fs_applies_profile_endpoint_override(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[profile swiftstack]\n"
+            "endpoint_url = https://swiftstack.example\n",
+            encoding="utf-8",
+        )
+        captured_kwargs = {}
+
+        def capture_handler(cls, *args, **kwargs):
+            del cls, args
+            captured_kwargs.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(CspFs, "create_fs_handler", classmethod(capture_handler))
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+
+        S3Fs.create_fs_handler()
+
+        assert captured_kwargs["endpoint_override"] == "https://swiftstack.example"
+
+    def test_s3_fs_preserves_explicit_endpoint_override(self, monkeypatch):
+        captured_kwargs = {}
+
+        def capture_handler(cls, *args, **kwargs):
+            del cls, args
+            captured_kwargs.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(CspFs, "create_fs_handler", classmethod(capture_handler))
+        monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "https://env.example")
+
+        S3Fs.create_fs_handler(endpoint_override="https://explicit.example")
+
+        assert captured_kwargs["endpoint_override"] == "https://explicit.example"

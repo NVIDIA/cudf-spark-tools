@@ -28,6 +28,7 @@ from spark_rapids_pytools.common.prop_manager import AbstractPropertiesContainer
 from spark_rapids_pytools.common.sys_storage import StorageDriver, FSUtil
 from spark_rapids_pytools.common.utilities import ToolLogging, SysCmd, Utils, TemplateGenerator
 from spark_rapids_tools import EnumeratedType, CspEnv
+from spark_rapids_tools.storagelib.s3.aws_config import resolve_s3_endpoint_override
 
 
 class DeployMode(EnumeratedType):
@@ -570,8 +571,8 @@ class CMDDriverBase:
             'envArgs': {}
         }
         # Pass custom S3 endpoint to hadoop-aws if set, matching the Python-side
-        # S3Fs handler logic (AWS_ENDPOINT_URL_S3 takes precedence over AWS_ENDPOINT_URL).
-        s3_endpoint = os.environ.get('AWS_ENDPOINT_URL_S3') or os.environ.get('AWS_ENDPOINT_URL')
+        # S3Fs handler logic.
+        s3_endpoint = resolve_s3_endpoint_override()
         if s3_endpoint:
             res['jvmArgs']['Drapids.tools.hadoop.fs.s3a.endpoint'] = s3_endpoint
             res['jvmArgs']['Drapids.tools.hadoop.fs.s3a.path.style.access'] = 'true'

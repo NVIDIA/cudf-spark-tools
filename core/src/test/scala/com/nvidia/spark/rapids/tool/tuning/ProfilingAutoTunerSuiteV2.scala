@@ -105,8 +105,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -130,7 +129,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memory' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -341,7 +339,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(126975)}
+          |- ${notEnoughMemComment(121855)}
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
@@ -375,8 +373,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.kryoserializer.buffer.max=512m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -401,7 +398,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.kryoserializer.buffer.max' increasing the max buffer to prevent out-of-memory errors.
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -454,8 +450,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.kryo.registrator=org.apache.SomeRegistrator,org.apache.OtherRegistrator,com.nvidia.spark.rapids.GpuKryoRegistrator
           |--conf spark.kryoserializer.buffer.max=512m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -481,7 +476,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.kryo.registrator' GpuKryoRegistrator must be appended to the existing value when using Kryo serialization.
           |- 'spark.kryoserializer.buffer.max' increasing the max buffer to prevent out-of-memory errors.
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1023,8 +1017,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=16g
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=4506m
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=6554m
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1049,7 +1042,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memory' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1145,7 +1137,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memoryOverhead=37692m
           |--conf spark.locality.wait=0
           |--conf spark.rapids.memory.pinnedPool.size=8g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1168,7 +1159,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memory' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1279,8 +1269,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1303,7 +1292,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memory' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1385,8 +1373,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1408,7 +1395,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1493,8 +1479,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1517,7 +1502,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1598,8 +1582,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=6g
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=8g
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1621,7 +1604,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1723,8 +1705,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=16g
           |--conf spark.locality.wait=0
-          |--conf spark.rapids.memory.pinnedPool.size=4506m
-          |--conf spark.rapids.shuffle.multiThreaded.maxBytesInFlight=4g
+          |--conf spark.rapids.memory.pinnedPool.size=6554m
           |--conf spark.rapids.shuffle.multiThreaded.reader.threads=28
           |--conf spark.rapids.shuffle.multiThreaded.writer.threads=28
           |--conf spark.rapids.sql.batchSizeBytes=2147483647b
@@ -1748,7 +1729,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memory' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.

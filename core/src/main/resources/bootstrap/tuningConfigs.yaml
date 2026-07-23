@@ -205,12 +205,6 @@ default:
     min: 1g
     usedBy: spark.rapids.filecache.enabled
 
-  - name: MAX_BYTES_IN_FLIGHT
-    description: >-
-      Maximum bytes in flight for shuffle operations
-    default: 4g
-    usedBy: spark.rapids.shuffle.multiThreaded.maxBytesInFlight
-
   - name: BATCH_SIZE_BYTES
     description: >-
       Batch size for GPU operations in bytes

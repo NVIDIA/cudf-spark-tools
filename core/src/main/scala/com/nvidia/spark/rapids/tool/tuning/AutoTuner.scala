@@ -668,18 +668,6 @@ abstract class AutoTuner(
   }
 
   /**
-   * Recommendation for maxBytesInFlight.
-   *
-   * TODO: To be removed in the future https://github.com/NVIDIA/spark-rapids-tools/issues/1710
-   */
-  private lazy val recommendedMaxBytesInFlightMB: Long = {
-    val valueStr =
-      platform.getUserEnforcedSparkProperty("spark.rapids.shuffle.multiThreaded.maxBytesInFlight")
-      .getOrElse(configProvider.getEntry("MAX_BYTES_IN_FLIGHT").getDefault)
-    StringUtils.convertToMB(valueStr, Some(ByteUnit.BYTE))
-  }
-
-  /**
    * Spark property value to use as an input baseline for recommendation calculations.
    * User-enforced values take precedence over preserved source values.
    */
@@ -789,13 +777,12 @@ abstract class AutoTuner(
    *           - pinned memory size (MB)
    *           - executor memory overhead size (MB)
    *           - executor heap size (MB)
-   *           - boolean indicating if "maxBytesInFlight" should be set
    */
    // scalastyle:on line.size.limit
   private def calcOverallMemory(
       execHeapCalculator: () => Long,
       numExecutorCores: Int,
-      totalMemForExecExpr: () => Double): Either[String, (MemorySettings, Boolean)] = {
+      totalMemForExecExpr: () => Double): Either[String, MemorySettings] = {
 
     // Set executor heap using a baseline value, if present, otherwise max of
     // calculator result and 2GB/core.
@@ -824,7 +811,7 @@ abstract class AutoTuner(
     )
     val pySparkMemMB = platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L)
     // Calculate executor memory overhead using new formula if OffHeapLimit.enabled=true
-    var executorMemOverhead = if (isOffHeapLimitUserEnabled) {
+    val executorMemOverhead = if (isOffHeapLimitUserEnabled) {
       calculateExecutorMemoryOverhead(
         totalMemMinusReserved, executorHeapMB, sparkOffHeapMemMB)
     } else {
@@ -832,7 +819,6 @@ abstract class AutoTuner(
       executorHeapMB * configProvider.getEntry("HEAP_OVERHEAD_FRACTION").getDefault.toDouble
     }.toLong
     val execMemLeft = totalMemMinusReserved - executorHeapMB - sparkOffHeapMemMB - pySparkMemMB
-    var setMaxBytesInFlight = false
     val defaultPinnedMem = configProvider.getEntry("PINNED_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val defaultSpillMem = configProvider.getEntry("SPILL_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val minOverhead: Long = baselineMemorySettings.executorMemOverhead.getOrElse {
@@ -848,14 +834,6 @@ abstract class AutoTuner(
     if (execMemLeft >= minOverhead) {
       // this is hopefully path in the majority of cases because CSPs generally have a good
       // memory to core ratio
-      // Account for the setting of `maxBytesInFlight`
-      if (numExecutorCores >= 16 && platform.isPlatformCSP &&
-        execMemLeft >
-          executorMemOverhead + recommendedMaxBytesInFlightMB +
-            defaultPinnedMem + defaultSpillMem) {
-        executorMemOverhead += recommendedMaxBytesInFlightMB
-        setMaxBytesInFlight = true
-      }
       // Calculate host off-heap limit size for pinned memory calculation
       // (only for onPrem when offHeapLimit is enabled)
       val hostOffHeapLimitSizeMB = if (!platform.isPlatformCSP &&
@@ -919,9 +897,9 @@ abstract class AutoTuner(
           executorMemOverhead + defaultPinnedMem + defaultSpillMem
         }
       }
-      // Add recommendations for executor memory settings and a boolean for maxBytesInFlight
-      Right((MemorySettings(Some(executorHeapMB), Some(finalExecutorMemOverhead), Some(pinnedMem),
-        Some(spillMem), Some(sparkOffHeapMemMB)), setMaxBytesInFlight))
+      // Add recommendations for executor memory settings
+      Right(MemorySettings(Some(executorHeapMB), Some(finalExecutorMemOverhead), Some(pinnedMem),
+        Some(spillMem), Some(sparkOffHeapMemMB)))
     } else {
       // Add a warning comment indicating that the current setup is not optimal
       // and no memory-related tunings are recommended.
@@ -952,8 +930,7 @@ abstract class AutoTuner(
 
   // Currently only applies many configs for CSPs where we have an idea what network/disk
   // configuration is like. On prem we don't know so don't set these for now.
-  private def configureMultiThreadedReaders(numExecutorCores: Int,
-      setMaxBytesInFlight: Boolean): Unit = {
+  private def configureMultiThreadedReaders(numExecutorCores: Int): Unit = {
 
     // Helper function to get the bounded number of threads
     def getBoundedNumThreads(coreMultiplier: Double): Int = {
@@ -988,10 +965,6 @@ abstract class AutoTuner(
     } else if (numExecutorCores >= 16 && numExecutorCores < 20 && platform.isPlatformCSP) {
       appendRecommendation("spark.rapids.sql.multiThreadedRead.numThreads",
         Math.max(80, numExecutorCores))
-      if (setMaxBytesInFlight) {
-        appendRecommendationForMemoryMB("spark.rapids.shuffle.multiThreaded.maxBytesInFlight",
-          recommendedMaxBytesInFlightMB.toString)
-      }
       appendRecommendation("spark.rapids.sql.reader.multithreaded.combine.sizeBytes",
         configProvider.getEntry("READER_MULTITHREADED_COMBINE_THRESHOLD").getDefault)
       appendRecommendation("spark.rapids.sql.format.parquet.multithreaded.combine.waitTime",
@@ -1004,10 +977,6 @@ abstract class AutoTuner(
       appendRecommendation("spark.rapids.sql.multiThreadedRead.numThreads",
         getBoundedNumThreads(coreMultiplier))
       if (platform.isPlatformCSP) {
-        if (setMaxBytesInFlight) {
-          appendRecommendationForMemoryMB("spark.rapids.shuffle.multiThreaded.maxBytesInFlight",
-            recommendedMaxBytesInFlightMB.toString)
-        }
         appendRecommendation("spark.rapids.sql.reader.multithreaded.combine.sizeBytes",
           configProvider.getEntry("READER_MULTITHREADED_COMBINE_THRESHOLD").getDefault)
         appendRecommendation("spark.rapids.sql.format.parquet.multithreaded.combine.waitTime",
@@ -1236,12 +1205,12 @@ abstract class AutoTuner(
       val execCores = platform.recommendedClusterInfo.map(_.coresPerExecutor).getOrElse(1)
       val availableMemPerExec =
         platform.recommendedWorkerNode.map(_.getMemoryPerExec).getOrElse(0.0)
-      val shouldSetMaxBytesInFlight = if (availableMemPerExec > 0.0) {
+      if (availableMemPerExec > 0.0) {
         val availableMemPerExecExpr = () => availableMemPerExec
         val executorHeapInMB = calcInitialExecutorHeapInMB(availableMemPerExecExpr, execCores)
         val executorHeapExpr = () => executorHeapInMB
         calcOverallMemory(executorHeapExpr, execCores, availableMemPerExecExpr) match {
-          case Right((recomMemorySettings: MemorySettings, setMaxBytesInFlight)) =>
+          case Right(recomMemorySettings: MemorySettings) =>
             // Sufficient memory available, proceed with recommendations
             appendRecommendationForMemoryMB("spark.rapids.memory.pinnedPool.size",
               s"${recomMemorySettings.pinnedMem.get}")
@@ -1274,7 +1243,6 @@ abstract class AutoTuner(
                 }
               }
             }
-            setMaxBytesInFlight
           case Left(notEnoughMemComment) =>
             // Not enough memory available, add warning comments
             appendComment(notEnoughMemComment)
@@ -1294,15 +1262,13 @@ abstract class AutoTuner(
               appendCommentForNotEnoughMem("spark.memory.offHeap.size")
               appendCommentForNotEnoughMem("spark.rapids.memory.host.offHeapLimit.size")
             }
-            false
         }
       } else {
         logInfo("Available memory per exec is not specified")
         addMissingMemoryComments()
-        false
       }
       configureShuffleReaderWriterNumThreads(execCores)
-      configureMultiThreadedReaders(execCores, shouldSetMaxBytesInFlight)
+      configureMultiThreadedReaders(execCores)
       recommendDynamicAllocationConfigs(execCores)
       // TODO: Should we recommend AQE even if cluster properties are not enabled?
       recommendAQEProperties()

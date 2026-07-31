@@ -1,6 +1,15 @@
 
 <br/>
 
+## Release [v26.06.1](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.1)
+Generated on 2026-07-31
+### Core
+
+- Preserve configured memory sentinel values in AutoTuner ([#2114](https://github.com/NVIDIA/cudf-spark-tools/pull/2114))
+
+
+<br/>
+
 ## Release [v26.06.0](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.0)
 Generated on 2026-07-20
 - no changes

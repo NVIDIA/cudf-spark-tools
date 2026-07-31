@@ -411,6 +411,8 @@ tuningDefinitions:
     confType:
       name: byte
       defaultUnit: Byte
+    specialValues:
+      - "-1"
   - label: spark.sql.files.maxPartitionBytes
     description: >-
       The maximum number of bytes to pack into a single partition when reading files.

@@ -123,6 +123,19 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     assertExpectedLinesExist(expectedResults, autoTunerOutput)
   }
 
+  test("test AutoTuner for Qualification preserves disabled AQE broadcast threshold") {
+    val autoTuner = buildDefaultAutoTuner(
+      defaultSparkProps ++ mutable.Map(
+        "spark.sql.adaptive.autoBroadcastJoinThreshold" -> "-1"))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
+      QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+    val output = Profiler.getAutoTunerResultsAsString(properties, comments)
+
+    assertExpectedLinesExist(
+      Seq("--conf spark.sql.adaptive.autoBroadcastJoinThreshold=-1"),
+      output)
+  }
+
   // scalastyle:off line.size.limit
   val testData: TableFor3[String, String, Seq[String]] = Table(
     ("testName", "workerMemory", "expectedResults"),

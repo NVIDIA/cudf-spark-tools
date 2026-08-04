@@ -1,6 +1,11 @@
 
 <br/>
 
+## Release [v26.06.2](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.2)
+Generated on 2026-08-04
+- no changes
+<br/>
+
 ## Release [v26.06.1](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.1)
 Generated on 2026-07-31
 ### Core

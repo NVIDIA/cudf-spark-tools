@@ -20,9 +20,10 @@ import java.nio.file.Paths
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, PlatformFactory, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, ShuffleInputProvenance, ShuffleStageInputAnalysis}
-import com.nvidia.spark.rapids.tool.qualification.{QualificationArgs, QualificationMain}
+import com.nvidia.spark.rapids.tool.qualification.{PluginTypeChecker, QualificationArgs, QualificationMain}
 import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ConfTypeEnum, LevelEnum, TuningConfigEntry, TuningConfiguration, TuningEntryDefinition}
 import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
@@ -32,7 +33,8 @@ import org.scalatest.prop.TableFor3
 
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{MatchingInstanceTypeNotFoundException, RecommendedClusterInfo}
-import org.apache.spark.sql.rapids.tool.util.FSUtils
+import org.apache.spark.sql.rapids.tool.qualification.QualificationAppInfo
+import org.apache.spark.sql.rapids.tool.util.{FSUtils, RapidsToolsConfUtil}
 
 /**
  * Suite to test the Qualification Tool's AutoTuner
@@ -2339,5 +2341,33 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
     assertExpectedLinesExist(Seq("--conf spark.sql.shuffle.partitions=8000"), autoTunerOutput)
     assert(comments.map(_.comment).count(_.contains("could not be measured")) == 1)
+  }
+
+  test("test AutoTuner for Qualification provider reuses the existing SQL plan analyzer") {
+    val hadoopConf = RapidsToolsConfUtil.newHadoopConf()
+    val (_, allEventLogs) = EventLogPathProcessor.processAllPaths(
+      None, None, List(s"$qualLogDir/nds_q86_test"), hadoopConf)
+    val app = QualificationAppInfo.createApp(allEventLogs.head, hadoopConf,
+      new PluginTypeChecker(), reportSqlLevel = false, mlOpsEnabled = false,
+      penalizeTransitions = true, PlatformFactory.createInstance()) match {
+      case Right(a) => a
+      case Left(_) => fail("could not build the qualification application")
+    }
+    val sqlAnalyzer = AppSQLPlanAnalyzer(app)
+    val rawAggMetrics = QualSparkMetricsAggregator.getAggRawMetrics(app, 1, Some(sqlAnalyzer))
+
+    val withAnalyzer =
+      new QualAppSummaryInfoProvider(app, None, rawAggMetrics, Seq.empty, Some(sqlAnalyzer))
+    val analysis = withAnalyzer.getShuffleStageInputAnalysis
+    // The provider must hand back the analyzer's own cached analysis, not a fresh traversal.
+    assert(analysis eq sqlAnalyzer.shuffleStageInputAnalysis)
+    assert(analysis.isComplete)
+    assert(analysis.provenance == ShuffleInputProvenance.Estimated)
+    assert(analysis.records.nonEmpty)
+
+    // Without an analyzer there is no evidence at all, which must fail closed.
+    val withoutAnalyzer =
+      new QualAppSummaryInfoProvider(app, None, rawAggMetrics, Seq.empty, None)
+    assert(!withoutAnalyzer.getShuffleStageInputAnalysis.analyzed)
   }
 }

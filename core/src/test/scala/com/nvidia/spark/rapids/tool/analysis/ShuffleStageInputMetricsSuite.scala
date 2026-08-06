@@ -49,6 +49,8 @@ class ShuffleStageInputMetricsSuite extends AnyFunSuite with Logging {
   private lazy val hadoopConf: Configuration = sparkSession.sparkContext.hadoopConfiguration
 
   private val profilingLogDir = ToolTestUtils.getTestResourcePath("spark-events-profiling")
+  private val qualificationLogDir =
+    ToolTestUtils.getTestResourcePath("spark-events-qualification")
 
   private def loadApp(eventLogPath: String): ApplicationInfo = {
     val eventLogInfo = EventLogPathProcessor.getEventLogInfo(eventLogPath, hadoopConf).head._1
@@ -281,6 +283,61 @@ class ShuffleStageInputMetricsSuite extends AnyFunSuite with Logging {
       assert(fromAnalyzer == analyze(app))
       // The lazy val must be cached rather than recomputed on every access.
       assert(app.planMetricProcessor.shuffleStageInputAnalysis eq fromAnalyzer)
+    }
+  }
+
+  test("a CPU event log without a terminal SQL end event is incomplete") {
+    val app = loadApp(s"$qualificationLogDir/join_missing_sql_end")
+    val analysis = analyze(app)
+    assert(!analysis.isComplete)
+    assert(analysis.records.isEmpty)
+    assert(analysis.incompleteReasons ==
+      Seq(ShuffleStageInputIncompleteReason.IncompleteSqlExecution(0L)))
+  }
+
+  test("a CPU AQE shuffle event log records multi-branch totals and real spill pressure") {
+    val app = loadApp(s"$qualificationLogDir/aqeshuffle_eventlog.zstd")
+    val analysis = analyze(app)
+    assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+    assert(analysis.provenance == ShuffleInputProvenance.Estimated)
+    val joinStage = analysis.records.find(_.stageId == 4)
+    assert(joinStage.isDefined, s"stage 4 missing from ${analysis.records}")
+    // Two shuffle branches feed stage 4, and its tasks really did spill in this fixture.
+    assert(joinStage.get.numShuffleBranches == 2)
+    assert(joinStage.get.totalShuffleInputBytes == 320000000L)
+    assert(joinStage.get.hasPositiveSpill,
+      "the fixture's spill evidence must reach the record so the pass stays blocked")
+  }
+
+  test("a CPU query event log totals each consumer stage of its final plan") {
+    val app = loadApp(s"$qualificationLogDir/nds_q86_test")
+    val analysis = analyze(app)
+    assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+    assert(analysis.records.toSet == Set(
+      ShuffleStageInputRecord(sqlId = 24L, stageId = 34, stageAttemptId = 0,
+        totalShuffleInputBytes = 5491688L, numShuffleBranches = 1, numTasks = 1024,
+        hasPositiveSpill = false, hasSkew = false),
+      ShuffleStageInputRecord(sqlId = 24L, stageId = 35, stageAttemptId = 0,
+        totalShuffleInputBytes = 17600L, numShuffleBranches = 1, numTasks = 1024,
+        hasPositiveSpill = false, hasSkew = false)))
+  }
+
+  test("an event log with several stage attempts selects one completed successful attempt") {
+    val app = loadApp(s"$qualificationLogDir/multiple_attempts")
+    val analysis = analyze(app)
+    assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+    assert(analysis.records.nonEmpty)
+    analysis.records.foreach { record =>
+      val selected = app.stageManager.getStagesByIds(Seq(record.stageId))
+        .find(_.getAttemptId == record.stageAttemptId)
+      assert(selected.isDefined, s"attempt ${record.stageAttemptId} missing for $record")
+      assert(!selected.get.hasFailed)
+      assert(selected.get.stageInfo.completionTime.isDefined)
+      // No later completed successful attempt may exist for the same stage.
+      assert(!app.stageManager.getStagesByIds(Seq(record.stageId)).exists { candidate =>
+        candidate.getAttemptId > record.stageAttemptId && !candidate.hasFailed &&
+          candidate.stageInfo.completionTime.isDefined
+      })
     }
   }
 

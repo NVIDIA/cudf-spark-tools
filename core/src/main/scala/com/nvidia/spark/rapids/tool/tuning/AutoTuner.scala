@@ -18,6 +18,7 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import scala.beans.BeanProperty
 import scala.collection.mutable
+import scala.util.Try
 import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
@@ -250,6 +251,9 @@ abstract class AutoTuner(
   // Recommendations for these properties will not be computed, ensuring that dependent properties
   // are also affected correctly.
   private val skippedRecommendations: mutable.HashSet[String] = mutable.HashSet[String]()
+  // Properties that have already contributed a "was not set" comment, so a later pass recommending
+  // the same key does not repeat it.
+  private val keysWithMissingComment: mutable.HashSet[String] = mutable.HashSet[String]()
   // Set of properties for which only source application values are used and
   // no calculations are performed.
   protected val limitedLogicRecommendations: mutable.HashSet[String] = mutable.HashSet[String]()
@@ -464,13 +468,19 @@ abstract class AutoTuner(
   /**
    * Append a comment to the list by looking up the missing comment if any in the tuningEntry
    * table.
+   *
+   * A property is either set in the source application or it is not, so the comment is emitted at
+   * most once even when several passes recommend a value for the same key.
+   *
    * @param key the property set by the autotuner.
    */
   private def appendMissingComment(key: String): Unit = {
-    val missingComment = finalTuningTable.get(key)
-      .flatMap(_.getMissingComment())
-      .getOrElse(s"was not set.")
-    appendComment(key, missingComment)
+    if (keysWithMissingComment.add(key)) {
+      val missingComment = finalTuningTable.get(key)
+        .flatMap(_.getMissingComment())
+        .getOrElse(s"was not set.")
+      appendComment(key, missingComment)
+    }
   }
 
   /**
@@ -1743,8 +1753,9 @@ abstract class AutoTuner(
    * Final downward-only shuffle-partition pass.
    *
    * Runs after the normal job-level and cluster-level recommendations so that it observes the
-   * effective partition value they produced. It sizes the worst consumer stage from the total
-   * uncompressed shuffle input entering it and lowers the recommendation only when the reduction
+   * effective partition value they produced and the recommended cluster shape. It sizes the worst
+   * consumer stage from the total uncompressed shuffle input entering it, quantizes the result to
+   * whole execution waves of that cluster, and lowers the recommendation only when the reduction
    * is material and every safety gate passes.
    *
    * Lowering a global partition count is riskier than leaving it too high, so anything unproven
@@ -1752,9 +1763,13 @@ abstract class AutoTuner(
    * partition size.
    */
   private def recommendDownwardShufflePartitions(): Unit = {
+    val configResult = DownwardShufflePolicyConfig.fromProvider(configProvider)
+    val slotCount = configResult.toOption.filter(_.enabled)
+      .flatMap(config => downwardShuffleSlotCount(config.slotBasis))
     val decision = DownwardShufflePartitionsPolicy.decide(
-      DownwardShufflePolicyConfig.fromProvider(configProvider),
+      configResult,
       shufflePartitionValue,
+      slotCount,
       appInfoProvider.getShuffleStageInputAnalysis)
     decision match {
       case DownwardShuffleDecision.InvalidConfig(errors) =>
@@ -1767,6 +1782,43 @@ abstract class AutoTuner(
       case applied: DownwardShuffleDecision.Applied =>
         applyDownwardShufflePartitions(applied)
     }
+  }
+
+  /**
+   * Task slots of the cluster this run is recommending, which is the size of one execution wave.
+   *
+   * The executor count is read from the recommendation map rather than through `getPropertyValue`,
+   * because that helper falls back to the source properties and would silently yield the source CPU
+   * executor count on a platform that excludes 'spark.executor.instances'. It falls back to
+   * `recommendedClusterInfo.numExecutors` only when no recommendation exists, since
+   * `recommendDynamicAllocationConfigs` rescales the executor counts it recommends without ever
+   * updating the cluster record.
+   *
+   * @return the slot count, or None when the recommended cluster shape or the per-executor
+   *         multiplier cannot be resolved
+   */
+  private def downwardShuffleSlotCount(basis: DownwardShuffleSlotBasis): Option[Int] = {
+    platform.recommendedClusterInfo.flatMap { clusterInfo =>
+      val executors =
+        recommendedIntValue("spark.executor.instances").getOrElse(clusterInfo.numExecutors)
+      val slotsPerExecutor = basis match {
+        case DownwardShuffleSlotBasis.Cores => Some(clusterInfo.coresPerExecutor)
+        // Concurrent GPU tasks is a recommendation rather than a field on the cluster record, and
+        // it is suppressed entirely on platforms whose plugin auto-tunes it.
+        case DownwardShuffleSlotBasis.ConcurrentGpuTasks =>
+          recommendedIntValue("spark.rapids.sql.concurrentGpuTasks")
+      }
+      slotsPerExecutor.filter(_ > 0).filter(_ => executors > 0).flatMap { perExecutor =>
+        val slots = executors.toLong * perExecutor.toLong
+        if (slots > Int.MaxValue.toLong) None else Some(slots.toInt)
+      }
+    }
+  }
+
+  /** Tuned value of a recommended property parsed as an Int, ignoring source-property fallbacks. */
+  private def recommendedIntValue(property: String): Option[Int] = {
+    recommendations.get(property).flatMap(_.tunedValue)
+      .flatMap(value => Try(value.trim.toInt).toOption)
   }
 
   /**

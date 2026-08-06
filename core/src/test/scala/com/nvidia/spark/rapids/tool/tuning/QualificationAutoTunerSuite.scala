@@ -24,7 +24,7 @@ import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, EventLogPathProcesso
 import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, ShuffleInputProvenance, ShuffleStageInputAnalysis}
 import com.nvidia.spark.rapids.tool.qualification.{PluginTypeChecker, QualificationArgs, QualificationMain}
-import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ConfTypeEnum, LevelEnum, TuningConfigEntry, TuningConfiguration, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ConfTypeEnum, LevelEnum, TuningConfigEntry, TuningEntryDefinition}
 import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
 import org.scalatest.exceptions.TestFailedException
@@ -2280,10 +2280,18 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   /**
    * Builds a Qualification AutoTuner over a CPU application whose normal recommendation is 8000
    * shuffle partitions and whose worst consumer stage carries the given uncompressed input.
+   *
+   * The downward pass ships disabled, so every test here opts in explicitly. Extra entries the
+   * caller supplies are merged on top of that opt-in.
    */
   private def buildDownwardPassAutoTuner(
       shuffleStageInputAnalysis: ShuffleStageInputAnalysis,
-      userProvidedTuningConfigs: Option[TuningConfiguration] = None): AutoTuner = {
+      extraDefaultConfigs: List[TuningConfigEntry] = List.empty,
+      extraQualificationConfigs: List[TuningConfigEntry] = List.empty): AutoTuner = {
+    val userProvidedTuningConfigs = Some(ToolTestUtils.buildTuningConfigs(
+      default = TuningConfigEntry(name = "DOWNWARD_SHUFFLE_ENABLED", default = "true") ::
+        extraDefaultConfigs,
+      qualification = extraQualificationConfigs))
     val sparkProps = defaultSparkProps ++ mutable.Map(
       "spark.executor.memory" -> "212992MiB",
       "spark.sql.adaptive.enabled" -> "true",
@@ -2301,36 +2309,43 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     completeShuffleStageInputs(Seq(4 -> bytes), provenance = ShuffleInputProvenance.Estimated)
   }
 
+  /** Task slots of the cluster this fixture recommends: one executor of 32 cores. */
+  private val QUAL_SLOTS = 32
+
   test("test AutoTuner for Qualification lowers shuffle partitions using the CPU input factor") {
     // 1000 GiB of CPU exchange data at the qualification factor of 0.8 estimates 800 GiB of GPU
-    // input, which needs 800 partitions and rounds up to the 1000 rung.
+    // input, which needs 800 partitions: exactly 25 whole waves of 32 slots.
     val autoTuner = buildDownwardPassAutoTuner(cpuStageInput(1000L * QUAL_GiB))
     val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
       QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
     val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
     assertExpectedLinesExist(
-      Seq("--conf spark.sql.shuffle.partitions=1000",
-        "--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=1000"),
+      Seq("--conf spark.sql.shuffle.partitions=800",
+        "--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=800"),
       autoTunerOutput)
-    // The comment must say the input was estimated, not measured, for a CPU event log.
-    val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 1000"))
+    // The comment must say the input was estimated, not measured, for a CPU event log, and it must
+    // name the wave arithmetic so the recommendation can be audited without re-running the tool.
+    val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 800"))
     assert(applied.size == 1, s"expected exactly one applied comment in: ${comments.map(_.comment)}")
     assert(applied.head.contains("estimated"))
     assert(applied.head.contains("input size factor 0.8"))
+    assert(applied.head.contains(s"25 execution wave(s) of $QUAL_SLOTS cluster task slots"))
   }
 
   test("test AutoTuner for Qualification honours a custom input size factor") {
-    // A factor of 0.4 estimates 400 GiB, which needs 400 partitions and lands on the 500 rung.
-    val userConfigs = ToolTestUtils.buildTuningConfigs(
-      qualification = List(
+    // A factor of 0.4 estimates 400 GiB, which needs 400 partitions and rounds up to 13 waves.
+    val autoTuner = buildDownwardPassAutoTuner(cpuStageInput(1000L * QUAL_GiB),
+      extraQualificationConfigs = List(
         TuningConfigEntry(name = "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR", default = "0.4")))
-    val autoTuner =
-      buildDownwardPassAutoTuner(cpuStageInput(1000L * QUAL_GiB), Some(userConfigs))
     val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
       QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
     val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
-    assertExpectedLinesExist(Seq("--conf spark.sql.shuffle.partitions=500"), autoTunerOutput)
-    assert(comments.map(_.comment).exists(_.contains("input size factor 0.4")))
+    assertExpectedLinesExist(Seq("--conf spark.sql.shuffle.partitions=416"), autoTunerOutput)
+    val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 416"))
+    assert(applied.size == 1, s"expected exactly one applied comment in: ${comments.map(_.comment)}")
+    assert(applied.head.contains("input size factor 0.4"))
+    assert(applied.head.contains("raw requirement 400 partitions"))
+    assert(applied.head.contains(s"13 execution wave(s) of $QUAL_SLOTS cluster task slots"))
   }
 
   test("test AutoTuner for Qualification keeps the recommendation when evidence is incomplete") {

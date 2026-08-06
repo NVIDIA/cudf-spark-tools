@@ -25,6 +25,30 @@ import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.rapids.tool.util.StringUtils
 
 /**
+ * Basis used to turn the recommended executor count into a cluster task-slot count.
+ *
+ * A "slot" is one unit of concurrency the recommended cluster actually has, so the number of slots
+ * is the number of partitions one execution wave can run. Which unit is right depends on whether
+ * the CPU task parallelism or the GPU task concurrency is the binding constraint, so the choice is
+ * exposed as a configuration entry rather than hard-coded.
+ */
+sealed abstract class DownwardShuffleSlotBasis(val label: String)
+
+object DownwardShuffleSlotBasis {
+  /** Slots per executor are the recommended `spark.executor.cores`. */
+  case object Cores extends DownwardShuffleSlotBasis("cores")
+
+  /** Slots per executor are the recommended `spark.rapids.sql.concurrentGpuTasks`. */
+  case object ConcurrentGpuTasks extends DownwardShuffleSlotBasis("concurrentGpuTasks")
+
+  val values: Seq[DownwardShuffleSlotBasis] = Seq(Cores, ConcurrentGpuTasks)
+
+  def parse(raw: String): Option[DownwardShuffleSlotBasis] = {
+    values.find(_.label.equalsIgnoreCase(raw.trim))
+  }
+}
+
+/**
  * Validated policy inputs of the downward-only shuffle partition pass.
  *
  * Every field is user-overridable through the tuning-config mechanism. The values are validated as
@@ -34,24 +58,21 @@ import org.apache.spark.sql.rapids.tool.util.StringUtils
  * @param enabled                  master switch for the downward pass
  * @param targetPartitionSizeBytes estimated GPU input a single partition should process
  * @param inputSizeFactor          factor converting measured shuffle bytes to estimated GPU bytes
- * @param partitionFloor           lowest partition count the pass may recommend; first rung
- * @param rungMultiplier           ratio between successive generated partition rungs
+ * @param slotBasis                unit used to size one execution wave of the recommended cluster
  * @param minReductionFactor       required ratio of normal value to candidate before applying
  */
 case class DownwardShufflePolicyConfig(
     enabled: Boolean,
     targetPartitionSizeBytes: Long,
     inputSizeFactor: Double,
-    partitionFloor: Int,
-    rungMultiplier: Double,
+    slotBasis: DownwardShuffleSlotBasis,
     minReductionFactor: Double)
 
 object DownwardShufflePolicyConfig {
   val ENABLED_KEY = "DOWNWARD_SHUFFLE_ENABLED"
   val TARGET_PARTITION_SIZE_KEY = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE"
   val INPUT_SIZE_FACTOR_KEY = "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR"
-  val PARTITION_FLOOR_KEY = "DOWNWARD_SHUFFLE_PARTITION_FLOOR"
-  val RUNG_MULTIPLIER_KEY = "DOWNWARD_SHUFFLE_RUNG_MULTIPLIER"
+  val SLOT_BASIS_KEY = "DOWNWARD_SHUFFLE_SLOT_BASIS"
   val MIN_REDUCTION_FACTOR_KEY = "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR"
 
   /** Config used when the feature is switched off. The remaining fields are never read. */
@@ -59,8 +80,7 @@ object DownwardShufflePolicyConfig {
     enabled = false,
     targetPartitionSizeBytes = 0L,
     inputSizeFactor = 0.0,
-    partitionFloor = 0,
-    rungMultiplier = 0.0,
+    slotBasis = DownwardShuffleSlotBasis.Cores,
     minReductionFactor = 0.0)
 
   /**
@@ -85,23 +105,20 @@ object DownwardShufflePolicyConfig {
       configProvider: TuningConfigProvider): Either[Seq[String], DownwardShufflePolicyConfig] = {
     val targetSize = parseMemoryBytes(configProvider, TARGET_PARTITION_SIZE_KEY)
     val factor = parseDouble(configProvider, INPUT_SIZE_FACTOR_KEY, min = 0.0, minInclusive = false)
-    val floor = parsePositiveInt(configProvider, PARTITION_FLOOR_KEY)
-    val multiplier =
-      parseDouble(configProvider, RUNG_MULTIPLIER_KEY, min = 1.0, minInclusive = false)
+    val slotBasis = parseSlotBasis(configProvider, SLOT_BASIS_KEY)
     val minReduction =
       parseDouble(configProvider, MIN_REDUCTION_FACTOR_KEY, min = 1.0, minInclusive = true)
 
-    val errors = Seq(targetSize, factor, floor, multiplier, minReduction).collect {
+    val errors = Seq(targetSize, factor, slotBasis, minReduction).collect {
       case Left(err) => err
     }
-    (targetSize, factor, floor, multiplier, minReduction) match {
-      case (Right(size), Right(f), Right(fl), Right(m), Right(r)) if errors.isEmpty =>
+    (targetSize, factor, slotBasis, minReduction) match {
+      case (Right(size), Right(f), Right(b), Right(r)) if errors.isEmpty =>
         Right(DownwardShufflePolicyConfig(
           enabled = true,
           targetPartitionSizeBytes = size,
           inputSizeFactor = f,
-          partitionFloor = fl,
-          rungMultiplier = m,
+          slotBasis = b,
           minReductionFactor = r))
       case _ => Left(errors)
     }
@@ -132,12 +149,13 @@ object DownwardShufflePolicyConfig {
     }
   }
 
-  private def parsePositiveInt(
-      configProvider: TuningConfigProvider, key: String): Either[String, Int] = {
+  private def parseSlotBasis(
+      configProvider: TuningConfigProvider,
+      key: String): Either[String, DownwardShuffleSlotBasis] = {
     rawValue(configProvider, key).flatMap { raw =>
-      Try(raw.trim.toInt).toOption
-        .filter(_ > 0)
-        .toRight(s"'$key' must be a positive integer but was '$raw'")
+      DownwardShuffleSlotBasis.parse(raw).toRight(
+        s"'$key' must be one of ${DownwardShuffleSlotBasis.values.map(_.label).mkString(", ")}" +
+          s" but was '$raw'")
     }
   }
 
@@ -190,15 +208,25 @@ object DownwardShuffleSkipReason {
     extends DownwardShuffleSkipReason("no consumer stage shuffle input was found")
 
   /**
-   * The worst stage needs more partitions than a Spark partition count can express, so no rung can
-   * cover it. Failing closed here is safer than recommending a rung below the requirement.
+   * The worst stage needs more partitions than a Spark partition count can express, or covering it
+   * with whole waves would. Failing closed here is safer than recommending a partition count below
+   * the requirement.
    */
   case class RequirementOutOfRange(requirement: Long)
     extends DownwardShuffleSkipReason(
-      s"the worst consumer stage requires $requirement partitions, which exceeds the largest" +
-        s" representable partition count (${Int.MaxValue})") {
+      s"the worst consumer stage requires $requirement partitions, which cannot be rounded up to" +
+        s" whole cluster waves within the largest representable partition count" +
+        s" (${Int.MaxValue})") {
     override def isWarning: Boolean = true
   }
+
+  /**
+   * The recommended cluster shape is not known, so there is no wave to quantize to. This is the
+   * common qualification case rather than something the user can act on, so it stays log-only.
+   */
+  case object SlotCountUnavailable
+    extends DownwardShuffleSkipReason(
+      "the recommended cluster's task slot count could not be determined")
 
   case class NotDownward(candidate: Int, normalValue: Int)
     extends DownwardShuffleSkipReason(
@@ -234,10 +262,12 @@ object DownwardShuffleDecision {
    * A reduction that passed every policy gate.
    *
    * @param normalValue          the effective recommendation produced by normal tuning
-   * @param selectedValue        the partition rung to recommend instead
+   * @param selectedValue        the wave-quantized partition count to recommend instead
    * @param determiningRecord    the consumer stage that produced the worst requirement
    * @param estimatedInputBytes  determining stage bytes after the input-size factor
-   * @param rawRequirement       partition count before rounding up to a rung
+   * @param rawRequirement       partition count before rounding up to whole waves
+   * @param slotCount            task slots of the recommended cluster; one execution wave
+   * @param waveCount            whole waves the selected value spans
    * @param provenance           whether the bytes were measured or estimated
    * @param inputSizeFactor      factor that was applied
    */
@@ -247,6 +277,8 @@ object DownwardShuffleDecision {
       determiningRecord: ShuffleStageInputRecord,
       estimatedInputBytes: Long,
       rawRequirement: Long,
+      slotCount: Int,
+      waveCount: Int,
       provenance: ShuffleInputProvenance,
       inputSizeFactor: Double) extends DownwardShuffleDecision
 
@@ -260,7 +292,7 @@ object DownwardShuffleDecision {
  *
  * This object never reads or mutates AutoTuner state. It converts raw consumer-stage shuffle input
  * records into either an applied reduction or a typed no-op reason, using overflow-safe arithmetic
- * and a rung sequence that is guaranteed to make progress.
+ * and quantizing the result to whole execution waves of the recommended cluster.
  */
 object DownwardShufflePartitionsPolicy {
 
@@ -275,23 +307,26 @@ object DownwardShufflePartitionsPolicy {
    *
    * @param configResult    validated policy config, or its validation errors
    * @param normalValue     effective shuffle partition recommendation after normal tuning
+   * @param slotCount       task slots of the recommended cluster, or None when it is unknown
    * @param analysis        raw consumer-stage shuffle input analysis
    */
   def decide(
       configResult: Either[Seq[String], DownwardShufflePolicyConfig],
       normalValue: Int,
+      slotCount: Option[Int],
       analysis: ShuffleStageInputAnalysis): DownwardShuffleDecision = {
     configResult match {
       case Left(errors) => DownwardShuffleDecision.InvalidConfig(errors)
       case Right(config) if !config.enabled =>
         DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.Disabled)
-      case Right(config) => decideWithConfig(config, normalValue, analysis)
+      case Right(config) => decideWithConfig(config, normalValue, slotCount, analysis)
     }
   }
 
   private def decideWithConfig(
       config: DownwardShufflePolicyConfig,
       normalValue: Int,
+      slotCount: Option[Int],
       analysis: ShuffleStageInputAnalysis): DownwardShuffleDecision = {
     if (!analysis.analyzed) {
       return DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.NoAnalysisAvailable)
@@ -304,16 +339,21 @@ object DownwardShufflePartitionsPolicy {
       return DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.NoStageEvidence)
     }
 
+    // A slot count is what a wave is measured in, so without one there is nothing to quantize to.
+    val slots = slotCount.filter(_ > 0).getOrElse {
+      return DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.SlotCountUnavailable)
+    }
+
     val worst = selectWorstStage(config, analysis.records)
-    rungAtOrAbove(worst.requirement, config.partitionFloor, config.rungMultiplier) match {
+    waveQuantized(worst.requirement, slots) match {
       case None =>
-        // No representable rung covers the requirement: fail closed rather than recommend a
-        // partition count that is known to be too small.
+        // No representable whole-wave count covers the requirement: fail closed rather than
+        // recommend a partition count that is known to be too small.
         DownwardShuffleDecision.Skipped(
           DownwardShuffleSkipReason.RequirementOutOfRange(worst.requirement))
       case Some(candidate) if candidate >= normalValue =>
-        // Also covers the case where the normal value is already at or below the rung floor,
-        // because every generated rung is at least the floor.
+        // Also covers the case where the normal value is already at or below one wave, because
+        // every candidate is at least the slot count.
         DownwardShuffleDecision.Skipped(
           DownwardShuffleSkipReason.NotDownward(candidate, normalValue))
       case Some(candidate)
@@ -328,6 +368,8 @@ object DownwardShufflePartitionsPolicy {
           determiningRecord = worst.record,
           estimatedInputBytes = worst.estimatedBytes,
           rawRequirement = worst.requirement,
+          slotCount = slots,
+          waveCount = candidate / slots,
           provenance = analysis.provenance,
           inputSizeFactor = config.inputSizeFactor)
     }
@@ -395,32 +437,24 @@ object DownwardShufflePartitionsPolicy {
   }
 
   /**
-   * Rounds a raw requirement up to the first generated rung that is at least as large.
+   * Rounds a raw requirement up to a whole number of execution waves of the recommended cluster.
    *
-   * Rungs start at the floor and grow by the multiplier, rounding each step up so that a fractional
-   * multiplier still produces a strictly increasing integer sequence. Each step is additionally
-   * forced to advance by at least one partition, so a multiplier barely above 1.0 cannot stall.
+   * The slot count is a hard floor as well as the quantum, so a stage needing fewer partitions than
+   * the cluster has slots still gets exactly one full wave. Every arithmetic step stays in `Long`
+   * and the result is range-checked, because `ceil(raw / slots) * slots` can exceed the largest
+   * partition count Spark can express even when the requirement itself does not.
    *
-   * @return the covering rung, or None when no rung within `Int.MaxValue` covers the requirement
+   * @return the wave-quantized candidate, or None when no whole-wave count within `Int.MaxValue`
+   *         covers the requirement
    */
-  private[tuning] def rungAtOrAbove(
-      requirement: Long, floor: Int, multiplier: Double): Option[Int] = {
-    if (requirement > Int.MaxValue.toLong) {
+  private[tuning] def waveQuantized(requirement: Long, slots: Int): Option[Int] = {
+    if (slots <= 0 || requirement > Int.MaxValue.toLong) {
       return None
     }
-    var rung = floor.toLong
-    while (rung < requirement) {
-      val grown = math.ceil(rung.toDouble * multiplier)
-      if (grown > Int.MaxValue.toDouble) {
-        return None
-      }
-      val next = math.max(grown.toLong, rung + 1L)
-      if (next > Int.MaxValue.toLong) {
-        return None
-      }
-      rung = next
-    }
-    Some(rung.toInt)
+    // Both operands are at most Int.MaxValue here, so neither the sum nor the product overflows.
+    val raw = math.max(slots.toLong, requirement)
+    val candidate = ((raw + slots - 1L) / slots) * slots
+    if (candidate > Int.MaxValue.toLong) None else Some(candidate.toInt)
   }
 
   /**
@@ -439,6 +473,7 @@ object DownwardShufflePartitionsPolicy {
       s"branch(es), input size factor ${decision.inputSizeFactor}, " +
       s"${decision.estimatedInputBytes} estimated bytes, " +
       s"raw requirement ${decision.rawRequirement} partitions rounded up to " +
-      s"${decision.selectedValue}."
+      s"${decision.waveCount} execution wave(s) of ${decision.slotCount} cluster task slots " +
+      s"(${decision.selectedValue} partitions)."
   }
 }

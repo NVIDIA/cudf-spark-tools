@@ -189,20 +189,46 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
       branchTotals: mutable.LinkedHashMap[Int, BranchTotals],
       reasons: mutable.ArrayBuffer[ShuffleStageInputIncompleteReason]): Unit = {
     val branches = edgeIndex.sinksOf(node.id)
-    if (branches.isEmpty) {
-      reasons += ShuffleStageInputIncompleteReason.UnresolvedConsumerStage(
-        sqlId, node.id, node.name)
-      return
+    val walkedStages = if (branches.isEmpty) {
+      // The topmost exchange of a plan has no downstream node at all.
+      Seq(Set.empty[Int])
+    } else {
+      branches.map(resolveConsumerStages(graph, edgeIndex, _, producerStages, sqlStageIds))
     }
-    branches.foreach { sinkId =>
-      resolveConsumerStage(graph, edgeIndex, sinkId, producerStages, sqlStageIds) match {
-        case Some(consumerStageId) =>
+    // A branch that reaches no assigned stage still has a reading stage: near the root of a plan
+    // the downstream nodes often carry no metrics, so the walk dead-ends. That stage is
+    // recoverable from the exchange's own assignment, which spans both sides of the shuffle,
+    // once the writing side is removed.
+    val fallbackStages = consumerStagesFromOwnAssignment(graph, node.id, producerStages,
+      sqlStageIds)
+    walkedStages.foreach { walked =>
+      val consumerStages = if (walked.nonEmpty) walked else fallbackStages
+      if (consumerStages.isEmpty) {
+        reasons += ShuffleStageInputIncompleteReason.UnresolvedConsumerStage(
+          sqlId, node.id, node.name)
+      } else {
+        consumerStages.foreach { consumerStageId =>
           val current = branchTotals.getOrElse(consumerStageId, BranchTotals(0L, 0))
           branchTotals(consumerStageId) = current.add(dataSize)
-        case None =>
-          reasons += ShuffleStageInputIncompleteReason.UnresolvedConsumerStage(
-            sqlId, node.id, node.name)
+        }
       }
+    }
+  }
+
+  /**
+   * Consumer stages derived from the exchange's own stage assignment.
+   *
+   * A shuffle exchange is assigned to both the stage that writes it (from its write metrics) and
+   * the stage that reads it (from its read metrics), so removing the producing side leaves the
+   * reading side. This is the fallback for branches whose graph walk reaches no assigned node.
+   */
+  private def consumerStagesFromOwnAssignment(
+      graph: ToolsPlanGraph,
+      nodeId: Long,
+      producerStages: Set[Int],
+      sqlStageIds: Set[Int]): Set[Int] = {
+    graph.getNodeStageRawAssignment(nodeId).filter { stageId =>
+      !producerStages.contains(stageId) && sqlStageIds.contains(stageId)
     }
   }
 
@@ -212,15 +238,22 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
    *
    * The walk follows graph edges rather than comparing stage numbers, because stage ids are not
    * ordered by data flow. A candidate stage must also be confirmed by the node's own raw
-   * assignment and must belong to this SQL execution's jobs. More than one candidate at the same
-   * node is ambiguous and fails closed.
+   * assignment and must belong to this SQL execution's jobs.
+   *
+   * A branch can legitimately reach several stages at once: when AQE splits a skewed join, the
+   * one consuming operator is assigned to every split stage. The full exchange size is then
+   * attributed to each of them. That deliberately overstates each split stage, because AQE divided
+   * the data between them, and overstating can only raise the partition requirement and make a
+   * reduction less likely. Understating it is the outcome that would be unsafe.
+   *
+   * @return the consumer stages of this branch, or an empty set when none could be resolved
    */
-  private def resolveConsumerStage(
+  private def resolveConsumerStages(
       graph: ToolsPlanGraph,
       edgeIndex: EdgeIndex,
       sinkId: Long,
       producerStages: Set[Int],
-      sqlStageIds: Set[Int]): Option[Int] = {
+      sqlStageIds: Set[Int]): Set[Int] = {
     val visited = mutable.HashSet.empty[Long]
     var frontier = List(sinkId)
     var depth = 0
@@ -231,18 +264,15 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
           !producerStages.contains(stageId) && sqlStageIds.contains(stageId) &&
             raw.contains(stageId)
         }
-      }.distinct
-      if (candidates.size == 1) {
-        return Some(candidates.head)
-      }
-      if (candidates.size > 1) {
-        return None
+      }.toSet
+      if (candidates.nonEmpty) {
+        return candidates
       }
       visited ++= frontier
       frontier = frontier.flatMap(edgeIndex.sinksOf).distinct.filterNot(visited.contains)
       depth += 1
     }
-    None
+    Set.empty
   }
 
   /**

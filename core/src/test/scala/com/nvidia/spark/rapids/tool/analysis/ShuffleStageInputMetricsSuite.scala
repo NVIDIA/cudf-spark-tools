@@ -341,6 +341,52 @@ class ShuffleStageInputMetricsSuite extends AnyFunSuite with Logging {
     }
   }
 
+  test("an exchange whose downstream nodes carry no stage is still attributed") {
+    // Ends in a repartition, so the topmost exchange's only sink is the plan root, which carries
+    // no metrics and therefore no stage assignment. Walking the graph dead-ends there, and the
+    // reading stage has to be recovered from the exchange's own assignment instead.
+    val confs = Map(
+      "spark.sql.adaptive.enabled" -> "true",
+      "spark.sql.autoBroadcastJoinThreshold" -> "-1",
+      "spark.sql.shuffle.partitions" -> "8")
+    TrampolineUtil.withTempDir { dir =>
+      val (log, _) = ToolTestUtils.generateEventLog(dir, "rootExchange", Some(confs)) { spark =>
+        import spark.implicits._
+        val left = spark.sparkContext.makeRDD(1 to 2000, 4).map(i => (i, s"l$i")).toDF("k", "lv")
+        val right = spark.sparkContext.makeRDD(1 to 2000, 4).map(i => (i, s"r$i")).toDF("k", "rv")
+        left.join(right, "k").repartition(4)
+      }
+      val app = loadApp(log)
+      val analysis = analyze(app)
+      assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+
+      // Confirm the shape this test exists for: an exchange whose sink has no stage assignment.
+      val deadEnding = app.sqlManager.sqlPlans.values.flatMap { planModel =>
+        val graph = planModel.getToolsPlanGraph
+        graph.allNodes
+          .filter(n => ShuffleStageInputAnalyzer.isShuffleInputCandidate(n.name))
+          .filter { n =>
+            val sinks = graph.getSinkNodes(n.id)
+            sinks.nonEmpty && sinks.forall(graph.getNodeStageRawAssignment(_).isEmpty)
+          }
+      }
+      assert(deadEnding.nonEmpty,
+        "fixture no longer produces an exchange whose sinks are unassigned")
+
+      // Every executed exchange must contribute exactly one branch: the join's two inputs land
+      // in one consumer stage, and the trailing repartition feeds another.
+      val totalExchanges = app.sqlManager.sqlPlans.values.flatMap { planModel =>
+        planModel.getToolsPlanGraph.allNodes
+          .filter(n => ShuffleStageInputAnalyzer.isShuffleInputCandidate(n.name))
+          .filter(n => planModel.getToolsPlanGraph.getNodeStageRawAssignment(n.id).nonEmpty)
+      }.size
+      assert(analysis.records.map(_.numShuffleBranches).sum == totalExchanges,
+        s"not every exchange was attributed: ${analysis.records}")
+      assert(analysis.records.exists(_.numShuffleBranches == 2),
+        s"expected the join stage to sum both inputs: ${analysis.records}")
+    }
+  }
+
   test("test resources are available") {
     assert(new File(s"$profilingLogDir/rapids_join_eventlog.zstd").exists())
   }

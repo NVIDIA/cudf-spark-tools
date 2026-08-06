@@ -253,6 +253,16 @@ abstract class AutoTuner(
   // Set of properties for which only source application values are used and
   // no calculations are performed.
   protected val limitedLogicRecommendations: mutable.HashSet[String] = mutable.HashSet[String]()
+  // Reasons the normal tuning passes raised the shuffle partition recommendation. The final
+  // downward pass must preserve every one of them, so they are recorded where they are applied
+  // instead of being inferred afterwards.
+  private val shufflePartitionUpwardReasons: mutable.LinkedHashSet[String] =
+    mutable.LinkedHashSet[String]()
+
+  /** Records an upward shuffle-partition decision so the downward pass cannot undo it. */
+  protected def recordShufflePartitionUpwardReason(reason: String): Unit = {
+    shufflePartitionUpwardReasons += reason
+  }
   // When enabled, the profiler recommendations should only include updated settings.
   private var filterByUpdatedPropertiesEnabled: Boolean = true
   // Non-executor memory (reserved for OS, resource manager, etc), configurable via tuning configs
@@ -1485,6 +1495,9 @@ abstract class AutoTuner(
             // and doesn't capture CPU shuffle data.
             val columnarExchangeRatio = (maxDataSize.toDouble / gpuBatchSize).ceil.toInt
             if (columnarExchangeRatio > finalPartitionValue) {
+              recordShufflePartitionUpwardReason(
+                s"the GPU ColumnarExchange batch-size bound raised partitions to " +
+                  s"$columnarExchangeRatio")
               appendComment(s"'$initialPartitionNumKey' adjusted from " +
                 s"$finalPartitionValue to $columnarExchangeRatio based on " +
                 s"ColumnarExchange data size (${maxDataSize} bytes) and " +
@@ -1690,6 +1703,7 @@ abstract class AutoTuner(
         inputShufflePartitions *=
           configProvider.getEntry("SHUFFLE_PARTITION_MULTIPLIER").getDefault.toInt
         // Could be memory instead of partitions
+        recordShufflePartitionUpwardReason("spilling was detected in shuffle stages")
         appendComment(shufflePartitionsCommentForSpilling)
       }
     }
@@ -1722,6 +1736,122 @@ abstract class AutoTuner(
         shufflePartitionValue
       }
       appendRecommendation("spark.sql.shuffle.partitions", recommendedShufflePartitions)
+    }
+  }
+
+  /**
+   * Final downward-only shuffle-partition pass.
+   *
+   * Runs after the normal job-level and cluster-level recommendations so that it observes the
+   * effective partition value they produced. It sizes the worst consumer stage from the total
+   * uncompressed shuffle input entering it and lowers the recommendation only when the reduction
+   * is material and every safety gate passes.
+   *
+   * Lowering a global partition count is riskier than leaving it too high, so anything unproven
+   * keeps the normal recommendation. It never raises a value and never touches the AQE advisory
+   * partition size.
+   */
+  private def recommendDownwardShufflePartitions(): Unit = {
+    val decision = DownwardShufflePartitionsPolicy.decide(
+      DownwardShufflePolicyConfig.fromProvider(configProvider),
+      shufflePartitionValue,
+      appInfoProvider.getShuffleStageInputAnalysis)
+    decision match {
+      case DownwardShuffleDecision.InvalidConfig(errors) =>
+        // Fail closed as one decision: no property is touched when any policy input is invalid.
+        logWarning("Skipping the downward shuffle partition pass because its configuration is " +
+          s"invalid: ${errors.mkString("; ")}")
+        appendComment(downwardShufflePartitionsInvalidConfigComment)
+      case DownwardShuffleDecision.Skipped(reason) =>
+        reportDownwardShuffleSkip(reason)
+      case applied: DownwardShuffleDecision.Applied =>
+        applyDownwardShufflePartitions(applied)
+    }
+  }
+
+  /**
+   * Runs the AutoTuner-owned gates that the pure policy cannot see, then updates every required
+   * partition property or none of them.
+   */
+  private def applyDownwardShufflePartitions(
+      applied: DownwardShuffleDecision.Applied): Unit = {
+    downwardShuffleBlockingReason(applied) match {
+      case Some(reason) => reportDownwardShuffleSkip(reason)
+      case None =>
+        val partitionProperties = requiredPartitionProperties
+        partitionProperties.foreach(appendRecommendation(_, applied.selectedValue))
+        appendComment(
+          DownwardShufflePartitionsPolicy.appliedComment(partitionProperties, applied))
+    }
+  }
+
+  /**
+   * Properties that must all be updated together for the recommendation to be coherent.
+   * When AQE coalescing is disabled this is only 'spark.sql.shuffle.partitions'; otherwise the
+   * active AQE partition property must move with it.
+   */
+  private def requiredPartitionProperties: Seq[String] = {
+    applyToAllPartitionProperties[String](identity)
+  }
+
+  /**
+   * First reason the reduction cannot be applied, or None when every gate passes.
+   *
+   * The gates are evaluated before any property is written, because `appendRecommendation`
+   * silently ignores protected properties and would otherwise leave the two partition properties
+   * disagreeing with each other.
+   */
+  private def downwardShuffleBlockingReason(
+      applied: DownwardShuffleDecision.Applied): Option[DownwardShuffleSkipReason] = {
+    // 1. Any increase the normal passes made for spill, OOM, or the GPU batch-size bound wins.
+    shufflePartitionUpwardReasons.headOption
+      .map(DownwardShuffleSkipReason.UpwardSafetyReason)
+      // 2. A platform that keeps optimizing shuffle at runtime may ignore the manual value.
+      .orElse {
+        if (isDatabricksAutoOptimizeShuffleActive) {
+          Some(DownwardShuffleSkipReason.PlatformControlledShuffle)
+        } else {
+          None
+        }
+      }
+      // 3. Every affected consumer stage must be free of skew and spill.
+      .orElse {
+        appInfoProvider.getShuffleStageInputAnalysis.records.collectFirst {
+          case record if record.hasPositiveSpill =>
+            DownwardShuffleSkipReason.StagePressure(record.stageId, "positive spill")
+          case record if record.hasSkew =>
+            DownwardShuffleSkipReason.StagePressure(record.stageId, "shuffle read skew")
+        }
+      }
+      // 4. Every property this decision must write has to be writable.
+      .orElse {
+        requiredPartitionProperties.collectFirst {
+          case property if ignoreRecommendation(property) || !isCalculationEnabled(property) =>
+            DownwardShuffleSkipReason.PropertyNotMutable(property)
+        }
+      }
+  }
+
+  /**
+   * True while Databricks automatic shuffle optimization is still effectively enabled after
+   * normal tuning, which means the runtime, not this recommendation, governs partitioning.
+   */
+  private def isDatabricksAutoOptimizeShuffleActive: Boolean = {
+    platform.isInstanceOf[DatabricksPlatform] &&
+      getPropertyValue("spark.databricks.adaptive.autoOptimizeShuffle.enabled")
+        .exists(_.trim.equalsIgnoreCase("true"))
+  }
+
+  /**
+   * Reports a no-op. Ordinary policy and safety decisions stay log-only so that enabling this
+   * pass does not add comments to every application; only actionable states earn a comment.
+   */
+  private def reportDownwardShuffleSkip(reason: DownwardShuffleSkipReason): Unit = {
+    if (reason.isWarning) {
+      logWarning(s"Skipping the downward shuffle partition pass: ${reason.description}")
+      appendComment(downwardShufflePartitionsIncompleteEvidenceComment)
+    } else {
+      logInfo(s"Skipping the downward shuffle partition pass: ${reason.description}")
     }
   }
 
@@ -1976,6 +2106,9 @@ abstract class AutoTuner(
       recommendPluginProps()
       calculateJobLevelRecommendations()
       calculateClusterLevelRecommendations()
+      // Final downward-only pass. It runs last so that it sees the effective normal shuffle
+      // partition recommendation, and it can only lower that value, never raise it.
+      recommendDownwardShufflePartitions()
 
       // Add all platform specific recommendations
       platform.platformSpecificRecommendations.collect {
@@ -2252,6 +2385,7 @@ class ProfilingAutoTuner(
       // Shuffle Stages with Task OOM detected. We may want to increase shuffle partitions.
       val recShufflePartitions = shufflePartitionValue *
         configProvider.getEntry("SHUFFLE_PARTITION_MULTIPLIER").getDefault.toInt
+      recordShufflePartitionUpwardReason("task OOM was detected in shuffle stages")
       appendComment(shufflePartitionsCommentForGpuOOM)
       math.max(calculatedValue, recShufflePartitions)
     } else {
@@ -2464,6 +2598,16 @@ trait AutoTunerStaticComments {
 
   def shufflePartitionsCommentForGpuOOM: String = {
     "Shuffle partitions should be increased since task OOM occurred in shuffle stages."
+  }
+
+  def downwardShufflePartitionsInvalidConfigComment: String = {
+    "Shuffle partitions were not lowered because the downward shuffle partition tuning " +
+      "configuration is invalid. See the tool logs for the offending entries."
+  }
+
+  def downwardShufflePartitionsIncompleteEvidenceComment: String = {
+    "Shuffle partitions were not lowered because the shuffle input of every consumer stage " +
+      "could not be measured. See the tool logs for details."
   }
 
   /**

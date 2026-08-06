@@ -98,7 +98,9 @@ case class TunerContext (
     val sqlAnalyzer = AppSQLPlanAnalyzer(appInfo)
     val rawAggMetrics =
       QualSparkMetricsAggregator.getAggRawMetrics(appInfo, appIndex, Some(sqlAnalyzer))
-    QualificationAutoTunerRunner(appInfo, appAggStats, this, rawAggMetrics, dsInfo).collect {
+    // Pass the analyzer instance along so the tuning path reuses its SQL plan analysis.
+    QualificationAutoTunerRunner(appInfo, appAggStats, this, rawAggMetrics, dsInfo,
+      Some(sqlAnalyzer)).collect {
       case qualTuner =>
         Try {
           qualTuner.runAutoTuner(platform, getUserProvidedTuningConfigs)

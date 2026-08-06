@@ -51,7 +51,9 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val shuffleSkewStages: Set[Long],
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
-    val maxColumnarExchangeDataSizeBytes: Option[Long] = None)
+    val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+    val shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
+      ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured))
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
   override def getMaxInput: Double = maxInput
@@ -72,6 +74,7 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def scanStagesWithGpuOom: Set[Long] = scanStagesWithGpuOomSet
   override def gpuShuffleStagesWithContainerOom: Set[Long] = gpuShuffleStagesWithContainerOomSet
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = maxColumnarExchangeDataSizeBytes
+  override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = shuffleStageInputAnalysis
 
   /**
    * Sets the spark master property in the properties map.
@@ -137,11 +140,41 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       shuffleSkewStages: Set[Long] = Set(),
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
-      maxColumnarExchangeDataSizeBytes: Option[Long] = None): AppInfoProviderMockTest = {
+      maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+      shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
+        ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
-      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes)
+      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, shuffleStageInputAnalysis)
+  }
+
+  /**
+   * Builds a complete shuffle-stage input analysis with one record per (stage, bytes) pair.
+   * Used to drive the downward shuffle-partition pass from AutoTuner tests.
+   */
+  protected def completeShuffleStageInputs(
+      stageInputs: Seq[(Int, Long)],
+      provenance: ShuffleInputProvenance = ShuffleInputProvenance.Measured,
+      numBranches: Int = 1,
+      hasPositiveSpill: Boolean = false,
+      hasSkew: Boolean = false): ShuffleStageInputAnalysis = {
+    val records = stageInputs.map { case (stageId, bytes) =>
+      ShuffleStageInputRecord(sqlId = 0L, stageId = stageId, stageAttemptId = 0,
+        totalShuffleInputBytes = bytes, numShuffleBranches = numBranches, numTasks = 200,
+        hasPositiveSpill = hasPositiveSpill, hasSkew = hasSkew)
+    }
+    ShuffleStageInputAnalysis(records, Seq.empty, provenance)
+  }
+
+  /** Builds an analysis that ran but found a gap, which must keep the normal recommendation. */
+  protected def incompleteShuffleStageInputs(
+      provenance: ShuffleInputProvenance = ShuffleInputProvenance.Measured
+  ): ShuffleStageInputAnalysis = {
+    ShuffleStageInputAnalysis(
+      Seq.empty,
+      Seq(ShuffleStageInputIncompleteReason.MissingExchangeMetric(0L, 3L, "Exchange")),
+      provenance)
   }
 
   /**

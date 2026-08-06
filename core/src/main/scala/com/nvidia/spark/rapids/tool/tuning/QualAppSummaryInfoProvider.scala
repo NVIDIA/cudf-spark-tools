@@ -17,8 +17,8 @@
 package com.nvidia.spark.rapids.tool.tuning
 
 import com.nvidia.spark.rapids.tool.AppSummaryInfoBaseProvider
-import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
-import com.nvidia.spark.rapids.tool.profiling.DataSourceProfileResult
+import com.nvidia.spark.rapids.tool.analysis.{AggRawMetricsResult, AppSQLPlanAnalyzer}
+import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, ShuffleInputProvenance, ShuffleStageInputAnalysis}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
@@ -30,12 +30,16 @@ import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, Qua
  *                    need to feed the autotuner with values from the aggregates.
  * @param rawAggMetrics the raw profiler aggregation metrics
  * @param dsInfo Data source information
+ * @param sqlAnalyzer the SQL plan analyzer already created for this application. It is reused
+ *                    rather than rebuilt so the SQL plans are traversed only once.
  */
 class QualAppSummaryInfoProvider(
     val appInfo: QualificationAppInfo,
     val appAggStats: Option[QualificationSummaryInfo],
     val rawAggMetrics: AggRawMetricsResult,
-    val dsInfo: Seq[DataSourceProfileResult]) extends AppSummaryInfoBaseProvider with Logging {
+    val dsInfo: Seq[DataSourceProfileResult],
+    val sqlAnalyzer: Option[AppSQLPlanAnalyzer] = None)
+  extends AppSummaryInfoBaseProvider with Logging {
   // Group data source info by location for distinct location calculations.
   // TODO: Should We only consider data sources from the final plan?
   //       And also drop the location is unknown.
@@ -144,5 +148,15 @@ class QualAppSummaryInfoProvider(
 
   override def getClassPathEntries: Map[String, String] = {
     appInfo.classpathEntries
+  }
+
+  /**
+   * CPU event logs expose regular Exchange data sizes, so the GPU input is estimated from them.
+   * Without an analyzer there is no evidence at all, which fails closed.
+   */
+  override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = {
+    sqlAnalyzer
+      .map(_.shuffleStageInputAnalysis)
+      .getOrElse(ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Estimated))
   }
 }

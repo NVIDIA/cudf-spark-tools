@@ -168,11 +168,23 @@ object DownwardShuffleSkipReason {
   case object Disabled
     extends DownwardShuffleSkipReason("the downward shuffle partition pass is disabled")
 
+  /**
+   * The analysis ran but found a gap it cannot reason about. This is actionable, so it earns one
+   * concise comment in addition to the log.
+   */
   case class IncompleteEvidence(summary: String)
     extends DownwardShuffleSkipReason(
       s"shuffle input evidence is incomplete: $summary") {
     override def isWarning: Boolean = true
   }
+
+  /**
+   * No analysis was produced for the application at all, for example because the caller does not
+   * wire one up. There is nothing for the user to act on, so this stays log-only.
+   */
+  case object NoAnalysisAvailable
+    extends DownwardShuffleSkipReason(
+      "no shuffle input analysis is available for this application")
 
   case object NoStageEvidence
     extends DownwardShuffleSkipReason("no consumer stage shuffle input was found")
@@ -281,6 +293,9 @@ object DownwardShufflePartitionsPolicy {
       config: DownwardShufflePolicyConfig,
       normalValue: Int,
       analysis: ShuffleStageInputAnalysis): DownwardShuffleDecision = {
+    if (!analysis.analyzed) {
+      return DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.NoAnalysisAvailable)
+    }
     if (!analysis.isComplete) {
       return DownwardShuffleDecision.Skipped(
         DownwardShuffleSkipReason.IncompleteEvidence(analysis.incompleteSummary()))

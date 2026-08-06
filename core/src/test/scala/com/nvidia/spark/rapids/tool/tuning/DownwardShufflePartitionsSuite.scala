@@ -401,14 +401,14 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
     }
   }
 
-  test("an analysis that was never produced is incomplete, not empty-but-complete") {
+  test("an analysis that was never produced fails closed without a user comment") {
     val notAnalyzed = ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)
     assert(!notAnalyzed.isComplete)
-    DownwardShufflePartitionsPolicy.decide(Right(baseConfig), 4000, notAnalyzed) match {
-      case DownwardShuffleDecision.Skipped(reason: DownwardShuffleSkipReason.IncompleteEvidence) =>
-        assert(reason.description.contains(ShuffleStageInputAnalysis.notAnalyzedSummary))
-      case other => fail(s"expected an incomplete-evidence skip but got $other")
-    }
+    val decision = DownwardShufflePartitionsPolicy.decide(Right(baseConfig), 4000, notAnalyzed)
+    assert(decision ==
+      DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.NoAnalysisAvailable))
+    // A provider that never produced an analysis is not something the user can act on.
+    assert(!DownwardShuffleSkipReason.NoAnalysisAvailable.isWarning)
   }
 
   test("an application with no shuffle at all is a quiet no-op") {

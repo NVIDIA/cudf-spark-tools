@@ -19,8 +19,8 @@ package com.nvidia.spark.rapids.tool.tuning
 import scala.collection.mutable
 
 import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
-import com.nvidia.spark.rapids.tool.profiling.Profiler
-import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningConfigEntry, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.profiling.{Profiler, ShuffleStageInputAnalysis}
+import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningConfigEntry, TuningConfiguration, TuningEntryDefinition}
 
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.{SparkSession, TrampolineUtil}
@@ -2458,5 +2458,243 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
+  }
+
+  //
+  // Downward shuffle partition pass
+  //
+
+  private val GiB = 1024L * 1024L * 1024L
+  private val SHUFFLE_PARTITIONS_KEY = "spark.sql.shuffle.partitions"
+  private val AQE_INITIAL_PARTITION_NUM_KEY =
+    "spark.sql.adaptive.coalescePartitions.initialPartitionNum"
+  private val ADVISORY_PARTITION_SIZE_KEY = "spark.sql.adaptive.advisoryPartitionSizeInBytes"
+
+  /**
+   * Source properties of a GPU application whose normal recommendation lands on 8000 shuffle
+   * partitions, which is comfortably above the downward candidate the tests drive.
+   */
+  private def downwardPassSourceProps(
+      extra: Map[String, String] = Map.empty): mutable.Map[String, String] = {
+    val base = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "16",
+      "spark.executor.instances" -> "1",
+      "spark.executor.memory" -> "80g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.sql.adaptive.enabled" -> "true",
+      SHUFFLE_PARTITIONS_KEY -> "8000",
+      "spark.task.resource.gpu.amount" -> "0.25",
+      "spark.rapids.sql.enabled" -> "true",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin",
+      "spark.rapids.sql.concurrentGpuTasks" -> "1")
+    extra.foreach { case (k, v) => base.put(k, v) }
+    base
+  }
+
+  private def recommendedValue(
+      properties: Seq[TuningEntryTrait], key: String): Option[String] = {
+    properties.find(_.name == key).map(_.getTuneValue())
+  }
+
+  /**
+   * Runs the AutoTuner over a GPU application with the given shuffle-stage evidence and returns
+   * its recommendations and comments.
+   */
+  private def runDownwardPass(
+      shuffleStageInputAnalysis: ShuffleStageInputAnalysis,
+      sourceProps: mutable.Map[String, String] = downwardPassSourceProps(),
+      shuffleStagesWithPosSpilling: Set[Long] = Set(),
+      gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
+      maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+      userProvidedTuningConfigs: Option[TuningConfiguration] = None,
+      platformName: String = PlatformNames.DATAPROC
+  ): (Seq[TuningEntryTrait], Seq[String]) = {
+    val infoProvider = getMockInfoProvider(
+      maxInput = 1.0E9,
+      spilledMetrics = Seq(0, 0),
+      jvmGCFractions = Seq(0.1, 0.1),
+      propsFromLog = sourceProps,
+      sparkVersion = Some(testSparkVersion),
+      meanInput = 1.0E9,
+      meanShuffleRead = 1.0E9,
+      shuffleStagesWithPosSpilling = shuffleStagesWithPosSpilling,
+      gpuShuffleStagesWithContainerOom = gpuShuffleStagesWithContainerOom,
+      maxColumnarExchangeDataSizeBytes = maxColumnarExchangeDataSizeBytes,
+      shuffleStageInputAnalysis = shuffleStageInputAnalysis)
+    val platform = PlatformFactory.createInstance(platformName)
+    configureEventLogClusterInfoForTest(platform, numCores = 16, numWorkers = 1, gpuCount = 1,
+      sparkProperties = sourceProps.toMap)
+    val autoTuner =
+      buildAutoTunerForTests(infoProvider, platform, None, userProvidedTuningConfigs)
+    val (properties, comments) = autoTuner.getRecommendedProperties()
+    (properties, comments.map(_.comment))
+  }
+
+  /** A single consumer stage that needs 900 partitions at the default 1 GiB target. */
+  private def worstStageNeeding900Partitions: ShuffleStageInputAnalysis = {
+    completeShuffleStageInputs(Seq(4 -> 900L * GiB))
+  }
+
+  test("Downward pass lowers both partition properties atomically when AQE coalescing is on") {
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions)
+    // 900 partitions rounds up to the 1000 rung, which is a 8x reduction from 8000.
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("1000"))
+    assert(recommendedValue(properties, AQE_INITIAL_PARTITION_NUM_KEY).contains("1000"))
+    val appliedComment = comments.filter(_.contains("lowered from 8000 to 1000"))
+    assert(appliedComment.size == 1, s"expected exactly one applied comment in: $comments")
+    // The comment must identify every input of the decision so it can be audited.
+    Seq(SHUFFLE_PARTITIONS_KEY, AQE_INITIAL_PARTITION_NUM_KEY, "measured", "stage 4",
+      "900", "1.0").foreach { fragment =>
+      assert(appliedComment.head.contains(fragment),
+        s"'$fragment' missing from: ${appliedComment.head}")
+    }
+  }
+
+  test("Downward pass leaves the AQE advisory partition size untouched") {
+    val advisorySize = "64m"
+    val (properties, _) = runDownwardPass(worstStageNeeding900Partitions,
+      sourceProps = downwardPassSourceProps(Map(ADVISORY_PARTITION_SIZE_KEY -> advisorySize)))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("1000"))
+    assert(recommendedValue(properties, ADVISORY_PARTITION_SIZE_KEY).forall(_ == advisorySize))
+  }
+
+  test("Downward pass updates only the shuffle property when AQE coalescing is disabled") {
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      sourceProps = downwardPassSourceProps(
+        Map("spark.sql.adaptive.coalescePartitions.enabled" -> "false")))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("1000"))
+    assert(recommendedValue(properties, AQE_INITIAL_PARTITION_NUM_KEY).isEmpty)
+    assert(comments.exists(_.contains("lowered from 8000 to 1000")))
+  }
+
+  test("Downward pass preserves an increase made for shuffle spilling") {
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      shuffleStagesWithPosSpilling = Set(1L))
+    // The spill-driven doubling must survive; nothing may be lowered.
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("16000"))
+    assert(comments.exists(_.contains("Shuffle partitions should be increased since spilling")))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass preserves an increase made for shuffle task OOM") {
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      gpuShuffleStagesWithContainerOom = Set(1L))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).exists(_.toInt >= 8000))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass preserves the existing GPU ColumnarExchange lower bound") {
+    // A 60000 GiB exchange against the ~2g batch size forces partitions above 8000.
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      maxColumnarExchangeDataSizeBytes = Some(60000L * GiB))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).exists(_.toInt > 8000))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass is blocked by spill in an affected consumer stage") {
+    val withSpill = completeShuffleStageInputs(Seq(4 -> 900L * GiB), hasPositiveSpill = true)
+    val (properties, comments) = runDownwardPass(withSpill)
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass is blocked by skew in an affected consumer stage") {
+    val withSkew = completeShuffleStageInputs(Seq(4 -> 900L * GiB), hasSkew = true)
+    val (properties, comments) = runDownwardPass(withSkew)
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass warns once and changes nothing when evidence is incomplete") {
+    val (properties, comments) = runDownwardPass(incompleteShuffleStageInputs())
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    val warnings = comments.filter(_.contains("could not be measured"))
+    assert(warnings.size == 1, s"expected exactly one incomplete-evidence comment in: $comments")
+  }
+
+  test("Downward pass warns once and changes nothing when its configuration is invalid") {
+    val invalidConfigs = ToolTestUtils.buildTuningConfigs(
+      default = List(TuningConfigEntry(name = "DOWNWARD_SHUFFLE_RUNG_MULTIPLIER", default = "0")))
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      userProvidedTuningConfigs = Some(invalidConfigs))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    val warnings = comments.filter(_.contains("tuning configuration is invalid"))
+    assert(warnings.size == 1, s"expected exactly one invalid-config comment in: $comments")
+  }
+
+  test("Downward pass does nothing when disabled") {
+    val disabledConfigs = ToolTestUtils.buildTuningConfigs(
+      default = List(TuningConfigEntry(name = "DOWNWARD_SHUFFLE_ENABLED", default = "false")))
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      userProvidedTuningConfigs = Some(disabledConfigs))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    // A disabled feature must stay completely silent in the user-facing output.
+    assert(!comments.exists(c => c.contains("lowered from") || c.contains("downward")))
+  }
+
+  test("Downward pass respects a sub-threshold reduction") {
+    // 1500 partitions rounds up to the 2000 rung, which is not a 2x reduction from 3000.
+    val (properties, comments) = runDownwardPass(
+      completeShuffleStageInputs(Seq(4 -> 1500L * GiB)),
+      sourceProps = downwardPassSourceProps(Map(SHUFFLE_PARTITIONS_KEY -> "3000")))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "3000"))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass never lowers below the configured floor") {
+    val (properties, comments) = runDownwardPass(completeShuffleStageInputs(Seq(4 -> 1L)))
+    // Even a one-byte stage cannot pull the recommendation under the 500 rung floor.
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("500"))
+    assert(comments.exists(_.contains("lowered from 8000 to 500")))
+  }
+
+  test("Downward pass changes neither property when one of them is enforced") {
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map(AQE_INITIAL_PARTITION_NUM_KEY -> "4096"))
+    val sourceProps = downwardPassSourceProps()
+    val infoProvider = getMockInfoProvider(
+      maxInput = 1.0E9,
+      spilledMetrics = Seq(0, 0),
+      jvmGCFractions = Seq(0.1, 0.1),
+      propsFromLog = sourceProps,
+      sparkVersion = Some(testSparkVersion),
+      meanInput = 1.0E9,
+      meanShuffleRead = 1.0E9,
+      shuffleStageInputAnalysis = worstStageNeeding900Partitions)
+    val platform = PlatformFactory.createInstance(PlatformNames.DATAPROC, Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 16, numWorkers = 1, gpuCount = 1,
+      sparkProperties = sourceProps.toMap)
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform)
+    val (properties, comments) = autoTuner.getRecommendedProperties()
+    // The enforced AQE property blocks the whole update, so the shuffle property is untouched.
+    assert(recommendedValue(properties, AQE_INITIAL_PARTITION_NUM_KEY).contains("4096"))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    assert(!comments.map(_.comment).exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass is blocked while Databricks automatic shuffle optimization is active") {
+    val autoOptimizeKey = "spark.databricks.adaptive.autoOptimizeShuffle.enabled"
+    // The user enforces the Databricks setting, so normal tuning cannot turn it off and the
+    // runtime, not this recommendation, still governs partitioning.
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map(autoOptimizeKey -> "true"))
+    val sourceProps = downwardPassSourceProps(Map(autoOptimizeKey -> "true"))
+    val infoProvider = getMockInfoProvider(
+      maxInput = 1.0E9,
+      spilledMetrics = Seq(0, 0),
+      jvmGCFractions = Seq(0.1, 0.1),
+      propsFromLog = sourceProps,
+      sparkVersion = Some(testDatabricksVersion),
+      meanInput = 1.0E9,
+      meanShuffleRead = 1.0E9,
+      shuffleStageInputAnalysis = worstStageNeeding900Partitions)
+    val platform =
+      PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS, Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 16, numWorkers = 1, gpuCount = 1,
+      sparkProperties = sourceProps.toMap)
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform)
+    val (properties, comments) = autoTuner.getRecommendedProperties()
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    assert(!comments.map(_.comment).exists(_.contains("lowered from")))
   }
 }

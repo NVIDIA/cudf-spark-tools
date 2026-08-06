@@ -180,6 +180,54 @@ default:
     default: 2
     usedBy: spark.sql.shuffle.partitions
 
+  # Downward shuffle-partition tuning configs.
+  # These drive the final downward-only pass that lowers an oversized shuffle partition
+  # recommendation based on the total uncompressed shuffle input of the worst consumer stage.
+  - name: DOWNWARD_SHUFFLE_ENABLED
+    description: >-
+      Enables the final downward-only shuffle partition pass. When disabled, the AutoTuner
+      never lowers the shuffle partition recommendation produced by the normal tuning passes.
+    default: true
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE
+    description: >-
+      Target amount of estimated GPU shuffle input processed by a single partition. The
+      per-stage partition requirement is the estimated stage input divided by this value.
+    default: 1g
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR
+    description: >-
+      Factor applied to the measured uncompressed shuffle input to estimate the GPU input size.
+      Profiling reads measured GpuColumnarExchange data, so it uses 1.0. Qualification reads CPU
+      Exchange data and overrides this in the qualification section.
+    default: 1.0
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_PARTITION_FLOOR
+    description: >-
+      Lowest partition count the downward pass can recommend. This is also the first generated
+      partition rung.
+    default: 500
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_RUNG_MULTIPLIER
+    description: >-
+      Multiplier used to generate successive partition rungs from the floor
+      (e.g. a floor of 500 and a multiplier of 2 generates 500, 1000, 2000, ...).
+      The raw partition requirement is always rounded up to the next rung.
+    default: 2
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR
+    description: >-
+      Minimum ratio between the normal recommendation and the downward candidate required before
+      a reduction is applied. A value of 2.0 means the normal value must be at least twice the
+      candidate.
+    default: 2.0
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
   - name: WORKER_GPU_COUNT
     description: >-
       Default number of GPUs per worker node
@@ -405,6 +453,13 @@ qualification:
       Batch size for GPU operations optimized for qualification workloads
     default: 1g
     usedBy: spark.rapids.sql.batchSizeBytes
+
+  - name: DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR
+    description: >-
+      Qualification reads uncompressed CPU Exchange data, so the GPU input size is estimated
+      rather than measured. This factor is an initial conservative estimate.
+    default: 0.8
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
 
 # Profiling tool specific tuning configs
 profiling:

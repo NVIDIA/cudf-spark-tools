@@ -20,7 +20,7 @@ import scala.collection.mutable.{AbstractSet, ArrayBuffer, HashMap, LinkedHashSe
 
 import com.nvidia.spark.rapids.tool.analysis.util.IOAccumDiagnosticMetrics._
 import com.nvidia.spark.rapids.tool.analysis.util.StageAccumDiagnosticMetrics._
-import com.nvidia.spark.rapids.tool.profiling.{AccumProfileResults, IODiagnosticResult, SQLAccumProfileResults, SQLMetricInfoCase, SQLStageInfoProfileResult, UnsupportedSQLPlan, WholeStageCodeGenResults}
+import com.nvidia.spark.rapids.tool.profiling.{AccumProfileResults, IODiagnosticResult, ShuffleStageInputAnalysis, SQLAccumProfileResults, SQLMetricInfoCase, SQLStageInfoProfileResult, UnsupportedSQLPlan, WholeStageCodeGenResults}
 
 import org.apache.spark.sql.rapids.tool.{AppBase, RDDCheckHelper}
 import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphCluster, SparkPlanGraphNode, ToolsPlanGraph}
@@ -67,6 +67,13 @@ class AppSQLPlanAnalyzer(app: AppBase)
   // metrics for the given key.
   val IODiagnosticMetricsMap: HashMap[(Long, Long), ArrayBuffer[SQLAccumProfileResults]] =
     HashMap.empty[(Long, Long), ArrayBuffer[SQLAccumProfileResults]]
+
+  /**
+   * Raw consumer-stage shuffle input inventory used by the AutoTuner's downward shuffle-partition
+   * pass. It is computed lazily and cached so that both tools reuse this analyzer's plan graphs
+   * instead of traversing the SQL plans a second time.
+   */
+  lazy val shuffleStageInputAnalysis: ShuffleStageInputAnalysis = ShuffleStageInputAnalyzer(app)
 
   /**
    * Updates the stageToDiagnosticMetrics mapping with the provided AccumProfileResults.

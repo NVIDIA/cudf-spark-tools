@@ -26,7 +26,7 @@ import scala.util.matching.Regex
 import org.json4s.jackson.JsonMethods.parse
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart
+import org.apache.spark.sql.execution.ui.{SparkListenerSQLExecutionEnd, SparkListenerSQLExecutionStart}
 
 /**
  * Utility containing the implementation of helpers used for parsing data from event.
@@ -208,6 +208,18 @@ object EventUtils extends Logging {
       Option(invokeMethodOnEvent(event, "modifiedConfigs"))
         .map(_.asInstanceOf[Map[String, String]])
     }.toOption.flatten.getOrElse(Map.empty)
+  }
+
+  // Reads errorMessage via reflection (Spark 3.4+). This is the only failure state that
+  // SparkListenerSQLExecutionEnd serializes into the event log; its sibling `executionFailure`
+  // is a live-listener-only field and is always empty when replaying a log.
+  // Returns None on older versions or when the execution succeeded.
+  def readErrorMessageFromSQLEndEvent(
+      event: SparkListenerSQLExecutionEnd): Option[String] = {
+    Try {
+      Option(invokeMethodOnEvent(event, "errorMessage"))
+        .map(_.asInstanceOf[Option[String]])
+    }.toOption.flatten.flatten.filter(_.nonEmpty)
   }
 
   // Reads jobTags via reflection (Spark 3.5+, introduced for Connect support).

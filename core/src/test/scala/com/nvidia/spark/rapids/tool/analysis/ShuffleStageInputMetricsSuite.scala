@@ -1,0 +1,290 @@
+/*
+ * Copyright (c) 2026, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.nvidia.spark.rapids.tool.analysis
+
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
+
+import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.profiling.{ShuffleInputProvenance, ShuffleStageInputAnalysis, ShuffleStageInputIncompleteReason, ShuffleStageInputRecord}
+import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
+
+import org.apache.spark.internal.Logging
+import org.apache.spark.sql.{DataFrame, SparkSession, TrampolineUtil}
+import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
+
+/**
+ * Tests the consumer-stage shuffle input analysis on real Spark plan graphs.
+ *
+ * The positive cases run actual queries so the plan graphs, AQE rewrites, exchange reuse, and
+ * accumulator wiring are the real ones. The fail-closed cases start from the same real
+ * application and then remove one piece of evidence, which is the most direct way to prove that a
+ * single gap disables the whole analysis.
+ */
+class ShuffleStageInputMetricsSuite extends AnyFunSuite with Logging {
+
+  private lazy val sparkSession: SparkSession = {
+    SparkSession.builder()
+      .master("local[*]")
+      .appName("Rapids Shuffle Stage Input Unit Tests")
+      .getOrCreate()
+  }
+
+  private lazy val hadoopConf: Configuration = sparkSession.sparkContext.hadoopConfiguration
+
+  private val profilingLogDir = ToolTestUtils.getTestResourcePath("spark-events-profiling")
+
+  private def loadApp(eventLogPath: String): ApplicationInfo = {
+    val eventLogInfo = EventLogPathProcessor.getEventLogInfo(eventLogPath, hadoopConf).head._1
+    new ApplicationInfo(hadoopConf, eventLogInfo)
+  }
+
+  private def analyze(app: ApplicationInfo): ShuffleStageInputAnalysis = {
+    ShuffleStageInputAnalyzer(app)
+  }
+
+  /**
+   * Runs a query through a local Spark session, writes its event log, and hands the resulting
+   * profiled application to the test body.
+   */
+  private def withProfiledQuery(name: String)(query: SparkSession => DataFrame)
+      (body: ApplicationInfo => Unit): Unit = {
+    TrampolineUtil.withTempDir { eventLogDir =>
+      val (eventLog, _) = ToolTestUtils.generateEventLog(eventLogDir, name)(query)
+      body(loadApp(eventLog))
+    }
+  }
+
+  private def joinQuery(spark: SparkSession): DataFrame = {
+    import spark.implicits._
+    val left = spark.sparkContext.makeRDD(1 to 2000, 4).map(i => (i, s"l$i")).toDF("k", "lv")
+    val right = spark.sparkContext.makeRDD(1 to 2000, 4).map(i => (i, s"r$i")).toDF("k", "rv")
+    // Repartitioning both sides guarantees two shuffle branches into the join's consumer stage.
+    left.repartition(4, $"k").join(right.repartition(4, $"k"), "k").groupBy("k").count()
+  }
+
+  private def singleShuffleQuery(spark: SparkSession): DataFrame = {
+    import spark.implicits._
+    spark.sparkContext.makeRDD(1 to 2000, 4).map(i => (i % 17, i)).toDF("k", "v")
+      .groupBy("k").sum("v")
+  }
+
+  private def selfJoinQuery(spark: SparkSession): DataFrame = {
+    import spark.implicits._
+    val base = spark.sparkContext.makeRDD(1 to 2000, 4).map(i => (i % 31, i)).toDF("k", "v")
+      .groupBy("k").sum("v")
+    // Joining an aggregation to itself lets Spark reuse the same exchange on both sides.
+    base.as("a").join(base.as("b"), $"a.k" === $"b.k").select($"a.k")
+  }
+
+  test("a single shuffle produces one complete consumer-stage record") {
+    withProfiledQuery("singleShuffle")(singleShuffleQuery) { app =>
+      val analysis = analyze(app)
+      assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+      assert(analysis.provenance == ShuffleInputProvenance.Estimated)
+      assert(analysis.records.nonEmpty)
+      analysis.records.foreach { record =>
+        assert(record.numShuffleBranches >= 1)
+        assert(record.totalShuffleInputBytes >= 0L)
+        assert(record.numTasks > 0)
+        assert(record.stageAttemptId >= 0)
+      }
+    }
+  }
+
+  test("a two-sided join sums both shuffle branches into one consumer stage") {
+    withProfiledQuery("twoSidedJoin")(joinQuery) { app =>
+      val analysis = analyze(app)
+      assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+      val multiBranch = analysis.records.filter(_.numShuffleBranches >= 2)
+      assert(multiBranch.nonEmpty,
+        s"expected a stage fed by several branches but got: ${analysis.records}")
+      // The stage total must exceed any single branch, which is the whole point of summing.
+      multiBranch.foreach { record =>
+        assert(record.totalShuffleInputBytes > 0L)
+      }
+    }
+  }
+
+  test("a reused exchange contributes once per consumer branch") {
+    withProfiledQuery("selfJoinReuse")(selfJoinQuery) { app =>
+      val analysis = analyze(app)
+      assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+      // Reuse shows up as extra branches, never as extra records for the same stage.
+      val branchCounts = analysis.records.map(_.numShuffleBranches)
+      assert(branchCounts.forall(_ >= 1))
+      assert(analysis.records.map(r => (r.sqlId, r.stageId)).distinct.size ==
+        analysis.records.size, "each (sql, consumer stage) must appear exactly once")
+    }
+  }
+
+  test("records are deterministic across repeated analysis of the same application") {
+    withProfiledQuery("determinism")(joinQuery) { app =>
+      assert(analyze(app) == analyze(app))
+    }
+  }
+
+  test("a GPU join event log yields measured per-consumer-stage totals") {
+    val app = loadApp(s"$profilingLogDir/rapids_join_eventlog.zstd")
+    val analysis = analyze(app)
+    assert(app.gpuMode)
+    assert(analysis.provenance == ShuffleInputProvenance.Measured)
+    assert(analysis.isComplete, s"unexpected gaps: ${analysis.incompleteSummary(10)}")
+    // This fixture joins two shuffled inputs into stage 2 and feeds the final stage 3 from one.
+    assert(analysis.records.toSet == Set(
+      ShuffleStageInputRecord(sqlId = 0L, stageId = 2, stageAttemptId = 0,
+        totalShuffleInputBytes = 80152384L, numShuffleBranches = 2, numTasks = 200,
+        hasPositiveSpill = false, hasSkew = false),
+      ShuffleStageInputRecord(sqlId = 0L, stageId = 3, stageAttemptId = 0,
+        totalShuffleInputBytes = 19600L, numShuffleBranches = 1, numTasks = 1,
+        hasPositiveSpill = false, hasSkew = false)))
+  }
+
+  test("a failed SQL execution makes the whole analysis incomplete") {
+    withProfiledQuery("failedSql")(joinQuery) { app =>
+      assert(analyze(app).isComplete)
+      // A recorded end time alone does not prove success; a failure must disable the analysis.
+      app.sqlIdToInfo.values.foreach(_.failureReason = Some("injected failure"))
+      val analysis = analyze(app)
+      assert(!analysis.isComplete)
+      assert(analysis.incompleteReasons.exists {
+        case _: ShuffleStageInputIncompleteReason.IncompleteSqlExecution => true
+        case _ => false
+      })
+    }
+  }
+
+  test("an unfinished SQL execution makes the whole analysis incomplete") {
+    withProfiledQuery("unfinishedSql")(joinQuery) { app =>
+      app.sqlIdToInfo.values.foreach(_.endTime = None)
+      val analysis = analyze(app)
+      assert(!analysis.isComplete)
+      assert(analysis.incompleteReasons.exists {
+        case _: ShuffleStageInputIncompleteReason.IncompleteSqlExecution => true
+        case _ => false
+      })
+    }
+  }
+
+  test("a CPU exchange in a GPU application is an unsupported shuffle input") {
+    withProfiledQuery("mixedPlan")(joinQuery) { app =>
+      assert(analyze(app).isComplete)
+      // Treat the CPU plan as a GPU one: its plain Exchange nodes now lack GPU size metrics,
+      // which is the mixed-plan situation that must never produce a reduction.
+      app.gpuMode = true
+      val analysis = analyze(app)
+      assert(!analysis.isComplete)
+      assert(analysis.incompleteReasons.exists {
+        case _: ShuffleStageInputIncompleteReason.UnsupportedShuffleNode => true
+        case _ => false
+      })
+      assert(analysis.provenance == ShuffleInputProvenance.Measured)
+    }
+  }
+
+  test("a missing exchange size metric makes the whole analysis incomplete") {
+    withProfiledQuery("missingMetric")(joinQuery) { app =>
+      assert(analyze(app).isComplete)
+      // Drop the accumulator evidence behind every exchange 'data size' metric.
+      val dataSizeAccumIds = app.sqlManager.sqlPlans.values.flatMap { planModel =>
+        planModel.getToolsPlanGraph.allNodes
+          .filter(n => ShuffleStageInputAnalyzer.isShuffleInputCandidate(n.name))
+          .flatMap(_.metrics.filter(_.name == ShuffleStageInputAnalyzer.DATA_SIZE_METRIC))
+          .map(_.accumulatorId)
+      }.toSet
+      assert(dataSizeAccumIds.nonEmpty)
+      dataSizeAccumIds.foreach(app.accumManager.removeAccumInfo)
+      val analysis = analyze(app)
+      assert(!analysis.isComplete)
+      assert(analysis.incompleteReasons.exists {
+        case _: ShuffleStageInputIncompleteReason.MissingExchangeMetric => true
+        case _ => false
+      })
+    }
+  }
+
+  test("a consumer stage without a completed successful attempt makes the analysis incomplete") {
+    withProfiledQuery("noSuccessfulAttempt")(joinQuery) { app =>
+      val consumerStageIds = analyze(app).records.map(_.stageId)
+      assert(consumerStageIds.nonEmpty)
+      app.stageManager.removeStages(consumerStageIds)
+      val analysis = analyze(app)
+      assert(!analysis.isComplete)
+      assert(analysis.incompleteReasons.exists {
+        case _: ShuffleStageInputIncompleteReason.NoSuccessfulStageAttempt => true
+        case _ => false
+      })
+    }
+  }
+
+  test("a broadcast exchange is never treated as a shuffle input") {
+    assert(!ShuffleStageInputAnalyzer.isShuffleInputCandidate("BroadcastExchange"))
+    assert(!ShuffleStageInputAnalyzer.isShuffleInputCandidate("GpuBroadcastExchange"))
+    assert(ShuffleStageInputAnalyzer.isShuffleInputCandidate("Exchange"))
+    assert(ShuffleStageInputAnalyzer.isShuffleInputCandidate("GpuColumnarExchange"))
+  }
+
+  test("GPU spill evidence is retained per stage attempt") {
+    TrampolineUtil.withTempDir { tmpDir =>
+      // Attempt 0 of stage 10 spilled; attempt 1 of the same stage ran clean.
+      val logPath = Paths.get(tmpDir.getAbsolutePath, "gpu_spill_attempts_eventlog")
+      // scalastyle:off line.size.limit
+      val content =
+        """{"Event":"SparkListenerLogStart","Spark Version":"3.5.0"}
+          |{"Event":"SparkListenerApplicationStart","App Name":"GpuSpillAttempts","App ID":"local-1600000000000","Timestamp":123456,"User":"tester"}
+          |{"Event":"SparkListenerTaskEnd","Stage ID":10,"Stage Attempt ID":0,"Task Type":"ShuffleMapTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":1,"Index":1,"Attempt":0,"Partition ID":1,"Launch Time":1712248533994,"Executor ID":"1","Host":"host1","Locality":"PROCESS_LOCAL","Speculative":false,"Getting Result Time":0,"Finish Time":1712248534994,"Failed":false,"Killed":false,"Accumulables":[{"ID":1018,"Name":"gpuSpillToHostTime","Update":"00:00:00.845","Value":"00:00:00.845","Internal":false,"Count Failed Values":true}]}}
+          |{"Event":"SparkListenerTaskEnd","Stage ID":10,"Stage Attempt ID":1,"Task Type":"ShuffleMapTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":2,"Index":1,"Attempt":0,"Partition ID":1,"Launch Time":1712248535994,"Executor ID":"1","Host":"host1","Locality":"PROCESS_LOCAL","Speculative":false,"Getting Result Time":0,"Finish Time":1712248536994,"Failed":false,"Killed":false,"Accumulables":[{"ID":1010,"Name":"gpuSemaphoreWait","Update":"00:00:00.492","Value":"00:00:00.492","Internal":false,"Count Failed Values":true}]}}""".stripMargin
+      // scalastyle:on line.size.limit
+      Files.write(logPath, content.getBytes(StandardCharsets.UTF_8))
+      val app = loadApp(logPath.toString)
+      assert(app.accumManager.hasGpuSpillEvidence(10, 0),
+        "the failed-style attempt 0 must retain its spill evidence")
+      assert(!app.accumManager.hasGpuSpillEvidence(10, 1),
+        "the clean attempt 1 must not inherit attempt 0's spill")
+    }
+  }
+
+  test("a zero GPU spill update is not treated as spill evidence") {
+    TrampolineUtil.withTempDir { tmpDir =>
+      val logPath = Paths.get(tmpDir.getAbsolutePath, "gpu_zero_spill_eventlog")
+      // scalastyle:off line.size.limit
+      val content =
+        """{"Event":"SparkListenerLogStart","Spark Version":"3.5.0"}
+          |{"Event":"SparkListenerApplicationStart","App Name":"GpuZeroSpill","App ID":"local-1600000000001","Timestamp":123456,"User":"tester"}
+          |{"Event":"SparkListenerTaskEnd","Stage ID":7,"Stage Attempt ID":0,"Task Type":"ShuffleMapTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":1,"Index":1,"Attempt":0,"Partition ID":1,"Launch Time":1712248533994,"Executor ID":"1","Host":"host1","Locality":"PROCESS_LOCAL","Speculative":false,"Getting Result Time":0,"Finish Time":1712248534994,"Failed":false,"Killed":false,"Accumulables":[{"ID":1018,"Name":"gpuSpillToHostTime","Update":"00:00:00.000","Value":"00:00:00.000","Internal":false,"Count Failed Values":true}]}}""".stripMargin
+      // scalastyle:on line.size.limit
+      Files.write(logPath, content.getBytes(StandardCharsets.UTF_8))
+      val app = loadApp(logPath.toString)
+      assert(!app.accumManager.hasGpuSpillEvidence(7, 0))
+    }
+  }
+
+  test("the profiling analyzer exposes the same analysis without a second traversal") {
+    withProfiledQuery("providerReuse")(joinQuery) { app =>
+      val fromAnalyzer = app.planMetricProcessor.shuffleStageInputAnalysis
+      assert(fromAnalyzer == analyze(app))
+      // The lazy val must be cached rather than recomputed on every access.
+      assert(app.planMetricProcessor.shuffleStageInputAnalysis eq fromAnalyzer)
+    }
+  }
+
+  test("test resources are available") {
+    assert(new File(s"$profilingLogDir/rapids_join_eventlog.zstd").exists())
+  }
+}

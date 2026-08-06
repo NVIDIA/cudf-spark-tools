@@ -189,6 +189,9 @@ abstract class EventProcessorBase[T <: AppBase](app: T) extends SparkListener wi
     app.sqlIdToInfo.get(event.executionId).foreach { sql =>
       sql.endTime = Some(event.time)
       sql.duration = ProfileUtils.OptionLongMinusLong(sql.endTime, sql.startTime)
+      // An end time alone does not prove the execution succeeded. Record the failure text so
+      // analyses that need terminal success can tell a completed execution from a failed one.
+      sql.failureReason = EventUtils.readErrorMessageFromSQLEndEvent(event)
     }
   }
 
@@ -396,11 +399,10 @@ abstract class EventProcessorBase[T <: AppBase](app: T) extends SparkListener wi
   def doSparkListenerTaskEnd(
       app: T,
       event: SparkListenerTaskEnd): Unit = {
-    // TODO: this implementation needs to be updated to use attemptID
     // Parse task accumulables
     for (res <- event.taskInfo.accumulables) {
       try {
-        app.accumManager.addAccToTask(event.stageId, res)
+        app.accumManager.addAccToTask(event.stageId, event.stageAttemptId, res)
       } catch {
         case NonFatal(e) =>
           logWarning("Exception when parsing accumulables on task-completed "

@@ -312,9 +312,20 @@ class SQLExecutionInfoClass(
     // Empty for Spark 3.2.x event logs or when no runtime config changes were made.
     // This stores only the overrides, not the full config set.
     val modifiedConfigs: Map[String, String] = Map.empty) {
+  // Failure text reported by SparkListenerSQLExecutionEnd, when the Spark version records one.
+  // A recorded end time alone does not prove the execution succeeded, so consumers that need
+  // terminal success must consult this as well.
+  var failureReason: Option[String] = None
+
   def setDsOrRdd(value: Boolean): Unit = {
     hasDatasetOrRDD = value
   }
+
+  /**
+   * True only when the execution reached a terminal end event without a reported failure.
+   * Used by analyses that must fail closed on incomplete or failed SQL executions.
+   */
+  def isTerminalSuccess: Boolean = endTime.isDefined && failureReason.isEmpty
 }
 
 case class SQLAccumProfileResults(

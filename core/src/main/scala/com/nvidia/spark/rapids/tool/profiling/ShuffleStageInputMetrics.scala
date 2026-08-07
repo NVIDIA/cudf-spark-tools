@@ -109,12 +109,17 @@ object ShuffleStageInputIncompleteReason {
  *                           must then keep the normal recommendation
  * @param provenance         whether `records` carry measured or estimated shuffle bytes
  * @param analyzed           false when no analysis was produced for the application at all
+ * @param appHasFailedStage  true when any stage in the application failed, anywhere. This is an
+ *                           application-wide signal, deliberately broader than the per-record
+ *                           attempt evidence: a run that failed a stage is not a run to size a
+ *                           global reduction from.
  */
 case class ShuffleStageInputAnalysis(
     records: Seq[ShuffleStageInputRecord],
     incompleteReasons: Seq[ShuffleStageInputIncompleteReason],
     provenance: ShuffleInputProvenance,
-    analyzed: Boolean = true) {
+    analyzed: Boolean = true,
+    appHasFailedStage: Boolean = false) {
 
   def isComplete: Boolean = analyzed && incompleteReasons.isEmpty
 

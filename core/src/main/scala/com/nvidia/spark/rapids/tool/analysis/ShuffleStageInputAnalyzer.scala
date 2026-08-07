@@ -82,7 +82,8 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
           reasons += ShuffleStageInputIncompleteReason.IncompleteSqlExecution(planModel.id)
       }
     }
-    ShuffleStageInputAnalysis(records.toSeq, reasons.toSeq, provenance)
+    ShuffleStageInputAnalysis(records.toSeq, reasons.toSeq, provenance,
+      appHasFailedStage = app.stageManager.getFailedStages.nonEmpty)
   }
 
   /**

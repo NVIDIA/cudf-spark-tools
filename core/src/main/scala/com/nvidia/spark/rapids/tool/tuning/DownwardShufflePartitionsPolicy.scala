@@ -237,6 +237,16 @@ object DownwardShuffleSkipReason {
       s"candidate $candidate is not at least ${minFactor}x smaller than the current" +
         s" recommendation $normalValue")
 
+  /**
+   * The application failed a stage or hit an OOM anywhere. Sizing a global reduction from a run
+   * that did not complete cleanly is unsafe even when the consumer stages themselves look healthy.
+   */
+  case object ApplicationHasFailedStage
+    extends DownwardShuffleSkipReason("the application had a failed stage")
+
+  case object ApplicationHadOom
+    extends DownwardShuffleSkipReason("the application had an out-of-memory failure")
+
   case class UpwardSafetyReason(reason: String)
     extends DownwardShuffleSkipReason(
       s"an existing upward recommendation must be preserved: $reason")

@@ -158,13 +158,15 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       provenance: ShuffleInputProvenance = ShuffleInputProvenance.Measured,
       numBranches: Int = 1,
       hasPositiveSpill: Boolean = false,
-      hasSkew: Boolean = false): ShuffleStageInputAnalysis = {
+      hasSkew: Boolean = false,
+      appHasFailedStage: Boolean = false): ShuffleStageInputAnalysis = {
     val records = stageInputs.map { case (stageId, bytes) =>
       ShuffleStageInputRecord(sqlId = 0L, stageId = stageId, stageAttemptId = 0,
         totalShuffleInputBytes = bytes, numShuffleBranches = numBranches, numTasks = 200,
         hasPositiveSpill = hasPositiveSpill, hasSkew = hasSkew)
     }
-    ShuffleStageInputAnalysis(records, Seq.empty, provenance)
+    ShuffleStageInputAnalysis(records, Seq.empty, provenance,
+      appHasFailedStage = appHasFailedStage)
   }
 
   /** Builds an analysis that ran but found a gap, which must keep the normal recommendation. */

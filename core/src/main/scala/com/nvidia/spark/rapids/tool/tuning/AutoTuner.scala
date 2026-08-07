@@ -263,6 +263,12 @@ abstract class AutoTuner(
   private val shufflePartitionUpwardReasons: mutable.LinkedHashSet[String] =
     mutable.LinkedHashSet[String]()
 
+  /**
+   * True when the application hit an out-of-memory failure. Only GPU profiling carries this
+   * evidence, so the base implementation reports false and the profiling AutoTuner overrides it.
+   */
+  protected def applicationHadOom: Boolean = false
+
   /** Records an upward shuffle-partition decision so the downward pass cannot undo it. */
   protected def recordShufflePartitionUpwardReason(reason: String): Unit = {
     shufflePartitionUpwardReasons += reason
@@ -1843,7 +1849,12 @@ abstract class AutoTuner(
    * active AQE partition property must move with it.
    */
   private def requiredPartitionProperties: Seq[String] = {
-    applyToAllPartitionProperties[String](identity)
+    // 'spark.sql.shuffle.partitions' always applies. The AQE partition property is updated only
+    // when a value for it already exists, from the source application or an earlier
+    // recommendation: this pass lowers a partition count, it does not introduce a property the
+    // application never carried.
+    val aqeProperty = aqePartitionProperty.filter(getPropertyValue(_).isDefined)
+    (aqeProperty.toSeq :+ "spark.sql.shuffle.partitions").distinct
   }
 
   /**
@@ -1866,7 +1877,18 @@ abstract class AutoTuner(
           None
         }
       }
-      // 3. Every affected consumer stage must be free of skew and spill.
+      // 3. A run that failed a stage or ran out of memory is not evidence to reduce from.
+      .orElse {
+        val analysis = appInfoProvider.getShuffleStageInputAnalysis
+        if (analysis.appHasFailedStage) {
+          Some(DownwardShuffleSkipReason.ApplicationHasFailedStage)
+        } else if (applicationHadOom) {
+          Some(DownwardShuffleSkipReason.ApplicationHadOom)
+        } else {
+          None
+        }
+      }
+      // 4. Every affected consumer stage must be free of skew and spill.
       .orElse {
         appInfoProvider.getShuffleStageInputAnalysis.records.collectFirst {
           case record if record.hasPositiveSpill =>
@@ -1875,7 +1897,7 @@ abstract class AutoTuner(
             DownwardShuffleSkipReason.StagePressure(record.stageId, "shuffle read skew")
         }
       }
-      // 4. Every property this decision must write has to be writable.
+      // 5. Every property this decision must write has to be writable.
       .orElse {
         requiredPartitionProperties.collectFirst {
           case property if ignoreRecommendation(property) || !isCalculationEnabled(property) =>
@@ -2424,6 +2446,11 @@ class ProfilingAutoTuner(
         // Else, use the value from the parent implementation
         calculatedValueFromInputSize
     }
+  }
+
+  override protected def applicationHadOom: Boolean = {
+    appInfoProvider.scanStagesWithGpuOom.nonEmpty ||
+      appInfoProvider.gpuShuffleStagesWithContainerOom.nonEmpty
   }
 
   /**

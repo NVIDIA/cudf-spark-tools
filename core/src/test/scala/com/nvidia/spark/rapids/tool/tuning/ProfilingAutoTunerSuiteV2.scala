@@ -2525,6 +2525,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       sourceProps: mutable.Map[String, String] = downwardPassSourceProps(),
       shuffleStagesWithPosSpilling: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
+      scanStagesWithGpuOom: Set[Long] = Set(),
+      meanInputOverride: Option[Double] = None,
       maxColumnarExchangeDataSizeBytes: Option[Long] = None,
       extraTuningConfigs: List[TuningConfigEntry] = List.empty,
       platformName: String = PlatformNames.DATAPROC,
@@ -2539,10 +2541,11 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       jvmGCFractions = Seq(0.1, 0.1),
       propsFromLog = sourceProps,
       sparkVersion = Some(testSparkVersion),
-      meanInput = 1.0E9,
+      meanInput = meanInputOverride.getOrElse(1.0E9),
       meanShuffleRead = 1.0E9,
       shuffleStagesWithPosSpilling = shuffleStagesWithPosSpilling,
       gpuShuffleStagesWithContainerOom = gpuShuffleStagesWithContainerOom,
+      scanStagesWithGpuOom = scanStagesWithGpuOom,
       maxColumnarExchangeDataSizeBytes = maxColumnarExchangeDataSizeBytes,
       shuffleStageInputAnalysis = shuffleStageInputAnalysis)
     val platform = PlatformFactory.createInstance(platformName)
@@ -2788,5 +2791,36 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val expected = math.ceil(900.0 / expectedSlots).toInt * expectedSlots
     assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains(expected.toString))
     assert(comments.map(_.comment).exists(_.contains(s"$expectedSlots cluster task slots")))
+  }
+
+  test("Downward pass is blocked when the application had a failed stage") {
+    val withFailure = completeShuffleStageInputs(Seq(4 -> 900L * GiB), appHasFailedStage = true)
+    val (properties, comments) = runDownwardPass(withFailure)
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass is blocked when the application had an OOM") {
+    // A GPU OOM anywhere in the application disqualifies the run as sizing evidence, even
+    // though the consumer stages themselves look clean.
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      scanStagesWithGpuOom = Set(9L))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
+    assert(!comments.exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass leaves the two partition properties in agreement") {
+    // The pass updates the AQE partition property only when a value for it already exists. In a
+    // normal AQE run recommendAQEProperties has already appended one, so the guard is inert and
+    // both properties move together; what users depend on is that they never disagree.
+    val sourceProps = downwardPassSourceProps()
+    sourceProps.remove(AQE_INITIAL_PARTITION_NUM_KEY)
+    val (properties, _) = runDownwardPass(worstStageNeeding900Partitions,
+      sourceProps = sourceProps)
+    val shuffle = recommendedValue(properties, SHUFFLE_PARTITIONS_KEY)
+    val aqe = recommendedValue(properties, AQE_INITIAL_PARTITION_NUM_KEY)
+    assert(shuffle.contains("1200"))
+    assert(aqe.forall(_ == shuffle.get),
+      s"partition properties disagree: shuffle=$shuffle aqe=$aqe")
   }
 }

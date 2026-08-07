@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ trait AppInformationViewTrait extends ViewableTrait[AppInfoProfileResults] {
   def getRawView(app: AppBase, index: Int): Seq[AppInfoProfileResults] = {
     app.appMetaData.map { a =>
       AppInfoProfileResults(a.appName, a.appId, Option(a.attemptId),
-        a.sparkUser, a.startTime, a.endTime, app.getAppDuration,
+        a.sparkUser, a.startTime, a.endTime, app.getAppExitCode, app.getAppDuration,
         a.getDurationString, app.getSparkRuntime, app.sparkVersion, app.gpuMode,
         app.totalCoreSeconds)
     }.toSeq

@@ -458,6 +458,7 @@ case class AppInfoProfileResults(
     sparkUser: String,
     startTime: Long,
     endTime: Option[Long],
+    exitCode: Option[Int],
     duration: Option[Long],
     durationStr: String,
     sparkRuntime: SparkRuntime.SparkRuntime,
@@ -482,6 +483,10 @@ case class AppInfoProfileResults(
     }
   }
 
+  private def exitCodeToStr: String = {
+    exitCode.map(_.toString).getOrElse("")
+  }
+
   private def appIdToStr: String = {
     appId match {
       case Some(t) => t
@@ -498,7 +503,7 @@ case class AppInfoProfileResults(
 
   override def convertToSeq(): Array[String] = {
     Array(appName, appIdToStr, attemptIdToStr,
-      sparkUser, startTime.toString, endTimeToStr, durToStr,
+      sparkUser, startTime.toString, endTimeToStr, exitCodeToStr, durToStr,
       durationStr, sparkRuntime.toString, sparkVersion, pluginEnabled.toString,
       totalCoreSeconds.toString)
   }
@@ -508,7 +513,8 @@ case class AppInfoProfileResults(
       StringUtils.reformatCSVString(appIdToStr),
       StringUtils.reformatCSVString(attemptIdToStr),
       StringUtils.reformatCSVString(sparkUser),
-      startTime.toString, endTimeToStr, durToStr, StringUtils.reformatCSVString(durationStr),
+      startTime.toString, endTimeToStr, exitCodeToStr, durToStr,
+      StringUtils.reformatCSVString(durationStr),
       StringUtils.reformatCSVString(sparkRuntime.toString),
       StringUtils.reformatCSVString(sparkVersion),
       pluginEnabled.toString,

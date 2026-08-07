@@ -83,6 +83,10 @@ reportDefinitions:
             dataType: Long
             description: >-
               TBD
+          - name: exitCode
+            dataType: Int
+            description: >-
+              Spark application exit code, when recorded in the event log.
           - name: duration
             dataType: Long
             description: >-

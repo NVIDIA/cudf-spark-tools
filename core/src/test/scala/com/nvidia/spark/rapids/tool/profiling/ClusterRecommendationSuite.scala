@@ -346,7 +346,6 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |--conf spark.rapids.sql.multiThreadedRead.numThreads=40
             |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
             |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=400
-            |--conf spark.sql.files.maxPartitionBytes=1851m
             |--conf spark.sql.shuffle.partitions=400
             |--conf spark.task.resource.gpu.amount=0.001
             |
@@ -469,7 +468,6 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |--conf spark.rapids.sql.multiThreadedRead.numThreads=40
             |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
             |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=400
-            |--conf spark.sql.files.maxPartitionBytes=1851m
             |--conf spark.sql.shuffle.partitions=400
             |--conf spark.task.resource.gpu.amount=0.001
             |

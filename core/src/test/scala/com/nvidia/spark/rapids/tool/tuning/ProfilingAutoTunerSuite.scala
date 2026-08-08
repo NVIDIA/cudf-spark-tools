@@ -3284,7 +3284,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     }
   }
 
-  test("test AutoTuner reduces maxPartitionBytes when scan stages have GPU OOM failures") {
+  test("test AutoTuner skips maxPartitionBytes when GPU OOM has no reliable scan baseline") {
     val eventLog = s"$profilingLogDir/gpu_oom_eventlog.zstd"
     TrampolineUtil.withTempDir { tempDir =>
       val appArgs = new ProfileArgs(Array(
@@ -3301,8 +3301,8 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
       val sparkProperties = FSUtils.readFileContentAsUTF8(sparkPropertiesFile)
       assert(sparkProperties.contains("\"spark.sql.files.maxPartitionBytes\",\"10gb\""))
 
-      // Compare the auto-tuner output to the expected results and assert that
-      // the maxPartitionBytes is reduced.
+      // This log has no final data-source-to-stage raw mapping, so the AutoTuner must not derive
+      // maxPartitionBytes from its global task input or use GPU OOM to establish a baseline.
       val logFile = getOutputFilePath(tempDir, "profile.log")
       val profileLogContent = FSUtils.readFileContentAsUTF8(logFile)
       val actualResults = extractAutoTunerResults(profileLogContent)
@@ -3323,7 +3323,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
             |--conf spark.rapids.sql.multiThreadedRead.numThreads=32
             |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
             |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=400
-            |--conf spark.sql.files.maxPartitionBytes=1851m
             |--conf spark.sql.shuffle.partitions=400
             |--conf spark.task.resource.gpu.amount=0.001
             |

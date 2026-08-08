@@ -2586,4 +2586,179 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(uncappedAdjusted("spark.executor.pyspark.memory") == 15L * 1024L)
     assert(uncappedAdjusted.values.sum == base.values.sum)
   }
+
+  test("PySpark HEAP rebalance narrowly supersedes preserved coordinated values") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      preserveSparkProperties = List(
+        "spark.executor.memory", "spark.executor.pyspark.memory", "spark.executor.cores"))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(values("spark.executor.memory") == "29g")
+    assert(values("spark.executor.pyspark.memory") == "7g")
+    val coordinatedTotalMB = Seq("spark.executor.memory", "spark.executor.pyspark.memory")
+      .map(key => StringUtils.convertToMB(values(key), Some(ByteUnit.BYTE))).sum
+    assert(coordinatedTotalMB == 36L * 1024L)
+    assert(values("spark.executor.cores") == "8")
+    assert(!comments.exists(_.comment == getPreservedPropertyComment("spark.executor.memory")))
+    assert(!comments.exists(
+      _.comment == getPreservedPropertyComment("spark.executor.pyspark.memory")))
+    assert(comments.exists(_.comment == getPreservedPropertyComment("spark.executor.cores")))
+    assert(!comments.exists(_.comment.contains("constraint=")), comments.mkString("\n"))
+  }
+
+  test("PySpark coordinated rebalance reports enforced conflicts without a partial pair") {
+    def run(
+        enforced: Map[String, String],
+        withMetrics: Boolean = true): (Map[String, String], Seq[String]) = {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(testSparkVersion),
+        pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0,
+          if (withMetrics) Seq(peakBytes) else Seq.empty)))
+      val preserved = if (enforced.contains("spark.executor.memory")) List.empty
+        else List("spark.executor.memory")
+      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+        cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4.toString), enforcedSparkProperties = enforced,
+        preserveSparkProperties = preserved)
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+        Some(targetClusterInfo))
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+      val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      (properties.map(property => property.name -> property.getTuneValue()).toMap,
+        comments.map(_.comment))
+    }
+
+    Seq(
+      Map("spark.executor.pyspark.memory" -> "5g"),
+      Map("spark.executor.memory" -> "32g")
+    ).foreach { enforced =>
+      val (values, comments) = run(enforced)
+      assert(values("spark.executor.memory") == "32g")
+      assert(values.get("spark.executor.pyspark.memory").forall(_ != "7g"))
+      val conflict = comments.filter(_.contains("constraint=enforced"))
+      assert(conflict.size == 1)
+      Seq("observedCurrentMB=4096", "layoutCurrentMB=", "candidateMB=7168",
+        "requiredDeltaMB=", "selectedSource=spark.executor.memory", "availableDeltaMB=")
+        .foreach(field => assert(conflict.head.contains(field), conflict.head))
+    }
+
+    Seq("7g", "8g").foreach { enforcedTarget =>
+      val (values, comments) = run(Map("spark.executor.pyspark.memory" -> enforcedTarget))
+      assert(values("spark.executor.memory") == "32g")
+      assert(values("spark.executor.pyspark.memory") == enforcedTarget)
+      assert(!comments.exists(_.contains("constraint=enforced")))
+    }
+
+    val (retryValues, retryComments) =
+      run(Map("spark.executor.memory" -> "32g"), withMetrics = false)
+    assert(retryValues.get("spark.executor.pyspark.memory").forall(_ != "6g"))
+    assert(retryComments.count(_.contains("constraint=enforced")) == 1)
+    assert(retryComments.exists(_.contains("spark.executor.metrics.pollingInterval=5000")))
+  }
+
+  test("PySpark conflict comments identify capacity and source capability") {
+    def run(heap: String, master: SparkMaster, overhead: Boolean):
+        (Map[String, String], Seq[String]) = {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> heap,
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(testSparkVersion),
+        pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+        cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4.toString),
+        preserveSparkProperties = List("spark.executor.memory"))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+        Some(targetClusterInfo))
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+      val configs = if (overhead) Some(ToolTestUtils.buildTuningConfigs(profiling = List(
+        TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD"))))
+      else None
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(master), configs)
+      val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      (properties.map(property => property.name -> property.getTuneValue()).toMap,
+        comments.map(_.comment))
+    }
+
+    val (capacityValues, capacityComments) = run("16g", Kubernetes, overhead = false)
+    assert(capacityValues("spark.executor.memory") == "16g")
+    assert(capacityValues.get("spark.executor.pyspark.memory").forall(_ != "7g"))
+    assert(capacityComments.count(_.contains("constraint=capacity")) == 1)
+
+    val (masterValues, masterComments) = run("32g", Standalone, overhead = true)
+    assert(masterValues("spark.executor.memory") == "32g")
+    assert(masterValues.get("spark.executor.pyspark.memory").forall(_ != "7g"))
+    assert(masterComments.count(_.contains("constraint=source-capability")) == 1)
+  }
+
+  test("PySpark arithmetic overflow emits one structured conflict") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(6L * 1024L * 1024L * 1024L))))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      preserveSparkProperties = List("spark.executor.memory"))
+    val configs = ToolTestUtils.buildTuningConfigs(profiling = List(TuningConfigEntry(
+      name = "PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER", default = "1e100")))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes), Some(configs))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    assert(properties.find(_.name == "spark.executor.memory").get.getTuneValue() == "32g")
+    assert(properties.find(_.name == "spark.executor.pyspark.memory")
+      .forall(_.getTuneValue() != "7g"))
+    val conflicts = comments.map(_.comment).filter(_.contains("constraint=arithmetic"))
+    assert(conflicts.size == 1)
+    Seq("observedCurrentMB=4096", "layoutCurrentMB=4096", "candidateMB=overflow",
+      "requiredDeltaMB=overflow", "selectedSource=spark.executor.memory",
+      "availableDeltaMB=unknown").foreach(field => assert(conflicts.head.contains(field)))
+  }
 }

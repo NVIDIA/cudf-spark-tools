@@ -523,8 +523,16 @@ abstract class AutoTuner(
       platform.getUserEnforcedSparkProperty(key).isDefined
   }
 
-  def appendRecommendation(key: String, value: String): Unit = {
-    if (ignoreRecommendation(key)) {
+  private def appendRecommendationInternal(
+      key: String,
+      value: String,
+      allowCoordinatedPreserveOverride: Boolean): Unit = {
+    val ignore = if (allowCoordinatedPreserveOverride && platform.isPropertyPreserved(key)) {
+      skippedRecommendations.contains(key) || platform.getUserEnforcedSparkProperty(key).isDefined
+    } else {
+      ignoreRecommendation(key)
+    }
+    if (ignore) {
       return
     }
     // Update the recommendation entry or update the existing one.
@@ -545,6 +553,25 @@ abstract class AutoTuner(
       }
       // add the persistent comment if any.
       appendPersistentComment(key)
+    }
+  }
+
+  def appendRecommendation(key: String, value: String): Unit = {
+    appendRecommendationInternal(key, value, allowCoordinatedPreserveOverride = false)
+  }
+
+  /**
+   * Append one side of a fully validated PySpark memory transfer. This is deliberately narrower
+   * than normal recommendation handling: it may replace a preserved value, but never an enforced
+   * or skipped value. Callers must invoke it only after the complete source/target pair succeeds.
+   */
+  private def appendCoordinatedPySparkMemoryRecommendation(key: String, valueMB: Long): Unit = {
+    if (valueMB > 0L) {
+      // The successful heuristic replaces this one preserved value, so its earlier preserve
+      // comment would now be misleading. Preserve comments for every unrelated key remain.
+      comments -= getPreservedPropertyComment(key)
+      appendRecommendationInternal(key, s"${valueMB}m",
+        allowCoordinatedPreserveOverride = true)
     }
   }
 
@@ -768,11 +795,21 @@ abstract class AutoTuner(
           ceilToGiBInMB(BigDecimal(current) * pySparkMemoryTuningPolicy.retryGrowthFactor)
         }
       }
-      val guidance = if (observedCurrent.isEmpty || peaks.isEmpty) {
+      val guidance = if (observedCurrent.isEmpty) {
         Some(pySparkTelemetryGuidance)
       } else if (candidate.isEmpty) {
-        Some("PySpark memory evidence exceeded the supported arithmetic range; " +
-          "no coordinated memory recommendation was produced.")
+        val selectedKey = pySparkMemoryTuningPolicy.rebalanceSource match {
+          case PySparkMemoryRebalanceSource.Heap => "spark.executor.memory"
+          case PySparkMemoryRebalanceSource.Overhead => "spark.executor.memoryOverhead"
+        }
+        val retryGuidance = if (peaks.isEmpty) s" $pySparkTelemetryGuidance" else ""
+        Some("PySpark memory rebalance was not applied: " +
+          s"observedCurrentMB=${observedCurrent.get}, layoutCurrentMB=$layoutCurrent, " +
+          s"candidateMB=overflow, requiredDeltaMB=overflow, selectedSource=$selectedKey, " +
+          s"availableDeltaMB=unknown, constraint=arithmetic. Reduce the configured " +
+          s"multiplier to keep the candidate in the supported range.$retryGuidance")
+      } else if (peaks.isEmpty) {
+        Some(pySparkTelemetryGuidance)
       } else {
         None
       }
@@ -792,36 +829,48 @@ abstract class AutoTuner(
           case PySparkMemoryRebalanceSource.Heap => "spark.executor.memory"
           case PySparkMemoryRebalanceSource.Overhead => "spark.executor.memoryOverhead"
         }
-        val selectedSourceIsImmovable = platform.isPropertyUserOverridden(selectedKey) ||
-          platform.isPropertyUserOverridden(PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY)
-        if (selectedSourceIsImmovable) {
-          (base, Some(s"PySpark memory rebalance was not applied because $selectedKey or " +
-            s"${PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY} is user-overridden."))
+        val availableDelta = pySparkMemoryTuningPolicy.rebalanceSource match {
+          case PySparkMemoryRebalanceSource.Heap =>
+            Math.max(0L, base.executorHeap.get - protectedHeapFloorMB)
+          case PySparkMemoryRebalanceSource.Overhead =>
+            Math.max(0L, base.executorMemOverhead.get - protectedOverheadFloorMB)
+        }
+        def conflict(category: String): (MemorySettings, Option[String]) = {
+          val observed = adjustment.observedCurrentMB.map(_.toString).getOrElse("absent")
+          val action = category match {
+            case "enforced" =>
+              " Remove or raise the conflicting enforced property to allow a full transfer."
+            case "capacity" =>
+              " Increase the selected source capacity or choose a larger executor layout."
+            case "source-capability" =>
+              " executor overhead is supported only for YARN and Kubernetes targets."
+            case _ => ""
+          }
+          (base, Some("PySpark memory rebalance was not applied: " +
+            s"observedCurrentMB=$observed, layoutCurrentMB=${adjustment.layoutCurrentMB}, " +
+            s"candidateMB=$targetMB, requiredDeltaMB=$delta, selectedSource=$selectedKey, " +
+            s"availableDeltaMB=$availableDelta, constraint=$category.$action"))
+        }
+        val hasEnforcedConflict =
+          platform.getUserEnforcedSparkProperty(selectedKey).isDefined ||
+            platform.getUserEnforcedSparkProperty(
+              PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY).isDefined
+        if (hasEnforcedConflict) {
+          conflict("enforced")
+        } else if (pySparkMemoryTuningPolicy.rebalanceSource ==
+            PySparkMemoryRebalanceSource.Overhead &&
+            !sparkMaster.contains(Yarn) && !sparkMaster.contains(Kubernetes)) {
+          conflict("source-capability")
+        } else if (delta > availableDelta) {
+          conflict("capacity")
         } else {
           pySparkMemoryTuningPolicy.rebalanceSource match {
             case PySparkMemoryRebalanceSource.Heap =>
-              val heap = base.executorHeap.get
-              if (delta <= heap - protectedHeapFloorMB) {
-                (base.copy(executorHeap = Some(heap - delta), pySparkMem = Some(targetMB)), None)
-              } else {
-                (base, Some(s"PySpark memory rebalance needs ${delta}MB from executor heap, " +
-                  s"but only ${Math.max(0L, heap - protectedHeapFloorMB)}MB is available."))
-              }
+              (base.copy(executorHeap = Some(base.executorHeap.get - delta),
+                pySparkMem = Some(targetMB)), None)
             case PySparkMemoryRebalanceSource.Overhead =>
-              if (!sparkMaster.contains(Yarn) && !sparkMaster.contains(Kubernetes)) {
-                (base, Some("PySpark memory rebalance from executor overhead is supported only " +
-                  "for YARN and Kubernetes targets."))
-              } else {
-                val overhead = base.executorMemOverhead.get
-                if (delta <= overhead - protectedOverheadFloorMB) {
-                  (base.copy(executorMemOverhead = Some(overhead - delta),
-                    pySparkMem = Some(targetMB)), None)
-                } else {
-                  (base, Some(s"PySpark memory rebalance needs ${delta}MB from executor " +
-                    s"overhead, but only ${Math.max(0L, overhead - protectedOverheadFloorMB)}MB " +
-                    "is available above the RAPIDS-safe floor."))
-                }
-              }
+              (base.copy(executorMemOverhead = Some(base.executorMemOverhead.get - delta),
+                pySparkMem = Some(targetMB)), None)
           }
         }
       }
@@ -1378,14 +1427,27 @@ abstract class AutoTuner(
             // Ref: https://spark.apache.org/docs/latest/configuration.html#:~:text=This%20option%20is%20currently%20supported%20on%20YARN%20and%20Kubernetes.
             // scalastyle:on line.size.limit
             if (sparkMaster.contains(Yarn) || sparkMaster.contains(Kubernetes)) {
-              appendRecommendationForMemoryMB("spark.executor.memoryOverhead",
-                s"${recomMemorySettings.executorMemOverhead.get}")
+              if (recomMemorySettings.pySparkMem.isDefined &&
+                  pySparkMemoryTuningPolicy.rebalanceSource ==
+                    PySparkMemoryRebalanceSource.Overhead) {
+                appendCoordinatedPySparkMemoryRecommendation("spark.executor.memoryOverhead",
+                  recomMemorySettings.executorMemOverhead.get)
+              } else {
+                appendRecommendationForMemoryMB("spark.executor.memoryOverhead",
+                  s"${recomMemorySettings.executorMemOverhead.get}")
+              }
             }
-            appendRecommendationForMemoryMB("spark.executor.memory",
-              s"${recomMemorySettings.executorHeap.get}")
+            if (recomMemorySettings.pySparkMem.isDefined &&
+                pySparkMemoryTuningPolicy.rebalanceSource == PySparkMemoryRebalanceSource.Heap) {
+              appendCoordinatedPySparkMemoryRecommendation("spark.executor.memory",
+                recomMemorySettings.executorHeap.get)
+            } else {
+              appendRecommendationForMemoryMB("spark.executor.memory",
+                s"${recomMemorySettings.executorHeap.get}")
+            }
             recomMemorySettings.pySparkMem.foreach { pySparkMemMB =>
-              appendRecommendationForMemoryMB(PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY,
-                s"$pySparkMemMB")
+              appendCoordinatedPySparkMemoryRecommendation(
+                PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY, pySparkMemMB)
             }
 
             // Add off-heap memory recommendation based on hybrid scan detection

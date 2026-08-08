@@ -51,7 +51,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val shuffleSkewStages: Set[Long],
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
-    val maxColumnarExchangeDataSizeBytes: Option[Long] = None)
+    val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+    val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty)
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
   override def getMaxInput: Double = maxInput
@@ -72,6 +73,7 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def scanStagesWithGpuOom: Set[Long] = scanStagesWithGpuOomSet
   override def gpuShuffleStagesWithContainerOom: Set[Long] = gpuShuffleStagesWithContainerOomSet
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = maxColumnarExchangeDataSizeBytes
+  override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = pySparkMemoryEvidence
 
   /**
    * Sets the spark master property in the properties map.
@@ -137,11 +139,12 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       shuffleSkewStages: Set[Long] = Set(),
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
-      maxColumnarExchangeDataSizeBytes: Option[Long] = None): AppInfoProviderMockTest = {
+      maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+      pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
-      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes)
+      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, pySparkMemoryEvidence)
   }
 
   /**

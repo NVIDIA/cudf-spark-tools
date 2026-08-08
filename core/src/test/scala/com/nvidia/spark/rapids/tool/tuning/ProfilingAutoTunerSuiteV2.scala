@@ -19,7 +19,7 @@ package com.nvidia.spark.rapids.tool.tuning
 import scala.collection.mutable
 
 import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
-import com.nvidia.spark.rapids.tool.profiling.Profiler
+import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence}
 import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningConfigEntry, TuningEntryDefinition}
 
 import org.apache.spark.network.util.ByteUnit
@@ -2458,5 +2458,132 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
+  }
+
+  test("PySpark memory evidence without a positive source limit emits guidance only") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+    assert(!properties.exists(_.name == "spark.executor.pyspark.memory"))
+    val guidance = comments.mkString("\n")
+    assert(guidance.contains("spark.executor.processTreeMetrics.enabled=true"))
+    assert(guidance.contains("spark.eventLog.logStageExecutorMetrics=true"))
+    assert(guidance.contains("spark.executor.metrics.pollingInterval=5000"))
+  }
+
+  test("OVERHEAD PySpark rebalance on standalone emits no partial recommendation") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
+      TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD")))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Standalone),
+      Some(tuningConfigs))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+    assert(!properties.exists(p => p.name == "spark.executor.pyspark.memory" && p.isTuned()))
+    assert(comments.exists(_.comment.contains(
+      "executor overhead is supported only for YARN and Kubernetes")))
+  }
+
+  test("invalid PySpark memory policy fails eagerly without failure evidence") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion))
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
+      TuningConfigEntry(
+        name = "PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER", default = "1.0")))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val error = intercept[IllegalArgumentException] {
+      buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes), Some(tuningConfigs))
+    }
+    assert(error.getMessage.contains("PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER"))
+  }
+
+  test("OVERHEAD PySpark rebalances preserve budget for evidence and telemetry retry") {
+    val overheadConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
+      TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD")))
+
+    def run(evidence: Seq[PySparkMemoryEvidence]): (Map[String, Long], Seq[String]) = {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(testSparkVersion), pySparkMemoryEvidence = evidence)
+      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+        cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4.toString))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+        Some(targetClusterInfo))
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes),
+        Some(overheadConfigs))
+      val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      val memoryKeys = Set("spark.executor.memory", "spark.executor.memoryOverhead",
+        "spark.executor.pyspark.memory", "spark.memory.offHeap.size")
+      val memory = properties.iterator.filter { property =>
+        memoryKeys.contains(property.name) && property.getTuneValue() != "[FILL_IN_VALUE]"
+      }.map { property =>
+        property.name -> StringUtils.convertToMB(property.getTuneValue(), Some(ByteUnit.BYTE))
+      }.toMap
+      (memory, comments.map(_.comment))
+    }
+
+    val (base, _) = run(Seq.empty)
+    val peak55GiB = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val (evidenceAdjusted, evidenceComments) =
+      run(Seq(PySparkMemoryEvidence(1, 0, Seq(peak55GiB))))
+    assert(evidenceAdjusted("spark.executor.pyspark.memory") == 7L * 1024L,
+      evidenceComments.mkString("\n"))
+    assert(evidenceAdjusted("spark.executor.memory") == base("spark.executor.memory"))
+    assert(evidenceAdjusted("spark.executor.memoryOverhead") ==
+      base("spark.executor.memoryOverhead") - 3L * 1024L)
+    assert(evidenceAdjusted.values.sum == base.values.sum)
+
+    val (retryAdjusted, retryComments) = run(Seq(PySparkMemoryEvidence(2, 0, Seq.empty)))
+    assert(retryAdjusted("spark.executor.pyspark.memory") == 6L * 1024L)
+    assert(retryAdjusted("spark.executor.memoryOverhead") ==
+      base("spark.executor.memoryOverhead") - 2L * 1024L)
+    assert(retryAdjusted.values.sum == base.values.sum)
+    assert(retryComments.exists(_.contains("spark.executor.metrics.pollingInterval=5000")))
+
+    val peak12GiB = 12L * 1024L * 1024L * 1024L
+    val (uncappedAdjusted, _) = run(Seq(PySparkMemoryEvidence(3, 0, Seq(peak12GiB))))
+    assert(uncappedAdjusted("spark.executor.pyspark.memory") == 15L * 1024L)
+    assert(uncappedAdjusted.values.sum == base.values.sum)
   }
 }

@@ -228,7 +228,7 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
       "spark.executor.memory" -> "16g",
       "spark.sql.files.maxPartitionBytes" -> "256m")
     val provider = new TestQualProvider(
-      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 257L * oneMiB, 500)), Some(graph),
+      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 269751712L, 500)), Some(graph),
       properties)
 
     assert(provider.getMaxFileScanInput.isEmpty)
@@ -246,7 +246,7 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
       "spark.executor.memory" -> "16g",
       "spark.sql.files.maxPartitionBytes" -> "254m")
     val provider = new TestProfilingProvider(
-      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 3140L * oneMiB, 96)), Some(graph),
+      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 3292825256L, 96)), Some(graph),
       properties)
 
     assert(provider.getMaxFileScanInput.isEmpty)

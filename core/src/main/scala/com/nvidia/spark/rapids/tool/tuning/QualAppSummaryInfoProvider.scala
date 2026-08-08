@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import com.nvidia.spark.rapids.tool.AppSummaryInfoBaseProvider
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
-import com.nvidia.spark.rapids.tool.profiling.DataSourceProfileResult
+import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, PySparkMemoryEvidence}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
@@ -144,5 +144,9 @@ class QualAppSummaryInfoProvider(
 
   override def getClassPathEntries: Map[String, String] = {
     appInfo.classpathEntries
+  }
+
+  override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = {
+    PySparkMemoryEvidence.fromApp(appInfo)
   }
 }

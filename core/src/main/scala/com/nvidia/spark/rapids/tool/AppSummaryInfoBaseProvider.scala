@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,10 @@
 package com.nvidia.spark.rapids.tool
 
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
-import com.nvidia.spark.rapids.tool.profiling.{AppInfoColumnarExchangeMetrics, AppInfoJobStageAggMetricsVisitor, AppInfoPropertyGetter, AppInfoReadMetrics, AppInfoSqlTaskAggMetricsVisitor, AppInfoSQLTaskInputSizes, BaseProfilingAppSummaryInfoProvider, DataSourceProfileResult, ProfilerResult, SingleAppSummaryInfoProvider}
+import com.nvidia.spark.rapids.tool.profiling.{AppInfoColumnarExchangeMetrics,
+  AppInfoJobStageAggMetricsVisitor, AppInfoPropertyGetter, AppInfoReadMetrics,
+  AppInfoSqlTaskAggMetricsVisitor, AppInfoSQLTaskInputSizes, BaseProfilingAppSummaryInfoProvider,
+  DataSourceProfileResult, ProfilerResult, PySparkMemoryEvidence, SingleAppSummaryInfoProvider}
 import com.nvidia.spark.rapids.tool.tuning.QualAppSummaryInfoProvider
 
 import org.apache.spark.sql.rapids.tool.ToolUtils
@@ -60,6 +63,7 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
   override def getRedundantReadSize: Long = 0
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = None
   override def getClassPathEntries: Map[String, String] = Map[String, String]()
+  def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
 }
 
 

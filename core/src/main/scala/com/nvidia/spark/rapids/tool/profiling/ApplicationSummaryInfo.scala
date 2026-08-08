@@ -129,6 +129,10 @@ class SingleAppSummaryInfoProvider(
   private lazy val distinctLocations = app.dsInfo.groupBy(_.location)
   override def isAppInfoAvailable: Boolean = Option(app).isDefined
 
+  override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = {
+    PySparkMemoryEvidence.fromApp(appInfo)
+  }
+
   private def findPropertyInProfPropertyResults(
       key: String,
       props: Seq[RapidsPropertyProfileResult]): Option[String] = {

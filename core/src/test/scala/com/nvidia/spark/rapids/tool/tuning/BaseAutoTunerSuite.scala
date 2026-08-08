@@ -57,7 +57,6 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def isAppInfoAvailable = true
   override def getMaxFileScanInput: Option[Double] =
     maxFileScanInputOverride.getOrElse(Some(maxInput))
-  override def getMaxInput: Double = maxInput
   override def getMeanInput: Double = meanInput
   override def getMeanShuffleRead: Double = meanShuffleRead
   override def getSpilledMetrics: Seq[Long] = spilledMetrics

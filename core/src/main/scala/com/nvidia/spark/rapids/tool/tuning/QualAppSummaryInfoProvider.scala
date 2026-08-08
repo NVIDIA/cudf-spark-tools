@@ -98,14 +98,6 @@ class QualAppSummaryInfoProvider(
     rawAggMetrics.taskShuffleSkew.map { row => row.stageId }.toSet
   }
 
-  override def getMaxInput: Double = {
-    if (rawAggMetrics.sqlAggs.nonEmpty) {
-      rawAggMetrics.sqlAggs.map(_.inputBytesReadMax).max.toDouble
-    } else {
-      0.0
-    }
-  }
-
   protected[tool] def planGraphForSqlVersion(
       sqlId: Long, version: Int): Option[ToolsPlanGraph] = {
     FileScanInputMetrics.latestPlanGraph(appInfo, sqlId, version)

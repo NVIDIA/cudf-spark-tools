@@ -18,7 +18,8 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import scala.util.Try
 
-import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, StageAggTaskMetricsProfileResult}
+import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult,
+  StageAggTaskMetricsProfileResult}
 
 import org.apache.spark.sql.rapids.tool.AppBase
 import org.apache.spark.sql.rapids.tool.plangraph.ToolsPlanGraph

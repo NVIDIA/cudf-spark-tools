@@ -95,6 +95,72 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
+  private def maxPartitionRecommendation(
+      globalMaxInput: Double,
+      reliableFileScanInput: Option[Double],
+      currentValue: String): Option[String] = {
+    val props = defaultSparkProps ++ mutable.Map(
+      "spark.sql.files.maxPartitionBytes" -> currentValue)
+    val provider = getMockInfoProvider(
+      globalMaxInput,
+      Seq(0L),
+      Seq(0.0),
+      props,
+      Some(testSparkVersion),
+      maxFileScanInputOverride = Some(reliableFileScanInput))
+    val platform = PlatformFactory.createInstance(PlatformNames.EMR)
+    configureEventLogClusterInfoForTest(
+      platform,
+      numCores = 32,
+      numWorkers = 5,
+      gpuCount = 4,
+      sparkProperties = props.toMap)
+    buildAutoTunerForTests(provider, platform).getRecommendedProperties()._1
+      .find(_.name == "spark.sql.files.maxPartitionBytes")
+      .map(_.getTuneValue())
+  }
+
+  test("qualification does not derive maxPartitionBytes from CI34 cache-only input") {
+    val ci34CacheInput = 269751712.0
+
+    // The previous global-input calculation turned this cache read into 254m.
+    assert(maxPartitionRecommendation(ci34CacheInput, None, "256m").isEmpty)
+    assert(maxPartitionRecommendation(ci34CacheInput, Some(512.0 * 1024 * 1024), "1g")
+      .contains("512m"))
+  }
+
+  test("qualification preserves EMR tuning for a mapped final Parquet scan fixture") {
+    val eventLog = s"$qualLogDir/nds_q72_dataproc_2_2.zstd"
+
+    TrampolineUtil.withTempDir { tempDir =>
+      val targetClusterInfoFile = ToolTestUtils.createTargetClusterInfoFile(
+        tempDir.getAbsolutePath,
+        cpuCores = Some(16),
+        memoryGB = Some(64L),
+        gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4))
+      val result = QualificationMain.mainInternal(new QualificationArgs(Array(
+        "--platform",
+        PlatformNames.EMR,
+        "--target-cluster-info",
+        targetClusterInfoFile.toString,
+        "--output-directory",
+        tempDir.getAbsolutePath,
+        "--auto-tuner",
+        eventLog)))
+
+      assert(!result.isFailed)
+      val appId = result.appSummaries.headOption.map(_.appId)
+        .getOrElse(throw new TestFailedException("No appId found in the result", 0))
+      val tuningResultPath = Paths.get(
+        QualReportGenConfProvider.getTuningReportPath(tempDir.getAbsolutePath),
+        s"$appId.log").toString
+      val tuningResults = FSUtils.readFileContentAsUTF8(tuningResultPath)
+
+      assert(tuningResults.contains("--conf spark.sql.files.maxPartitionBytes=1644m"))
+    }
+  }
+
   test("test AutoTuner for Qualification sets batch size to 1GB") {
     val autoTuner = buildDefaultAutoTuner()
     val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =

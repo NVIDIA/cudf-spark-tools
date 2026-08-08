@@ -49,6 +49,55 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       .getOrCreate()
   }
 
+  private def maxPartitionRecommendation(
+      globalMaxInput: Double,
+      reliableFileScanInput: Option[Double],
+      currentValue: String,
+      scanStagesWithGpuOom: Set[Long] = Set.empty): Option[String] = {
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "16g",
+      "spark.sql.files.maxPartitionBytes" -> currentValue)
+    val provider = getMockInfoProvider(
+      globalMaxInput,
+      Seq(0L),
+      Seq(0.0),
+      props,
+      Some(testSparkVersion),
+      scanStagesWithGpuOom = scanStagesWithGpuOom,
+      maxFileScanInputOverride = Some(reliableFileScanInput))
+    val platform = PlatformFactory.createInstance(PlatformNames.EMR)
+    configureEventLogClusterInfoForTest(
+      platform,
+      numCores = 8,
+      numWorkers = 2,
+      gpuCount = 1,
+      sparkProperties = props.toMap)
+    buildAutoTunerForTests(provider, platform).getRecommendedProperties()._1
+      .find(_.name == "spark.sql.files.maxPartitionBytes")
+      .map(_.getTuneValue())
+  }
+
+  test("profiling does not derive maxPartitionBytes from CI34 cache-only input") {
+    val ci34CacheInput = 3292825256.0
+
+    // The previous global-input calculation turned this cache read into 20m.
+    assert(maxPartitionRecommendation(ci34CacheInput, None, "254m").isEmpty)
+    assert(maxPartitionRecommendation(ci34CacheInput, Some(512.0 * 1024 * 1024), "1g")
+      .contains("512m"))
+  }
+
+  test("profiling GPU OOM adjustment requires a reliable file scan baseline") {
+    val scanOom = Set(20L)
+
+    assert(maxPartitionRecommendation(
+      3292825256.0, None, "512m", scanStagesWithGpuOom = scanOom).isEmpty)
+    assert(maxPartitionRecommendation(
+      0.0, Some(512.0 * 1024 * 1024), "1g", scanStagesWithGpuOom = scanOom)
+      .contains("512m"))
+  }
+
   // Test that the properties from the custom target cluster props will be enforced.
   test("AutoTuner enforces properties from custom target cluster props") {
     // 1. Mock source cluster info for dataproc

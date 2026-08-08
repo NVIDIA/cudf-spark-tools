@@ -84,7 +84,6 @@ trait AppInfoJobStageAggMetricsVisitor {
 
 trait AppInfoSQLTaskInputSizes {
   def getMaxFileScanInput: Option[Double]
-  def getMaxInput: Double
   def getMeanInput: Double
   def getMeanShuffleRead: Double
 }
@@ -188,14 +187,6 @@ class SingleAppSummaryInfoProvider(
 
   override def getShuffleSkewStages: Set[Long] = {
     app.skewInfo.map { row => row.stageId }.toSet
-  }
-
-  override def getMaxInput: Double = {
-    if (app.sqlTaskAggMetrics.nonEmpty) {
-      app.sqlTaskAggMetrics.map(_.inputBytesReadMax).max.toDouble
-    } else {
-      0.0
-    }
   }
 
   protected[tool] def planGraphForSqlVersion(

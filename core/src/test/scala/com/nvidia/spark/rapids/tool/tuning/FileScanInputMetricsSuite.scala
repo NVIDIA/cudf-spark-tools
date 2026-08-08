@@ -18,13 +18,17 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathProcessor, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathProcessor,
+  PlatformFactory, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
-import com.nvidia.spark.rapids.tool.profiling.{ApplicationSummaryInfo, CollectInformation, DataSourceProfileResult, ProfileArgs, SingleAppSummaryInfoProvider, StageAggTaskMetricsProfileResult}
+import com.nvidia.spark.rapids.tool.profiling.{ApplicationSummaryInfo, CollectInformation,
+  DataSourceProfileResult, ProfileArgs, SingleAppSummaryInfoProvider,
+  StageAggTaskMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 
 import org.apache.spark.sql.rapids.tool.AccumToStageRetriever
-import org.apache.spark.sql.rapids.tool.plangraph.{SQLPlanMetric, SparkPlanGraph, SparkPlanGraphNode, ToolsPlanGraph}
+import org.apache.spark.sql.rapids.tool.plangraph.{SQLPlanMetric, SparkPlanGraph,
+  SparkPlanGraphNode, ToolsPlanGraph}
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
 import org.apache.spark.sql.rapids.tool.util.RapidsToolsConfUtil
 
@@ -152,19 +156,51 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
   private class TestQualProvider(
       dataSources: Seq[DataSourceProfileResult],
       stages: Seq[StageAggTaskMetricsProfileResult],
-      graph: Option[ToolsPlanGraph])
+      graph: Option[ToolsPlanGraph],
+      properties: Map[String, String] = Map.empty)
     extends QualAppSummaryInfoProvider(null, None, rawMetrics(stages), dataSources) {
     override protected[tool] def planGraphForSqlVersion(
         sqlId: Long, version: Int): Option[ToolsPlanGraph] = graph
+    override def getAllProperties: Map[String, String] = properties
+    override def getSparkProperty(propKey: String): Option[String] = properties.get(propKey)
+    override def getRapidsProperty(propKey: String): Option[String] = properties.get(propKey)
+    override def getSystemProperty(propKey: String): Option[String] = None
+    override def getSparkVersion: Option[String] = Some(testSparkVersion)
+    override def getClassPathEntries: Map[String, String] = Map.empty
   }
 
   private class TestProfilingProvider(
       dataSources: Seq[DataSourceProfileResult],
       stages: Seq[StageAggTaskMetricsProfileResult],
-      graph: Option[ToolsPlanGraph])
+      graph: Option[ToolsPlanGraph],
+      properties: Map[String, String] = Map.empty)
     extends SingleAppSummaryInfoProvider(null, appSummary(dataSources, stages)) {
     override protected[tool] def planGraphForSqlVersion(
         sqlId: Long, version: Int): Option[ToolsPlanGraph] = graph
+    override def getAllProperties: Map[String, String] = properties
+    override def getSparkProperty(propKey: String): Option[String] = properties.get(propKey)
+    override def getRapidsProperty(propKey: String): Option[String] = properties.get(propKey)
+    override def getSystemProperty(propKey: String): Option[String] = None
+    override def getSparkVersion: Option[String] = Some(testSparkVersion)
+    override def scanStagesWithGpuOom: Set[Long] = Set.empty
+    override def getClassPathEntries: Map[String, String] = Map.empty
+  }
+
+  private def maxPartitionRecommendation(
+      provider: AppSummaryInfoBaseProvider,
+      helper: AutoTunerHelper,
+      properties: Map[String, String]): Option[String] = {
+    val platform = PlatformFactory.createInstance(PlatformNames.EMR)
+    platform.configureClusterInfoFromEventLog(
+      coresPerExecutor = 8,
+      execsPerNode = 1,
+      numExecs = 2,
+      numExecutorNodes = 2,
+      sparkProperties = properties,
+      systemProperties = Map.empty)
+    helper.buildAutoTunerFromProps(provider, platform).getRecommendedProperties()._1
+      .find(_.name == "spark.sql.files.maxPartitionBytes")
+      .map(_.getTuneValue())
   }
 
   test("base provider reports no reliable file scan input") {
@@ -185,19 +221,36 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
   test("qualification provider rejects the CI34 257 MiB cache-only input") {
     val graph = buildGraph(Seq(
       GraphNodeSpec(10L, "InMemoryTableScan", "InMemoryRelation cached", 20)))
+    val properties = Map(
+      "spark.master" -> "yarn",
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "16g",
+      "spark.sql.files.maxPartitionBytes" -> "256m")
     val provider = new TestQualProvider(
-      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 257L * oneMiB, 500)), Some(graph))
+      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 257L * oneMiB, 500)), Some(graph),
+      properties)
 
     assert(provider.getMaxFileScanInput.isEmpty)
+    assert(maxPartitionRecommendation(
+      provider, QualificationAutoTunerHelper, properties).isEmpty)
   }
 
   test("profiling provider rejects the CI34 3140 MiB cache-only input") {
     val graph = buildGraph(Seq(
       GraphNodeSpec(10L, "InMemoryTableScan", "InMemoryRelation cached", 20)))
+    val properties = Map(
+      "spark.master" -> "yarn",
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "16g",
+      "spark.sql.files.maxPartitionBytes" -> "254m")
     val provider = new TestProfilingProvider(
-      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 3140L * oneMiB, 96)), Some(graph))
+      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 3140L * oneMiB, 96)), Some(graph),
+      properties)
 
     assert(provider.getMaxFileScanInput.isEmpty)
+    assert(maxPartitionRecommendation(provider, ProfilingAutoTunerHelper, properties).isEmpty)
   }
 
   test("both concrete providers expose genuine file scan input") {

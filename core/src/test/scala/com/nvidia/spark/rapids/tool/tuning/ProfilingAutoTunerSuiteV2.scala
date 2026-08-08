@@ -2761,4 +2761,37 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "requiredDeltaMB=overflow", "selectedSource=spark.executor.memory",
       "availableDeltaMB=unknown").foreach(field => assert(conflicts.head.contains(field)))
   }
+
+  test("PySpark evidence uses the nearest-rank p95 boundary") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val lowPeak = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val highPeak = 20L * 1024L * 1024L * 1024L
+    // ceil(20 * 0.95) is rank 19, so the single rank-20 outlier must not affect sizing.
+    val peaks = Seq.fill(19)(lowPeak) :+ highPeak
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, peaks)))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      preserveSparkProperties = List(
+        "spark.executor.memory", "spark.executor.pyspark.memory"))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, _) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(values("spark.executor.memory") == "29g")
+    assert(values("spark.executor.pyspark.memory") == "7g")
+  }
 }

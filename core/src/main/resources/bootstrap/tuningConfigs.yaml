@@ -118,6 +118,28 @@ default:
     min: 750m
     usedBy: spark.executor.memory
 
+  - name: PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER
+    description: >-
+      Multiplier applied to observed peak Python virtual memory when sizing
+      spark.executor.pyspark.memory from executor metrics evidence.
+    default: 1.25
+    usedBy: spark.executor.pyspark.memory
+
+  - name: PYSPARK_MEMORY_RETRY_GROWTH_FACTOR
+    description: >-
+      Multiplier applied to the current PySpark memory limit when recommending a retry after
+      a supported Python out-of-memory failure is detected.
+    default: 1.5
+    usedBy: spark.executor.pyspark.memory
+
+  - name: PYSPARK_MEMORY_REBALANCE_SOURCE
+    description: >-
+      Executor memory component from which PySpark memory is rebalanced. Valid values are
+      HEAP and OVERHEAD.
+    default: HEAP
+    usedBy: spark.executor.memory, spark.executor.memoryOverhead,
+      spark.executor.pyspark.memory
+
   - name: OFFHEAP_PER_CORE
     description: >-
       Amount of off-heap memory allocated per CPU core for hybrid scan operations

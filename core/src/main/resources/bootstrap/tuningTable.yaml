@@ -166,6 +166,15 @@ tuningDefinitions:
     confType:
       name: byte
       defaultUnit: MiB
+  - label: spark.executor.pyspark.memory
+    description: >-
+      Amount of memory to allocate to PySpark in each executor, in MiB unless otherwise specified.
+    enabled: true
+    level: cluster
+    category: tuning
+    confType:
+      name: byte
+      defaultUnit: MiB
   - label: spark.executor.memoryOverhead
     description: >-
       Amount of additional memory to be allocated per executor process, in MiB unless otherwise specified.

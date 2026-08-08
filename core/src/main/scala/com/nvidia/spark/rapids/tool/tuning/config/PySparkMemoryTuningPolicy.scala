@@ -1,0 +1,71 @@
+/*
+ * Copyright (c) 2026, NVIDIA CORPORATION.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.nvidia.spark.rapids.tool.tuning.config
+
+import java.util.Locale
+
+import scala.util.Try
+
+sealed trait PySparkMemoryRebalanceSource
+
+object PySparkMemoryRebalanceSource {
+  case object Heap extends PySparkMemoryRebalanceSource
+  case object Overhead extends PySparkMemoryRebalanceSource
+
+  def parse(value: String): PySparkMemoryRebalanceSource = {
+    Option(value).map(_.trim.toUpperCase(Locale.ROOT)) match {
+      case Some("HEAP") => Heap
+      case Some("OVERHEAD") => Overhead
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Invalid ${PySparkMemoryTuningPolicy.REBALANCE_SOURCE} value '$value': " +
+            "expected HEAP or OVERHEAD.")
+    }
+  }
+}
+
+case class PySparkMemoryTuningPolicy(
+    evidenceHeadroomMultiplier: BigDecimal,
+    retryGrowthFactor: BigDecimal,
+    rebalanceSource: PySparkMemoryRebalanceSource)
+
+object PySparkMemoryTuningPolicy {
+  val EVIDENCE_HEADROOM_MULTIPLIER = "PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER"
+  val RETRY_GROWTH_FACTOR = "PYSPARK_MEMORY_RETRY_GROWTH_FACTOR"
+  val REBALANCE_SOURCE = "PYSPARK_MEMORY_REBALANCE_SOURCE"
+  val PYSPARK_MEMORY_KEY = "spark.executor.pyspark.memory"
+
+  def from(configProvider: TuningConfigProvider): PySparkMemoryTuningPolicy = {
+    PySparkMemoryTuningPolicy(
+      evidenceHeadroomMultiplier = parseGrowingMultiplier(
+        EVIDENCE_HEADROOM_MULTIPLIER,
+        configProvider.getEntry(EVIDENCE_HEADROOM_MULTIPLIER).getDefault),
+      retryGrowthFactor = parseGrowingMultiplier(
+        RETRY_GROWTH_FACTOR,
+        configProvider.getEntry(RETRY_GROWTH_FACTOR).getDefault),
+      rebalanceSource = PySparkMemoryRebalanceSource.parse(
+        configProvider.getEntry(REBALANCE_SOURCE).getDefault))
+  }
+
+  private def parseGrowingMultiplier(configName: String, value: String): BigDecimal = {
+    val parsed = Option(value).flatMap(raw => Try(BigDecimal(raw.trim)).toOption)
+    parsed.filter(_ > BigDecimal(1)).getOrElse {
+      throw new IllegalArgumentException(
+        s"Invalid $configName value '$value': expected a finite decimal value greater than 1.")
+    }
+  }
+}

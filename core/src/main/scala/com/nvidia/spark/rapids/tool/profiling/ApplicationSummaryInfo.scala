@@ -82,6 +82,7 @@ trait AppInfoJobStageAggMetricsVisitor {
 }
 
 trait AppInfoSQLTaskInputSizes {
+  def getMaxFileScanInput: Option[Double]
   def getMaxInput: Double
   def getMeanInput: Double
   def getMeanShuffleRead: Double

@@ -51,9 +51,12 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val shuffleSkewStages: Set[Long],
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
-    val maxColumnarExchangeDataSizeBytes: Option[Long] = None)
+    val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+    val maxFileScanInputOverride: Option[Option[Double]] = None)
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
+  override def getMaxFileScanInput: Option[Double] =
+    maxFileScanInputOverride.getOrElse(Some(maxInput))
   override def getMaxInput: Double = maxInput
   override def getMeanInput: Double = meanInput
   override def getMeanShuffleRead: Double = meanShuffleRead
@@ -137,11 +140,13 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       shuffleSkewStages: Set[Long] = Set(),
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
-      maxColumnarExchangeDataSizeBytes: Option[Long] = None): AppInfoProviderMockTest = {
+      maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+      maxFileScanInputOverride: Option[Option[Double]] = None): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
-      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes)
+      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes,
+      maxFileScanInputOverride)
   }
 
   /**

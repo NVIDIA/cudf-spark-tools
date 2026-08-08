@@ -969,8 +969,8 @@ abstract class AutoTuner(
           .getEntry("HEAP_PER_CORE")
           .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores)
     }
-    val protectedHeapFloorMB = Math.max(unconstrainedExecutorHeapMB,
-      configProvider.getEntry("HEAP_PER_CORE").getMinAsMemory(ByteUnit.MiB) * numExecutorCores)
+    val protectedHeapFloorMB =
+      configProvider.getEntry("HEAP_PER_CORE").getMinAsMemory(ByteUnit.MiB) * numExecutorCores
     // Calculate total available memory for executors based on OS reserved memory:
     // - If nonExecutorMemory > 0: use absolute subtraction (for on-prem environments)
     // - If nonExecutorMemory = 0: use platform fraction (for CSPs with container managers)

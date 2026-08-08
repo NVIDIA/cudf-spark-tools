@@ -2626,6 +2626,38 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(!comments.exists(_.comment.contains("constraint=")), comments.mkString("\n"))
   }
 
+  test("PySpark HEAP rebalance can transfer from normally calculated heap") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "16",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(16), memoryGB = Some(64), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString))
+    val platform = PlatformFactory.createInstance(PlatformNames.EMR,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 16, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Yarn))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(values("spark.executor.memory") == "29g")
+    assert(values("spark.executor.pyspark.memory") == "7g")
+    val coordinatedTotalMB = Seq("spark.executor.memory", "spark.executor.pyspark.memory")
+      .map(key => StringUtils.convertToMB(values(key), Some(ByteUnit.BYTE))).sum
+    assert(coordinatedTotalMB == 36L * 1024L)
+    assert(!comments.exists(_.comment.contains("constraint=")), comments.mkString("\n"))
+  }
+
   test("PySpark coordinated rebalance reports enforced conflicts without a partial pair") {
     def run(
         enforced: Map[String, String],
@@ -2717,8 +2749,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         comments.map(_.comment))
     }
 
-    val (capacityValues, capacityComments) = run("16g", Kubernetes, overhead = false)
-    assert(capacityValues("spark.executor.memory") == "16g")
+    val (capacityValues, capacityComments) = run("8g", Kubernetes, overhead = false)
+    assert(capacityValues("spark.executor.memory") == "8g")
     assert(capacityValues.get("spark.executor.pyspark.memory").forall(_ != "7g"))
     assert(capacityComments.count(_.contains("constraint=capacity")) == 1)
 

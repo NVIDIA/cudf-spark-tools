@@ -523,12 +523,21 @@ abstract class AutoTuner(
       platform.getUserEnforcedSparkProperty(key).isDefined
   }
 
+  private def ignoreCoordinatedPySparkMemoryRecommendation(key: String): Boolean = {
+    if (platform.isPropertyPreserved(key)) {
+      skippedRecommendations.contains(key) ||
+        platform.getUserEnforcedSparkProperty(key).isDefined
+    } else {
+      ignoreRecommendation(key)
+    }
+  }
+
   private def appendRecommendationInternal(
       key: String,
       value: String,
       allowCoordinatedPreserveOverride: Boolean): Unit = {
-    val ignore = if (allowCoordinatedPreserveOverride && platform.isPropertyPreserved(key)) {
-      skippedRecommendations.contains(key) || platform.getUserEnforcedSparkProperty(key).isDefined
+    val ignore = if (allowCoordinatedPreserveOverride) {
+      ignoreCoordinatedPySparkMemoryRecommendation(key)
     } else {
       ignoreRecommendation(key)
     }
@@ -844,6 +853,9 @@ abstract class AutoTuner(
               " Increase the selected source capacity or choose a larger executor layout."
             case "source-capability" =>
               " executor overhead is supported only for YARN and Kubernetes targets."
+            case "output-eligibility" =>
+              " Remove the selected source and PySpark memory from exclusion or limited-logic " +
+                "lists to allow a full transfer."
             case _ => ""
           }
           (base, Some("PySpark memory rebalance was not applied: " +
@@ -855,8 +867,14 @@ abstract class AutoTuner(
           platform.getUserEnforcedSparkProperty(selectedKey).isDefined ||
             platform.getUserEnforcedSparkProperty(
               PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY).isDefined
+        val hasOutputEligibilityConflict =
+          ignoreCoordinatedPySparkMemoryRecommendation(selectedKey) ||
+            ignoreCoordinatedPySparkMemoryRecommendation(
+              PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY)
         if (hasEnforcedConflict) {
           conflict("enforced")
+        } else if (hasOutputEligibilityConflict) {
+          conflict("output-eligibility")
         } else if (pySparkMemoryTuningPolicy.rebalanceSource ==
             PySparkMemoryRebalanceSource.Overhead &&
             !sparkMaster.contains(Yarn) && !sparkMaster.contains(Kubernetes)) {

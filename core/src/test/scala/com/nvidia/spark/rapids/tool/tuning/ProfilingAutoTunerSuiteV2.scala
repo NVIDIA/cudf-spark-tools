@@ -2760,6 +2760,59 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(masterComments.count(_.contains("constraint=source-capability")) == 1)
   }
 
+  test("PySpark coordinated rebalance rejects excluded pair members") {
+    def run(
+        overhead: Boolean,
+        excluded: Option[String],
+        withEvidence: Boolean): (Map[String, String], Seq[String]) = {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(testSparkVersion),
+        pySparkMemoryEvidence = if (withEvidence) {
+          Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes)))
+        } else {
+          Seq.empty
+        })
+      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+        cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4.toString), excludeSparkProperties = excluded.toList)
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+        Some(targetClusterInfo))
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+      val configs = if (overhead) Some(ToolTestUtils.buildTuningConfigs(profiling = List(
+        TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD"))))
+      else None
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes), configs)
+      val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      (properties.map(property => property.name -> property.getTuneValue()).toMap,
+        comments.map(_.comment))
+    }
+
+    Seq(false, true).foreach { overhead =>
+      val sourceKey = if (overhead) "spark.executor.memoryOverhead" else "spark.executor.memory"
+      val (baseValues, _) = run(overhead, None, withEvidence = false)
+      Seq(sourceKey, "spark.executor.pyspark.memory").foreach { excluded =>
+        val (values, comments) = run(overhead, Some(excluded), withEvidence = true)
+        assert(values.get("spark.executor.pyspark.memory").forall(_ != "7g"))
+        if (excluded == sourceKey) {
+          assert(!values.contains(sourceKey), values)
+        } else {
+          assert(values.get(sourceKey) == baseValues.get(sourceKey), values)
+        }
+        assert(comments.count(_.contains("constraint=output-eligibility")) == 1,
+          comments.mkString("\n"))
+      }
+    }
+  }
+
   test("PySpark arithmetic overflow emits one structured conflict") {
     val sourceProps = mutable.LinkedHashMap[String, String](
       "spark.executor.cores" -> "8",

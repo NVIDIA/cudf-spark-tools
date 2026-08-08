@@ -19,7 +19,8 @@ package com.nvidia.spark.rapids.tool.tuning
 import scala.collection.mutable
 
 import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathProcessor, ToolTestUtils}
-import com.nvidia.spark.rapids.tool.profiling.{CollectInformation, DataSourceProfileResult, ProfileArgs, StageAggTaskMetricsProfileResult}
+import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
+import com.nvidia.spark.rapids.tool.profiling.{ApplicationSummaryInfo, CollectInformation, DataSourceProfileResult, ProfileArgs, SingleAppSummaryInfoProvider, StageAggTaskMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 
 import org.apache.spark.sql.rapids.tool.AccumToStageRetriever
@@ -102,6 +103,70 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
       swWriteTimeSum = 0L)
   }
 
+  private def rawMetrics(stages: Seq[StageAggTaskMetricsProfileResult]): AggRawMetricsResult = {
+    AggRawMetricsResult(
+      jobAggs = Seq.empty,
+      stageAggs = stages,
+      taskShuffleSkew = Seq.empty,
+      sqlAggs = Seq.empty,
+      ioAggs = Seq.empty,
+      sqlDurAggs = Seq.empty,
+      stageDiagnostics = Seq.empty)
+  }
+
+  private def appSummary(
+      dataSources: Seq[DataSourceProfileResult],
+      stages: Seq[StageAggTaskMetricsProfileResult]): ApplicationSummaryInfo = {
+    ApplicationSummaryInfo(
+      appInfo = Seq.empty,
+      dsInfo = dataSources,
+      execInfo = Seq.empty,
+      jobInfo = Seq.empty,
+      rapidsProps = Seq.empty,
+      rapidsJar = Seq.empty,
+      sqlMetrics = Seq.empty,
+      stageMetrics = Seq.empty,
+      jobAggMetrics = Seq.empty,
+      stageAggMetrics = stages,
+      sqlTaskAggMetrics = Seq.empty,
+      durAndCpuMet = Seq.empty,
+      skewInfo = Seq.empty,
+      failedTasks = Seq.empty,
+      failedStages = Seq.empty,
+      failedJobs = Seq.empty,
+      removedBMs = Seq.empty,
+      removedExecutors = Seq.empty,
+      unsupportedOps = Seq.empty,
+      sparkProps = Seq.empty,
+      sqlStageInfo = Seq.empty,
+      wholeStage = Seq.empty,
+      appLogPath = Seq.empty,
+      ioMetrics = Seq.empty,
+      sysProps = Seq.empty,
+      sqlCleanedAlignedIds = Seq.empty,
+      sparkRapidsBuildInfo = Seq.empty,
+      writeOpsInfo = Seq.empty,
+      sqlPlanInfo = Seq.empty)
+  }
+
+  private class TestQualProvider(
+      dataSources: Seq[DataSourceProfileResult],
+      stages: Seq[StageAggTaskMetricsProfileResult],
+      graph: Option[ToolsPlanGraph])
+    extends QualAppSummaryInfoProvider(null, None, rawMetrics(stages), dataSources) {
+    override protected[tool] def planGraphForSqlVersion(
+        sqlId: Long, version: Int): Option[ToolsPlanGraph] = graph
+  }
+
+  private class TestProfilingProvider(
+      dataSources: Seq[DataSourceProfileResult],
+      stages: Seq[StageAggTaskMetricsProfileResult],
+      graph: Option[ToolsPlanGraph])
+    extends SingleAppSummaryInfoProvider(null, appSummary(dataSources, stages)) {
+    override protected[tool] def planGraphForSqlVersion(
+        sqlId: Long, version: Int): Option[ToolsPlanGraph] = graph
+  }
+
   test("base provider reports no reliable file scan input") {
     assert(new AppSummaryInfoBaseProvider().getMaxFileScanInput.isEmpty)
   }
@@ -115,6 +180,35 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
       sparkVersion = Some(testSparkVersion),
       maxFileScanInputOverride = Some(None))
     assert(provider.getMaxFileScanInput.isEmpty)
+  }
+
+  test("qualification provider rejects the CI34 257 MiB cache-only input") {
+    val graph = buildGraph(Seq(
+      GraphNodeSpec(10L, "InMemoryTableScan", "InMemoryRelation cached", 20)))
+    val provider = new TestQualProvider(
+      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 257L * oneMiB, 500)), Some(graph))
+
+    assert(provider.getMaxFileScanInput.isEmpty)
+  }
+
+  test("profiling provider rejects the CI34 3140 MiB cache-only input") {
+    val graph = buildGraph(Seq(
+      GraphNodeSpec(10L, "InMemoryTableScan", "InMemoryRelation cached", 20)))
+    val provider = new TestProfilingProvider(
+      Seq(dataSource(1L, 1, 10L)), Seq(stageMetric(20L, 3140L * oneMiB, 96)), Some(graph))
+
+    assert(provider.getMaxFileScanInput.isEmpty)
+  }
+
+  test("both concrete providers expose genuine file scan input") {
+    val graph = buildGraph(Seq(GraphNodeSpec(10L, "Scan parquet", "file scan", 20)))
+    val dataSources = Seq(dataSource(1L, 1, 10L))
+    val stages = Seq(stageMetric(20L, 512L * oneMiB))
+
+    assert(new TestQualProvider(dataSources, stages, Some(graph))
+      .getMaxFileScanInput.contains(512.0 * oneMiB))
+    assert(new TestProfilingProvider(dataSources, stages, Some(graph))
+      .getMaxFileScanInput.contains(512.0 * oneMiB))
   }
 
   test("uses the largest genuine final-plan file scan stage input") {

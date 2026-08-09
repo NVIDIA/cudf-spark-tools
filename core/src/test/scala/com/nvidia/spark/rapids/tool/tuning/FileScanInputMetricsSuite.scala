@@ -27,8 +27,8 @@ import com.nvidia.spark.rapids.tool.profiling.{ApplicationSummaryInfo, CollectIn
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 
 import org.apache.spark.sql.rapids.tool.AccumToStageRetriever
-import org.apache.spark.sql.rapids.tool.plangraph.{SQLPlanMetric, SparkPlanGraph,
-  SparkPlanGraphNode, ToolsPlanGraph}
+import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraph, SparkPlanGraphNode,
+  SQLPlanMetric, ToolsPlanGraph}
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
 import org.apache.spark.sql.rapids.tool.util.RapidsToolsConfUtil
 

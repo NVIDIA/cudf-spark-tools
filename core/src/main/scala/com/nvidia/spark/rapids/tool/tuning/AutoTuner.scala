@@ -799,7 +799,8 @@ abstract class AutoTuner(
       val layoutCurrent = getBaselineSparkProperty(PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY)
         .flatMap(value => platform.getPySparkMemoryMB(_ => Some(value)))
         .getOrElse(observedCurrent.getOrElse(0L))
-      val peaks = evidence.iterator.flatMap(_.executorPythonVMemoryPeaks).filter(_ > 0L).toSeq.sorted
+      val peaks = evidence.iterator.flatMap(_.executorPythonVMemoryPeaks)
+        .filter(_ > 0L).toSeq.sorted
       val candidate = observedCurrent.flatMap { current =>
         if (peaks.nonEmpty) {
           val rank = ((peaks.size.toLong * 95L + 99L) / 100L).toInt

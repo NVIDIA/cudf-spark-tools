@@ -16,11 +16,10 @@
 
 package com.nvidia.spark.rapids.tool.tuning.config
 
-import org.scalatest.funsuite.AnyFunSuite
-import org.scalatest.matchers.should.Matchers._
-
 import com.nvidia.spark.rapids.tool.ToolTestUtils
 import com.nvidia.spark.rapids.tool.tuning.TuningEntry
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
 
 class PySparkMemoryTuningPolicySuite extends AnyFunSuite {
   private def profilingPolicy(

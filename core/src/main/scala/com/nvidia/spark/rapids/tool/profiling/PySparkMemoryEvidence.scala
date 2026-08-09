@@ -31,7 +31,7 @@ object PySparkMemoryEvidence {
   private val pythonExceptionPattern =
     """(?m)(?:^|[\s:])org\.apache\.spark\.api\.python\.PythonException(?=[:\s]|$)""".r
   private val allocationExceptionPattern =
-    """(?m)^\s*(?:MemoryError|numpy\.core\._exceptions\._ArrayMemoryError|""" +
+    """(?m)^\s*(?:MemoryError|numpy\._?core\._exceptions\._ArrayMemoryError|""" +
       """pyarrow\.lib\.ArrowMemoryError)(?=:|\s*$)"""
   private val compiledAllocationExceptionPattern = allocationExceptionPattern.r
 

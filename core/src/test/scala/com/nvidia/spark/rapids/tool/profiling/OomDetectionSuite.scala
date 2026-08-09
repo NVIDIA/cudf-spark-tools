@@ -68,6 +68,8 @@ class OomDetectionSuite extends AnyFunSuite {
     "MemoryError" -> "MemoryError: unable to allocate",
     "NumPy _ArrayMemoryError" ->
       "numpy.core._exceptions._ArrayMemoryError: Unable to allocate an array",
+    "NumPy 2.x _ArrayMemoryError" ->
+      "numpy._core._exceptions._ArrayMemoryError: Unable to allocate an array",
     "PyArrow ArrowMemoryError" -> "pyarrow.lib.ArrowMemoryError: malloc failed"
   ).foreach { case (description, allocationFailure) =>
     test(s"isPythonMemoryLimitFailure: $description") {

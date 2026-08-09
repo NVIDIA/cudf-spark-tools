@@ -46,8 +46,12 @@ case class PySparkMemoryTuningPolicy(
 object PySparkMemoryTuningPolicy {
   val EVIDENCE_HEADROOM_MULTIPLIER = "PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER"
   val RETRY_GROWTH_FACTOR = "PYSPARK_MEMORY_RETRY_GROWTH_FACTOR"
+  val METRICS_POLLING_INTERVAL = "PYSPARK_MEMORY_METRICS_POLLING_INTERVAL"
   val REBALANCE_SOURCE = "PYSPARK_MEMORY_REBALANCE_SOURCE"
   val PYSPARK_MEMORY_KEY = "spark.executor.pyspark.memory"
+  val PROCESS_TREE_METRICS_KEY = "spark.executor.processTreeMetrics.enabled"
+  val STAGE_EXECUTOR_METRICS_KEY = "spark.eventLog.logStageExecutorMetrics"
+  val METRICS_POLLING_INTERVAL_KEY = "spark.executor.metrics.pollingInterval"
 
   def from(configProvider: TuningConfigProvider): PySparkMemoryTuningPolicy = {
     PySparkMemoryTuningPolicy(

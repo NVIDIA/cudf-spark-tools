@@ -175,6 +175,27 @@ tuningDefinitions:
     confType:
       name: byte
       defaultUnit: MiB
+  - label: spark.executor.processTreeMetrics.enabled
+    description: Enables executor process-tree metrics collection.
+    enabled: true
+    level: job
+    category: tuning
+    confType:
+      name: boolean
+  - label: spark.executor.metrics.pollingInterval
+    description: Executor metrics polling interval in milliseconds.
+    enabled: true
+    level: job
+    category: tuning
+    confType:
+      name: long
+  - label: spark.eventLog.logStageExecutorMetrics
+    description: Enables logging peak executor metrics for each stage in the event log.
+    enabled: true
+    level: job
+    category: tuning
+    confType:
+      name: boolean
   - label: spark.executor.memoryOverhead
     description: >-
       Amount of additional memory to be allocated per executor process, in MiB unless otherwise specified.

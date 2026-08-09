@@ -759,6 +759,7 @@ abstract class AutoTuner(
       observedCurrentMB: Option[Long],
       layoutCurrentMB: Long,
       desiredTargetMB: Option[Long],
+      needsTelemetryRetry: Boolean,
       guidance: Option[String])
 
   // Validate policy overrides when the tuner is constructed, even when the application has no
@@ -766,10 +767,14 @@ abstract class AutoTuner(
   private val pySparkMemoryTuningPolicy = PySparkMemoryTuningPolicy.from(configProvider)
 
   private val pySparkTelemetryGuidance =
-    "PySpark memory autotuning needs a telemetry-enabled retry. Use " +
-      "spark.executor.processTreeMetrics.enabled=true, " +
-      "spark.eventLog.logStageExecutorMetrics=true, and " +
-      "spark.executor.metrics.pollingInterval=5000."
+    "PySpark memory autotuning needs a telemetry-enabled retry."
+
+  private def recommendPySparkTelemetrySettings(): Unit = {
+    appendRecommendation(PySparkMemoryTuningPolicy.PROCESS_TREE_METRICS_KEY, "true")
+    appendRecommendation(PySparkMemoryTuningPolicy.STAGE_EXECUTOR_METRICS_KEY, "true")
+    appendRecommendation(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL_KEY,
+      configProvider.getEntry(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL).getDefault)
+  }
 
   private def ceilToGiBInMB(value: BigDecimal): Option[Long] = {
     val gibibytes = (value / BigDecimal(1024)).setScale(0, BigDecimal.RoundingMode.CEILING)
@@ -823,7 +828,8 @@ abstract class AutoTuner(
         None
       }
       Some(PySparkMemoryAdjustment(observedCurrent, layoutCurrent,
-        candidate.map(value => Math.max(value, observedCurrent.get)), guidance))
+        candidate.map(value => Math.max(value, observedCurrent.get)),
+        observedCurrent.isEmpty || peaks.isEmpty, guidance))
     }
   }
 
@@ -1432,6 +1438,8 @@ abstract class AutoTuner(
         val availableMemPerExecExpr = () => availableMemPerExec
         val executorHeapInMB = calcInitialExecutorHeapInMB(availableMemPerExecExpr, execCores)
         val executorHeapExpr = () => executorHeapInMB
+        pySparkMemoryAdjustment.filter(_.needsTelemetryRetry)
+          .foreach(_ => recommendPySparkTelemetrySettings())
         pySparkMemoryAdjustment.flatMap(_.guidance).foreach(appendComment)
         calcOverallMemory(executorHeapExpr, execCores, availableMemPerExecExpr) match {
           case Right((recomMemorySettings: MemorySettings, setMaxBytesInFlight,

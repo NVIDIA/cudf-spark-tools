@@ -132,6 +132,13 @@ default:
     default: 1.5
     usedBy: spark.executor.pyspark.memory
 
+  - name: PYSPARK_MEMORY_METRICS_POLLING_INTERVAL
+    description: >-
+      Executor metrics polling interval in milliseconds recommended for a telemetry-enabled
+      PySpark memory retry.
+    default: 5000
+    usedBy: spark.executor.metrics.pollingInterval
+
   - name: PYSPARK_MEMORY_REBALANCE_SOURCE
     description: >-
       Executor memory component from which PySpark memory is rebalanced. Valid values are

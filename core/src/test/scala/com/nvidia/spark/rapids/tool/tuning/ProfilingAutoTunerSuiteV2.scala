@@ -2460,7 +2460,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  test("PySpark memory evidence without a positive source limit emits guidance only") {
+  test("PySpark memory evidence without a positive source limit enables telemetry only") {
     val sourceProps = mutable.LinkedHashMap[String, String](
       "spark.executor.cores" -> "8",
       "spark.executor.instances" -> "2",
@@ -2478,10 +2478,12 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
 
     assert(!properties.exists(_.name == "spark.executor.pyspark.memory"))
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+    assert(values("spark.executor.processTreeMetrics.enabled") == "true")
+    assert(values("spark.eventLog.logStageExecutorMetrics") == "true")
+    assert(values("spark.executor.metrics.pollingInterval") == "5000")
     val guidance = comments.mkString("\n")
-    assert(guidance.contains("spark.executor.processTreeMetrics.enabled=true"))
-    assert(guidance.contains("spark.eventLog.logStageExecutorMetrics=true"))
-    assert(guidance.contains("spark.executor.metrics.pollingInterval=5000"))
+    assert(guidance.contains("PySpark memory autotuning needs a telemetry-enabled retry"))
   }
 
   test("OVERHEAD PySpark rebalance on standalone emits no partial recommendation") {
@@ -2534,7 +2536,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val overheadConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
       TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD")))
 
-    def run(evidence: Seq[PySparkMemoryEvidence]): (Map[String, Long], Seq[String]) = {
+    def run(evidence: Seq[PySparkMemoryEvidence]):
+        (Map[String, Long], Map[String, String], Seq[String]) = {
       val sourceProps = mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
         "spark.executor.instances" -> "2",
@@ -2560,12 +2563,13 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       }.map { property =>
         property.name -> StringUtils.convertToMB(property.getTuneValue(), Some(ByteUnit.BYTE))
       }.toMap
-      (memory, comments.map(_.comment))
+      (memory, properties.map(property => property.name -> property.getTuneValue()).toMap,
+        comments.map(_.comment))
     }
 
-    val (base, _) = run(Seq.empty)
+    val (base, _, _) = run(Seq.empty)
     val peak55GiB = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
-    val (evidenceAdjusted, evidenceComments) =
+    val (evidenceAdjusted, evidenceProperties, evidenceComments) =
       run(Seq(PySparkMemoryEvidence(1, 0, Seq(peak55GiB))))
     assert(evidenceAdjusted("spark.executor.pyspark.memory") == 7L * 1024L,
       evidenceComments.mkString("\n"))
@@ -2573,16 +2577,23 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(evidenceAdjusted("spark.executor.memoryOverhead") ==
       base("spark.executor.memoryOverhead") - 3L * 1024L)
     assert(evidenceAdjusted.values.sum == base.values.sum)
+    assert(!evidenceProperties.contains("spark.executor.processTreeMetrics.enabled"))
+    assert(!evidenceProperties.contains("spark.eventLog.logStageExecutorMetrics"))
+    assert(!evidenceProperties.contains("spark.executor.metrics.pollingInterval"))
 
-    val (retryAdjusted, retryComments) = run(Seq(PySparkMemoryEvidence(2, 0, Seq.empty)))
+    val (retryAdjusted, retryProperties, retryComments) =
+      run(Seq(PySparkMemoryEvidence(2, 0, Seq.empty)))
     assert(retryAdjusted("spark.executor.pyspark.memory") == 6L * 1024L)
     assert(retryAdjusted("spark.executor.memoryOverhead") ==
       base("spark.executor.memoryOverhead") - 2L * 1024L)
     assert(retryAdjusted.values.sum == base.values.sum)
-    assert(retryComments.exists(_.contains("spark.executor.metrics.pollingInterval=5000")))
+    assert(retryProperties("spark.executor.processTreeMetrics.enabled") == "true")
+    assert(retryProperties("spark.eventLog.logStageExecutorMetrics") == "true")
+    assert(retryProperties("spark.executor.metrics.pollingInterval") == "5000")
+    assert(retryComments.exists(_.contains("telemetry-enabled retry")))
 
     val peak12GiB = 12L * 1024L * 1024L * 1024L
-    val (uncappedAdjusted, _) = run(Seq(PySparkMemoryEvidence(3, 0, Seq(peak12GiB))))
+    val (uncappedAdjusted, _, _) = run(Seq(PySparkMemoryEvidence(3, 0, Seq(peak12GiB))))
     assert(uncappedAdjusted("spark.executor.pyspark.memory") == 15L * 1024L)
     assert(uncappedAdjusted.values.sum == base.values.sum)
   }
@@ -2714,8 +2725,11 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val (retryValues, retryComments) =
       run(Map("spark.executor.memory" -> "32g"), withMetrics = false)
     assert(retryValues.get("spark.executor.pyspark.memory").forall(_ != "6g"))
+    assert(retryValues("spark.executor.processTreeMetrics.enabled") == "true")
+    assert(retryValues("spark.eventLog.logStageExecutorMetrics") == "true")
+    assert(retryValues("spark.executor.metrics.pollingInterval") == "5000")
     assert(retryComments.count(_.contains("constraint=enforced")) == 1)
-    assert(retryComments.exists(_.contains("spark.executor.metrics.pollingInterval=5000")))
+    assert(retryComments.exists(_.contains("telemetry-enabled retry")))
   }
 
   test("PySpark conflict comments identify capacity and source capability") {

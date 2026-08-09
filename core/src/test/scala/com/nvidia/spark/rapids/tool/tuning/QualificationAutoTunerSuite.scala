@@ -2303,7 +2303,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
 
   forAll(Table("sourcePySparkMemory", None, Some("0"))) { sourcePySparkMemory =>
     test(s"Qualification PySpark evidence with $sourcePySparkMemory source limit " +
-        "emits guidance only") {
+        "enables telemetry only") {
       val sourceProps = mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
         "spark.executor.instances" -> "2",
@@ -2327,10 +2327,12 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       assert(!properties.exists { property =>
         property.name == "spark.executor.pyspark.memory" && property.isTuned()
       })
+      val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+      assert(values("spark.executor.processTreeMetrics.enabled") == "true")
+      assert(values("spark.eventLog.logStageExecutorMetrics") == "true")
+      assert(values("spark.executor.metrics.pollingInterval") == "5000")
       val guidance = comments.map(_.comment).mkString("\n")
-      assert(guidance.contains("spark.executor.processTreeMetrics.enabled=true"))
-      assert(guidance.contains("spark.eventLog.logStageExecutorMetrics=true"))
-      assert(guidance.contains("spark.executor.metrics.pollingInterval=5000"))
+      assert(guidance.contains("PySpark memory autotuning needs a telemetry-enabled retry"))
     }
   }
 

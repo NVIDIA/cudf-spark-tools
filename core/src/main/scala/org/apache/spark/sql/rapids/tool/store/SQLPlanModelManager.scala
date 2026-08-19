@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import scala.collection.{immutable, mutable}
 
 import org.apache.spark.sql.rapids.tool.{AccumToStageRetriever, AppBase}
 import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanInfo
+import org.apache.spark.storage.RDDInfo
 
 // This SparkPlanInfoTruncated is used to trim and serialize
 // SparkPlanInfo by removing the unnecessary fields. Only three fields are kept:
@@ -62,6 +63,17 @@ object SparkPlanInfoTruncated {
   }
 }
 
+object SQLPlanModelManager {
+  private val SQL_CACHE_NODE_NAMES =
+    Set("InMemoryRelation", "InMemoryTableScan", "TableCacheQueryStage", "GpuInMemoryTableScan")
+  private val NAMED_CACHE_SCAN_PREFIX = "Scan In-memory table "
+
+  private[store] def isSqlCacheNode(nodeName: String): Boolean = {
+    nodeName != null &&
+      (SQL_CACHE_NODE_NAMES.contains(nodeName) || nodeName.startsWith(NAMED_CACHE_SCAN_PREFIX))
+  }
+}
+
 /**
  * Container class to store the information about SqlPlans.
  * @param appInst the instance of AppBase where the SQLPlanModelManager belongs to. This is used to
@@ -71,6 +83,32 @@ object SparkPlanInfoTruncated {
 class SQLPlanModelManager(appInst: AppBase) {
   // SortedMap is used to keep the order of the sqlPlans by Id
   val sqlPlans: mutable.SortedMap[Long, SQLPlanModel] = mutable.SortedMap[Long, SQLPlanModel]()
+  // Keep bounded evidence from every observed version, including plans discarded after AQE.
+  private var observedSqlCache = false
+
+  /** Returns whether a SQL cache operator was observed in any plan version or RDD scope. */
+  def hasSqlCacheEvidence: Boolean = observedSqlCache
+
+  private def containsSqlCacheNode(planInfo: SparkPlanInfo): Boolean = {
+    SQLPlanModelManager.isSqlCacheNode(planInfo.nodeName) ||
+      planInfo.children.exists(containsSqlCacheNode)
+  }
+
+  private def collectSqlCacheEvidence(planInfo: SparkPlanInfo): Unit = {
+    if (!observedSqlCache) {
+      observedSqlCache = containsSqlCacheNode(planInfo)
+    }
+  }
+
+  /** Records SQL cache operators retained in stage RDD scopes but omitted from SQL plan events. */
+  def collectObservedRDDScopes(rddInfos: Seq[RDDInfo]): Unit = {
+    if (!observedSqlCache) {
+      observedSqlCache = rddInfos.iterator
+        .flatMap(_.scope.toSeq)
+        .flatMap(_.getAllScopes)
+        .exists(scope => SQLPlanModelManager.isSqlCacheNode(scope.name))
+    }
+  }
 
   /**
    * Get the SparkPlanInfo for the given executionId. This is the last plan version added to that
@@ -118,6 +156,7 @@ class SQLPlanModelManager(appInst: AppBase) {
     //  information of an SqlPlan (i.e., startTime,..etc))
     val planModel = sqlPlans.getOrElseUpdate(id, new SQLPlanModelPrimaryWithDSCaching(id, appInst))
     planModel.addPlan(planInfo, physicalDescription)
+    collectSqlCacheEvidence(planModel.planInfo)
   }
 
   /**

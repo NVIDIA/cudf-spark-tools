@@ -1331,12 +1331,53 @@ abstract class AutoTuner(
     // Recommend shuffle partitions here.
     // Note that this may get overridden if AQE is enabled.
     recommendShufflePartitions()
+    recommendCacheSerializer()
     recommendKryoSerializerSetting()
     recommendGCProperty()
     if (platform.requirePathRecommendations) {
       recommendClassPathEntries()
     }
     recommendSystemProperties()
+  }
+
+  private def recommendCacheSerializer(): Unit = {
+    val propertyKey = AutoTuner.CACHE_SERIALIZER_PROPERTY
+    if (appInfoProvider.hasSqlCacheEvidence && !skippedRecommendations.contains(propertyKey)) {
+      val gpuCacheScanDisabled = getPropertyValue(AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY)
+        .exists(_.trim.equalsIgnoreCase("false"))
+      if (gpuCacheScanDisabled) {
+        appendComment(propertyKey,
+          s"is not recommended because '${AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY}' is disabled, " +
+            "so GPU cache scans remain disabled.")
+      } else {
+        AutoTuner.getCacheSerializerDefinition(finalTuningTable).foreach { tuningDefinition =>
+          val recommendedSerializer = configProvider
+            .getEntry(AutoTuner.CACHE_SERIALIZER_CONFIG).getDefault
+          val sparkDefault = tuningDefinition.getDefaultSpark
+
+          getPropertyValue(propertyKey) match {
+            case Some(current) if current == recommendedSerializer => ()
+            case Some(current) if platform.isPropertyUserOverridden(propertyKey) =>
+              appendComment(propertyKey,
+                s"is fixed by target cluster configuration to '$current'; preserving it. " +
+                  s"'$recommendedSerializer' is required for GPU InMemoryTableScan.")
+            case Some(current) if current != sparkDefault =>
+              // Preserve explicit custom serializers and surface the compatibility requirement.
+              appendComment(propertyKey,
+                s"uses custom cache serializer '$current'; preserving it. " +
+                  s"'$recommendedSerializer' is required for GPU InMemoryTableScan.")
+            case _ =>
+              appendRecommendation(propertyKey, recommendedSerializer)
+          }
+
+          if (appInfoProvider.getSparkVersion.exists(AutoTuner.hasAqeCacheScanFallback)) {
+            appendComment(propertyKey,
+              "remains compatible, but Spark 3.5.0 and 3.5.1 disable GPU InMemoryTableScan " +
+                "under AQE, so cached scans may remain on the CPU.")
+          }
+        }
+      }
+    }
   }
 
   // if the user set the serializer to use Kryo, make sure we recommend using the GPU version
@@ -2172,6 +2213,21 @@ abstract class AutoTuner(
 }
 
 object AutoTuner {
+  private[tuning] val CACHE_SERIALIZER_PROPERTY = "spark.sql.cache.serializer"
+  private[tuning] val CACHE_SERIALIZER_CONFIG = "CACHE_SERIALIZER"
+  private[tuning] val IN_MEMORY_TABLE_SCAN_PROPERTY =
+    "spark.rapids.sql.exec.InMemoryTableScanExec"
+
+  private[tuning] def hasAqeCacheScanFallback(sparkVersion: String): Boolean = {
+    ToolUtils.compareVersions(sparkVersion, "3.5.0").exists(_ >= 0) &&
+      ToolUtils.compareVersions(sparkVersion, "3.5.2").exists(_ < 0)
+  }
+
+  private[tuning] def getCacheSerializerDefinition(
+      tuningTable: Map[String, TuningEntryDefinition]): Option[TuningEntryDefinition] = {
+    tuningTable.get(CACHE_SERIALIZER_PROPERTY)
+  }
+
   /**
    * Helper function to get a combined property function that can be used
    * to retrieve the value of a property in the following priority order:

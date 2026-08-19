@@ -128,6 +128,7 @@ class SingleAppSummaryInfoProvider(
 
   private lazy val distinctLocations = app.dsInfo.groupBy(_.location)
   override def isAppInfoAvailable: Boolean = Option(app).isDefined
+  override def hasSqlCacheEvidence: Boolean = appInfo.hasSqlCacheEvidence
 
   private def findPropertyInProfPropertyResults(
       key: String,

@@ -166,6 +166,7 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
     override def getRapidsProperty(propKey: String): Option[String] = properties.get(propKey)
     override def getSystemProperty(propKey: String): Option[String] = None
     override def getSparkVersion: Option[String] = Some(testSparkVersion)
+    override def hasSqlCacheEvidence: Boolean = false
     override def getClassPathEntries: Map[String, String] = Map.empty
   }
 
@@ -182,6 +183,7 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
     override def getRapidsProperty(propKey: String): Option[String] = properties.get(propKey)
     override def getSystemProperty(propKey: String): Option[String] = None
     override def getSparkVersion: Option[String] = Some(testSparkVersion)
+    override def hasSqlCacheEvidence: Boolean = false
     override def scanStagesWithGpuOom: Set[Long] = Set.empty
     override def getClassPathEntries: Map[String, String] = Map.empty
   }

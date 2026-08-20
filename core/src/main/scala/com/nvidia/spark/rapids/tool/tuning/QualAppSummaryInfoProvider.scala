@@ -69,6 +69,8 @@ class QualAppSummaryInfoProvider(
     Option(appInfo.sparkVersion)
   }
 
+  override def hasSqlCacheEvidence: Boolean = appInfo.hasSqlCacheEvidence
+
   def getAppID: String = appInfo.appId
 
   override def getJvmGCFractions: Seq[Double] = {

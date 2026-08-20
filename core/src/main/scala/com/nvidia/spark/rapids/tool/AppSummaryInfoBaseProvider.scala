@@ -60,6 +60,7 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
   override def getRedundantReadSize: Long = 0
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = None
   override def getClassPathEntries: Map[String, String] = Map[String, String]()
+  def hasSqlCacheEvidence: Boolean = false
 }
 
 

@@ -19,8 +19,10 @@ package com.nvidia.spark.rapids.tool.tuning
 import scala.collection.mutable
 
 import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
-import com.nvidia.spark.rapids.tool.profiling.Profiler
-import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningConfigEntry, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.profiling.{Profiler, RecommendedCommentResult}
+import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningConfigEntry,
+  TuningConfiguration, TuningEntryDefinition}
+import org.scalatest.matchers.should.Matchers._
 
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.{SparkSession, TrampolineUtil}
@@ -40,6 +42,36 @@ import org.apache.spark.sql.rapids.tool.util.StringUtils
  */
 @Since("25.04.2")
 class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
+
+  private val cacheSerializerProperty = AutoTuner.CACHE_SERIALIZER_PROPERTY
+  private val gpuCacheSerializer = "com.nvidia.spark.ParquetCachedBatchSerializer"
+  private val sparkCacheSerializer =
+    "org.apache.spark.sql.execution.columnar.DefaultCachedBatchSerializer"
+
+  private def runCacheSerializerAutoTuner(
+      hasSqlCache: Boolean,
+      sourceSerializer: Option[String] = None,
+      tuningConfigs: Option[TuningConfiguration] = None,
+      targetClusterInfo: Option[TargetClusterProps] = None,
+      sourceProperties: Map[String, String] = Map.empty,
+      showOnlyUpdatedProps: Boolean = true,
+      sparkVersion: String = testSparkVersion):
+      (Seq[TuningEntryTrait], Seq[RecommendedCommentResult]) = {
+    val logEventsProps = mutable.LinkedHashMap(defaultDataprocProps.toSeq: _*)
+    logEventsProps ++= sourceProperties
+    sourceSerializer.foreach(logEventsProps.put(cacheSerializerProperty, _))
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), logEventsProps,
+      Some(sparkVersion), hasSqlCache = hasSqlCache)
+    val platform = PlatformFactory.createInstance(PlatformNames.DATAPROC, targetClusterInfo)
+    configureEventLogClusterInfoForTest(platform, sparkProperties = logEventsProps.toMap)
+    buildAutoTunerForTests(infoProvider, platform,
+      userProvidedTuningConfigs = tuningConfigs)
+      .getRecommendedProperties(showOnlyUpdatedProps = showOnlyUpdatedProps)
+  }
+
+  private def cacheSerializerValue(properties: Seq[TuningEntryTrait]): Option[String] = {
+    properties.find(_.name == cacheSerializerProperty).map(_.getTuneValue())
+  }
 
   lazy val sparkSession: SparkSession = {
     SparkSession
@@ -96,6 +128,124 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(maxPartitionRecommendation(
       0.0, Some(512.0 * 1024 * 1024), "1g", scanStagesWithGpuOom = scanOom)
       .contains("512m"))
+  }
+
+  test("cache serializer is recommended when SQL cache evidence was observed") {
+    val (properties, _) = runCacheSerializerAutoTuner(hasSqlCache = true)
+
+    cacheSerializerValue(properties) shouldBe Some(gpuCacheSerializer)
+  }
+
+  test("cache serializer is not recommended without a cache plan node") {
+    val (properties, _) = runCacheSerializerAutoTuner(hasSqlCache = false)
+
+    cacheSerializerValue(properties) shouldBe None
+  }
+
+  test("Spark default cache serializer is replaced") {
+    val (properties, _) = runCacheSerializerAutoTuner(
+      hasSqlCache = true, Some(sparkCacheSerializer))
+
+    cacheSerializerValue(properties) shouldBe Some(gpuCacheSerializer)
+  }
+
+  test("configured cache serializer is preserved") {
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true, Some(gpuCacheSerializer))
+
+    cacheSerializerValue(properties) shouldBe None
+    comments.map(_.comment).exists(_.contains("custom cache serializer")) shouldBe false
+  }
+
+  test("custom cache serializer is preserved with an advisory") {
+    val customSerializer = "example.ExistingCachedBatchSerializer"
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true, Some(customSerializer))
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    cacheSerializerValue(properties) shouldBe None
+    commentText should include("custom cache serializer")
+    commentText should include("preserving")
+    commentText should include("GPU InMemoryTableScan")
+  }
+
+  test("cache serializer recommendation uses the tuning configuration") {
+    val customSerializer = "example.CustomCachedBatchSerializer"
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(default = List(
+      TuningConfigEntry(
+        name = AutoTuner.CACHE_SERIALIZER_CONFIG,
+        default = customSerializer,
+        usedBy = cacheSerializerProperty)))
+    val (properties, _) = runCacheSerializerAutoTuner(
+      hasSqlCache = true, tuningConfigs = Some(tuningConfigs))
+
+    cacheSerializerValue(properties) shouldBe Some(customSerializer)
+  }
+
+  test("preserved Spark cache serializer retains the compatibility advisory") {
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      preserveSparkProperties = List(cacheSerializerProperty))
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true,
+      sourceSerializer = Some(sparkCacheSerializer),
+      targetClusterInfo = Some(targetClusterInfo))
+
+    cacheSerializerValue(properties) shouldBe Some(sparkCacheSerializer)
+    comments.map(_.comment).mkString("\n") should include("target cluster configuration")
+  }
+
+  test("missing preserved cache serializer is recommended") {
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      preserveSparkProperties = List(cacheSerializerProperty))
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true,
+      targetClusterInfo = Some(targetClusterInfo))
+
+    cacheSerializerValue(properties) shouldBe Some(gpuCacheSerializer)
+    comments.map(_.comment).mkString("\n") should not include "no source value"
+  }
+
+  test("enforced Spark cache serializer retains the compatibility advisory") {
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map(cacheSerializerProperty -> sparkCacheSerializer))
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true,
+      targetClusterInfo = Some(targetClusterInfo),
+      showOnlyUpdatedProps = false)
+
+    cacheSerializerValue(properties) shouldBe Some(sparkCacheSerializer)
+    comments.map(_.comment).mkString("\n") should include("target cluster configuration")
+  }
+
+  test("disabled GPU cache scan suppresses serializer recommendation with an advisory") {
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true,
+      sourceProperties = Map(AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY -> "false"))
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    cacheSerializerValue(properties) shouldBe None
+    commentText should include(AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY)
+    commentText should include("is not recommended")
+    commentText should include("GPU cache scans remain disabled")
+  }
+
+  test("Spark 3.5.1 cache serializer recommendation includes the AQE fallback advisory") {
+    val (properties, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true,
+      sparkVersion = "3.5.1")
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    cacheSerializerValue(properties) shouldBe Some(gpuCacheSerializer)
+    commentText should include("disable GPU InMemoryTableScan under AQE")
+  }
+
+  test("Spark 3.5.2 cache serializer recommendation has no AQE fallback advisory") {
+    val (_, comments) = runCacheSerializerAutoTuner(
+      hasSqlCache = true,
+      sparkVersion = "3.5.2")
+
+    comments.map(_.comment).mkString("\n") should not include
+      "disable GPU InMemoryTableScan under AQE"
   }
 
   // Test that the properties from the custom target cluster props will be enforced.

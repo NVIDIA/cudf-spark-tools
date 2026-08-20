@@ -52,7 +52,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
     val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
-    val maxFileScanInputOverride: Option[Option[Double]] = None)
+    val maxFileScanInputOverride: Option[Option[Double]] = None,
+    val hasSqlCache: Boolean = false)
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
   override def getMaxFileScanInput: Option[Double] =
@@ -74,6 +75,7 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def scanStagesWithGpuOom: Set[Long] = scanStagesWithGpuOomSet
   override def gpuShuffleStagesWithContainerOom: Set[Long] = gpuShuffleStagesWithContainerOomSet
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = maxColumnarExchangeDataSizeBytes
+  override def hasSqlCacheEvidence: Boolean = hasSqlCache
 
   /**
    * Sets the spark master property in the properties map.
@@ -140,12 +142,13 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
       maxColumnarExchangeDataSizeBytes: Option[Long] = None,
-      maxFileScanInputOverride: Option[Option[Double]] = None): AppInfoProviderMockTest = {
+      maxFileScanInputOverride: Option[Option[Double]] = None,
+      hasSqlCache: Boolean = false): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
       gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes,
-      maxFileScanInputOverride)
+      maxFileScanInputOverride, hasSqlCache)
   }
 
   /**

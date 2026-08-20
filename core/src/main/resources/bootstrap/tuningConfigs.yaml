@@ -120,15 +120,16 @@ default:
 
   - name: PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER
     description: >-
-      Multiplier applied to observed peak Python virtual memory when sizing
-      spark.executor.pyspark.memory from executor metrics evidence.
+      Multiplier applied to the observed p95 ProcessTreePythonVMemory executor peak when sizing
+      spark.executor.pyspark.memory. The result is rounded up to the next GiB.
     default: 1.25
     usedBy: spark.executor.pyspark.memory
 
   - name: PYSPARK_MEMORY_RETRY_GROWTH_FACTOR
     description: >-
-      Multiplier applied to the current PySpark memory limit when recommending a retry after
-      a supported Python out-of-memory failure is detected.
+      Multiplier applied to the current positive spark.executor.pyspark.memory value after a
+      recognized Python out-of-memory failure when ProcessTreePythonVMemory evidence is
+      unavailable. The result is rounded up to the next GiB.
     default: 1.5
     usedBy: spark.executor.pyspark.memory
 

@@ -147,7 +147,7 @@ The output files are defined in the following format:
 | Exec Children Node Ids | The Node IDs of the children of the executor |
 | Exec Should Remove | Whether the executor should be removed or not(true/false). The value is 'True' when the Exec is removed from the GPU migrated plan. |
 | Exec Should Ignore | Whether the executor should be ignored or not(true/false) |
-| Action | The action to be taken for Exec. It can be one of the following: NONE if the Exec is supported, IgnoreNoPerf if the Exec is removed from the migrated plan, IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the RAPIDS plugin, or Triage if the Exec has an impact on performance and it is likely to be handled by the RAPIDS plugin. |
+| Action | The action to be taken for Exec. It can be one of the following: NONE if the Exec is supported, IgnoreNoPerf if the Exec is removed from the migrated plan, IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the cuDF plugin, or Triage if the Exec has an impact on performance and it is likely to be handled by the cuDF plugin. |
 
 ### unsupportedOpsCSVReport
 
@@ -166,7 +166,7 @@ The output files are defined in the following format:
 | Details | The details of the unsupported operator |
 | Stage Duration | The duration of the stage in milliseconds. It is calculated as the difference between submission and completion times |
 | App Duration | The duration of the app |
-| Action | The action to be taken for the unsupported operator. It can be one of the following: IgnoreNoPerf if the Exec is removed from the migrated plan, IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the RAPIDS plugin, or Triage if the Exec has an impact on performance and it is likely to be handled by the RAPIDS plugin. |
+| Action | The action to be taken for the unsupported operator. It can be one of the following: IgnoreNoPerf if the Exec is removed from the migrated plan, IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the cuDF plugin, or Triage if the Exec has an impact on performance and it is likely to be handled by the cuDF plugin. |
 
 ### operatorsStatsCSVReport
 

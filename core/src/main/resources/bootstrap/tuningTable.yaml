@@ -13,10 +13,9 @@
 # limitations under the License.
 
 #===============================================================================
-# RAPIDS Accelerator Tuning Definitions Table
+# NVIDIA cuDF plugin for Apache Spark Tuning Definitions Table
 #===============================================================================
-# This YAML file defines tuning property definitions used by the RAPIDS
-# Accelerator for Apache Spark tools. It provides metadata about Spark
+# This YAML file defines tuning property definitions used by the cuDF plugin tools. It provides metadata about Spark
 # configuration properties that can be tuned for optimal GPU performance.
 #
 # Purpose:
@@ -45,7 +44,7 @@
 #   - defaultUnit: (Optional) Default unit for numeric types (e.g., MiB, Byte, ms)
 #
 # Optional Fields:
-# - defaultSpark: The default value in vanilla Apache Spark (if different from RAPIDS)
+# - defaultSpark: The default value in vanilla Apache Spark (if different from the cuDF plugin)
 # - defaultMemoryUnit: (Deprecated) Unit for memory values - use confType.defaultUnit instead
 # - modifiedBy:  Name of the plugin or rule that modifies this property
 # - comments:    Map of comment types to messages shown to users
@@ -71,8 +70,8 @@
 #    - Shuffle and partition settings
 #    - GPU resource scheduling
 #
-# 2. RAPIDS Plugin Properties (lines ~250-400)
-#    - RAPIDS-specific acceleration settings
+# 2. cuDF Plugin Properties (lines ~250-400)
+#    - cuDF plugin-specific acceleration settings
 #    - File cache, pinned memory, batch sizes
 #    - Multi-threaded readers and shuffle settings
 #
@@ -218,7 +217,7 @@ tuningDefinitions:
       unit: "ms"
   - label: spark.rapids.filecache.enabled
     description: >-
-      Enables RAPIDS file cache. The file cache stores data locally in the same local directories
+      Enables the cuDF plugin file cache. The file cache stores data locally in the same local directories
       that have been configured for the Spark executor.
     enabled: true
     level: job
@@ -502,7 +501,7 @@ tuningDefinitions:
   - label: spark.plugins
     description: >-
       A comma-separated list of plugin class names to be loaded by Spark.
-      Setting this to "com.nvidia.spark.SQLPlugin" enables the RAPIDS Accelerator plugin.
+      Setting this to "com.nvidia.spark.SQLPlugin" enables the cuDF plugin.
     enabled: true
     level: cluster
     category: functionality
@@ -510,10 +509,10 @@ tuningDefinitions:
       name: string
     comments:
       missing: |-
-        should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+        should be set to the class name required for the cuDF plugin.
           Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
       updated: |-
-        should include the class name required for the RAPIDS Accelerator for Apache Spark.
+        should include the class name required for the cuDF plugin.
           Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
   - label: spark.rapids.sql.incompatibleDateFormats.enabled
     description: >-
@@ -722,7 +721,7 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the CMD is accelerated by the Spark RAPIDS Accelerator. Default is "true".
+      persistent: controls whether the CMD is accelerated by the cuDF plugin. Default is "true".
   - label: spark.rapids.sql.command.DeleteCommand
     description: >-
       Acceleration is enabled by default. Set this to False to disable GPU acceleration for Delta Lake Delete commands.
@@ -733,7 +732,7 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the CMD is accelerated by the Spark RAPIDS Accelerator. Default is "true".
+      persistent: controls whether the CMD is accelerated by the cuDF plugin. Default is "true".
   - label: spark.rapids.sql.command.UpdateCommand
     description: >-
       Acceleration is enabled by default. Set this to False to disable GPU acceleration for Delta Lake Update commands.
@@ -744,7 +743,7 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the CMD is accelerated by the Spark RAPIDS Accelerator. Default is "true".
+      persistent: controls whether the CMD is accelerated by the cuDF plugin. Default is "true".
   # Databricks delta update commands
   - label: spark.rapids.sql.command.MergeIntoCommandEdge
     description: >-
@@ -756,7 +755,7 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the CMD is accelerated by the Spark RAPIDS Accelerator. Default is "true".
+      persistent: controls whether the CMD is accelerated by the cuDF plugin. Default is "true".
   - label: spark.rapids.sql.command.DeleteCommandEdge
     description: >-
       Acceleration is enabled by default. Set this to False to disable GPU acceleration for Delta Lake Delete commands.
@@ -767,7 +766,7 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the CMD is accelerated by the Spark RAPIDS Accelerator. Default is "true".
+      persistent: controls whether the CMD is accelerated by the cuDF plugin. Default is "true".
   - label: spark.rapids.sql.command.UpdateCommandEdge
     description: >-
       Acceleration is enabled by default. Set this to False to disable GPU acceleration for Delta Lake Update commands.
@@ -778,7 +777,7 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the CMD is accelerated by the Spark RAPIDS Accelerator. Default is "true".
+      persistent: controls whether the CMD is accelerated by the cuDF plugin. Default is "true".
   - label: spark.rapids.sql.format.delta.write.enabled
     description: >-
       Acceleration is enabled by default. Set this to False to disable GPU acceleration for Delta Lake Update commands.
@@ -789,4 +788,4 @@ tuningDefinitions:
     confType:
       name: boolean
     comments:
-      persistent: controls whether the writing of Delta Lake tables is accelerated by the Spark RAPIDS Accelerator. Default is 'true'.
+      persistent: controls whether the writing of Delta Lake tables is accelerated by the cuDF plugin. Default is 'true'.

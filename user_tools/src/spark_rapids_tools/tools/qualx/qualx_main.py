@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -871,7 +871,7 @@ def _predict_cli(
 ) -> None:
     """Predict GPU speedup given CPU logs.
 
-    Predict the speedup of running a Spark application with Spark-RAPIDS on GPUs (vs. CPUs).
+    Predict the speedup of running a Spark application with the cuDF plugin on GPUs (vs. CPUs).
     This uses an XGBoost model trained on matching CPU and GPU runs of various Spark applications.
 
     Note: this provides a 'best guess' based on an ML model, which may show incorrect results when

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ import org.apache.spark.sql.rapids.tool.{AppBase, ToolUtils}
 
 
 /**
- * Print RAPIDS related or all Spark Properties when the propSource is set to "rapids".
- * Note that RAPIDS related properties are not necessarily starting with prefix 'spark.rapids'.
+ * Print cuDF plugin-related or all Spark properties when the propSource is set to "rapids".
+ * Note that cuDF plugin-related properties are not necessarily starting with prefix 'spark.rapids'.
  * This table is inverse of the other tables where the row keys are property keys and the
  columns
  * are the application values. So column1 would be all the key values for app index 1.

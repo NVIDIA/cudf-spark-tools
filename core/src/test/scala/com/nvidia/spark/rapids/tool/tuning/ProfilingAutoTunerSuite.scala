@@ -114,7 +114,7 @@ abstract class ProfilingAutoTunerSuiteBase extends BaseAutoTunerSuite {
   }
 
   /**
-   * Helper method to return the latest Spark RAPIDS plugin jar URL.
+   * Helper method to return the latest cuDF plugin jar URL.
    */
   protected lazy val latestPluginJarUrl: String = {
     val latestRelease = WebCrawlerUtil.getLatestPluginRelease match {
@@ -138,7 +138,7 @@ abstract class ProfilingAutoTunerSuiteBase extends BaseAutoTunerSuite {
  *
  * TODO:
  * Migrate all tests in this suite to use the new target cluster properties format.
- * https://github.com/NVIDIA/spark-rapids-tools/issues/1748
+ * https://github.com/NVIDIA/cudf-spark-tools/issues/1748
  */
 class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
 
@@ -988,7 +988,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1010,8 +1010,8 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
   }
 
   // This test verifies that Profiling AutoTuner retains existing
-  // "spark.plugins" property and RAPIDS plugin is added to it.
-  test("test existing 'spark.plugins' are retained and RAPIDS plugin is added") {
+  // "spark.plugins" property and cuDF plugin is added to it.
+  test("test existing 'spark.plugins' are retained and cuDF plugin is added") {
     val customProps = mutable.LinkedHashMap(
       "spark.executor.cores" -> "8",
       "spark.executor.memory" -> "212992MiB",
@@ -1082,7 +1082,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.optimizer.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
-          |- 'spark.plugins' should include the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should include the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1493,7 +1493,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     Profiler.getAutoTunerResultsAsString(properties, comments)
   }
 
-  test("Multiple RAPIDS jars trigger a comment") {
+  test("Multiple cuDF plugin jars trigger a comment") {
     // 1. The Autotuner should warn the users that they have multiple jars defined in the classPath
     // 2. Compare the output
     // scalastyle:off line.size.limit
@@ -1526,7 +1526,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.execution.enabled' was not set.
           |- 'spark.dataproc.enhanced.optimizer.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1581,7 +1581,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.execution.enabled' was not set.
           |- 'spark.dataproc.enhanced.optimizer.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1715,7 +1715,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.execution.enabled' was not set.
           |- 'spark.dataproc.enhanced.optimizer.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -2103,7 +2103,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |Comments:
           |- 'spark.executor.instances' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -2975,7 +2975,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  test("Test EMR sets shuffle manager properly and doesn't need Spark RAPIDS jar") {
+  test("Test EMR sets shuffle manager properly and doesn't need cuDF plugin jar") {
     // mock the properties loaded from eventLog
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
@@ -3351,7 +3351,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
   }
 
   // TODO: Revisit this test once optimal tuning for AQE for dataproc on g2 instances is determined
-  //       See https://github.com/NVIDIA/spark-rapids-tools/issues/1682
+  //       See https://github.com/NVIDIA/cudf-spark-tools/issues/1682
   ignore(s"test AutoTuner recommends increasing shuffle partition when shuffle stages " +
     s"have OOM failures") {
     // mock the properties loaded from eventLog
@@ -3439,7 +3439,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
   }
 
   // TODO: Revisit this test once optimal tuning for AQE for dataproc on g2 instances is determined
-  //       See https://github.com/NVIDIA/spark-rapids-tools/issues/1682
+  //       See https://github.com/NVIDIA/cudf-spark-tools/issues/1682
   ignore(s"test AutoTuner recommends increasing shuffle partition and AQE initial partition num " +
     s"when shuffle stages have OOM failures") {
     // mock the properties loaded from eventLog
@@ -3853,5 +3853,5 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
   //
   // TODO:
   // Migrate all tests in this suite to use the new target cluster properties format.
-  // https://github.com/NVIDIA/spark-rapids-tools/issues/1748
+  // https://github.com/NVIDIA/cudf-spark-tools/issues/1748
 }

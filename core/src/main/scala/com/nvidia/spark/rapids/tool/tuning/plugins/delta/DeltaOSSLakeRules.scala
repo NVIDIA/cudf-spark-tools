@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import org.apache.maven.artifact.versioning.ComparableVersion
  *
  * ==Overview==
  * Delta Lake is an open-source storage framework that brings ACID transactions to Apache Spark
- * and big data workloads. The RAPIDS Accelerator for Apache Spark provides limited support for
+ * and big data workloads. The cuDF plugin provides limited support for
  * Delta Lake operations on GPU, with certain version requirements and configuration options.
  * This module helps users optimize their Delta Lake workloads for GPU acceleration.
  *
@@ -41,12 +41,12 @@ import org.apache.maven.artifact.versioning.ComparableVersion
  *
  * 1. '''DeltaOSSVersionRule''': Validates Delta Lake version compatibility
  *    - Extracts the Delta Lake version from the application's classpath
- *    - Compares it against the minimum recommended version for RAPIDS acceleration
+ *    - Compares it against the minimum recommended version for the cuDF plugin
  *    - Generates recommendations if an upgrade is needed
  *    - Handles cases where Delta Lake version cannot be detected
  *
  * 2. '''DeltaOSSMigrationRule''': Provides migration guidance and support information
- *    - Informs users about Delta Lake support limitations in RAPIDS
+ *    - Informs users about Delta Lake support limitations in the cuDF plugin
  *    - Only activates for non-GPU enabled applications
  *    - Provides references to documentation for detailed feature support
  *
@@ -77,7 +77,7 @@ import org.apache.maven.artifact.versioning.ComparableVersion
 /**
  * Rule to check if the Delta Lake version used in the application
  * meets the minimum recommended version for optimal compatibility
- * with the RAPIDS Accelerator for Apache Spark.
+ * with the cuDF plugin.
  */
 class DeltaOSSVersionRule extends BaseTuningRule {
   private var extractedDLVersion: Option[String] = _
@@ -126,7 +126,7 @@ class DeltaOSSVersionRule extends BaseTuningRule {
 
 /**
  * Rule to inform users about the limited support for Delta Lake tables
- * provided by the RAPIDS Accelerator when Delta Lake is detected in the application.
+ * provided by the cuDF plugin when Delta Lake is detected in the application.
  */
 class DeltaOSSMigrationRule extends BaseTuningRule {
   // get the related comment from the config file.
@@ -134,7 +134,7 @@ class DeltaOSSMigrationRule extends BaseTuningRule {
     tuner.configProvider.getEntry("DELTA_LAKE_OSS_SUPPORT_COMMENT").default
   }
 
-  // This rule only activated for non RAPIDS eventlogs.
+  // This rule only activated for non-cuDF-plugin event logs.
   override val condition: ConditionTrait[AutoTuner] = TuningCondPredicates.gpuNotEnabled
 
   override def apply(tuner: AutoTuner): Unit = {

@@ -36,16 +36,16 @@ def detect_spark_runtime(
 ) -> DetectionResult:
     """Classify a single-app event log into a tool execution decision.
 
-    Returns ``PROFILING`` when a RAPIDS marker is found, ``QUALIFICATION`` when
+    Returns ``PROFILING`` when a cuDF plugin marker is found, ``QUALIFICATION`` when
     the log appears to be OSS Spark/CPU, and ``UNKNOWN`` when the bounded scan
     cannot make a decision.
 
-    ``max_events_scanned`` caps CPU/IO cost. Logs that do not expose a RAPIDS
+    ``max_events_scanned`` caps CPU/IO cost. Logs that do not expose a cuDF plugin
     marker or ``SparkListenerEnvironmentUpdate`` within the cap remain
     ``UNKNOWN``.
 
     ``allow_cpu_fast_path`` enables early CPU routing when startup properties
-    contain no RAPIDS markers. Disable it to require EOF before returning
+    contain no cuDF plugin markers. Disable it to require EOF before returning
     ``QUALIFICATION``.
     """
     # Keep the caller's input verbatim in source_path (cloud URI schemes
@@ -73,10 +73,10 @@ def detect_spark_runtime(
         reason = f"decisive: classified as {runtime.value}"
     elif scan.termination is Termination.CPU_FAST_PATH and runtime is SparkRuntime.SPARK:
         tool_execution = ToolExecution.QUALIFICATION
-        reason = "startup properties classify as SPARK with no RAPIDS markers"
+        reason = "startup properties classify as SPARK with no cuDF plugin markers"
     elif scan.termination is Termination.EXHAUSTED and scan.env_update_seen:
         tool_execution = ToolExecution.QUALIFICATION
-        reason = "walked full log, no RAPIDS signal"
+        reason = "walked full log, no cuDF plugin signal"
     else:
         tool_execution = ToolExecution.UNKNOWN
         reason = (

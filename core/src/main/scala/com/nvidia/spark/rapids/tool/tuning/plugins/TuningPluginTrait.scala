@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.nvidia.spark.rapids.tool.plugins.ConditionTrait
 import com.nvidia.spark.rapids.tool.tuning.AutoTuner
 
 /**
- * Trait defining the contract for tuning plugins in the RAPIDS auto-tuning system.
+ * Trait defining the contract for tuning plugins in the cuDF plugin auto-tuning system.
  *
  * A tuning plugin is a collection of related tuning rules that share a common activation
  * condition. Plugins provide a way to group and organize rules based on functionality,

@@ -1,6 +1,6 @@
-# RAPIDS User Tools on Databricks Azure
+# NVIDIA cuDF plugin for Apache Spark User Tools on Databricks Azure
 
-This is a guide for the RAPIDS tools for Apache Spark on [Databricks Azure](https://www.databricks.com/product/azure). At the end of this guide, the user will be able to run the RAPIDS tools to analyze the clusters and the applications running on Databricks Azure.
+This is a guide for the tools for the NVIDIA cuDF plugin for Apache Spark on [Databricks Azure](https://www.databricks.com/product/azure). At the end of this guide, the user will be able to run the cuDF plugin tools to analyze the clusters and the applications running on Databricks Azure.
 
 ## Assumptions
 
@@ -25,10 +25,10 @@ The tool currently only supports event logs stored on ABFS ([Azure Blob File Sys
     - `output` should use default of `json` in `core` section.
     - Verify that the configurations are stored in the file `$AZURE_CONFIG_DIR/config` where the default value of `AZURE_CONFIG_DIR` is `$HOME/.azure` on Linux or macOS.
 
-### 3.RAPIDS tools
+### 3.cuDF plugin tools
 
 - Spark event logs:
-  - The RAPIDS tools can process Apache Spark CPU event logs from Spark 2.0 or higher (raw, .lz4, .lzf, .snappy, .zstd).
+  - The cuDF plugin tools can process Apache Spark CPU event logs from Spark 2.0 or higher (raw, .lz4, .lzf, .snappy, .zstd).
   - For `qualification` commands, the event logs need to be archived to an accessible local or ABFS folder.
 
 ### 4.Install the package
@@ -45,11 +45,11 @@ The tool currently only supports event logs stored on ABFS ([Azure Blob File Sys
 ### 5.Environment variables
 
 Before running any command, you can set environment variables to specify configurations.
-- RAPIDS variables have a naming pattern `RAPIDS_USER_TOOLS_*`:
-  - `RAPIDS_USER_TOOLS_CACHE_FOLDER`: specifies the location of a local directory that the RAPIDS-cli uses to store and cache the downloaded resources. The default is `/var/tmp/spark_rapids_user_tools_cache`.  Note that caching the resources locally has an impact on the total execution time of the command.
-  - `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY`: specifies the location of a local directory that the RAPIDS-cli uses to generate the output. The wrapper CLI arguments override that environment variable (`--local_folder` for Qualification).
-- For Databricks CLI, some environment variables can be set and picked up by the RAPIDS-user tools such as: `DATABRICKS_CONFIG_FILE`, `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. See the description of the variables in [Environment variables](https://docs.databricks.com/en/dev-tools/auth/index.html#environment-variables-and-fields-for-client-unified-authentication).
-- For Azure CLI, some environment variables can be set and picked up by the RAPIDS-user tools such as: `AZURE_CONFIG_FILE` and `AZURE_DEFAULTS_LOCATION`.
+- User tools variables use the `RAPIDS_USER_TOOLS_*` naming pattern:
+  - `RAPIDS_USER_TOOLS_CACHE_FOLDER`: specifies the location of a local directory that the cuDF plugin CLI uses to store and cache the downloaded resources. The default is `/var/tmp/spark_rapids_user_tools_cache`.  Note that caching the resources locally has an impact on the total execution time of the command.
+  - `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY`: specifies the location of a local directory that the cuDF plugin CLI uses to generate the output. The wrapper CLI arguments override that environment variable (`--local_folder` for Qualification).
+- For Databricks CLI, some environment variables can be set and picked up by the cuDF plugin user tools such as: `DATABRICKS_CONFIG_FILE`, `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. See the description of the variables in [Environment variables](https://docs.databricks.com/en/dev-tools/auth/index.html#environment-variables-and-fields-for-client-unified-authentication).
+- For Azure CLI, some environment variables can be set and picked up by the cuDF plugin user tools such as: `AZURE_CONFIG_FILE` and `AZURE_DEFAULTS_LOCATION`.
 
 ## Qualification command
 
@@ -77,7 +77,7 @@ The local deployment runs on the local development machine. It requires:
 | **local_folder**               | Local work-directory path to store the output and to be used as root directory for temporary folders/files. The final output will go into a subdirectory named `qual-${EXEC_ID}` where `exec_id` is an auto-generated unique identifier of the execution.                                                                                                                                                 | If the argument is NONE, the default value is the env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory.                                                                                                       |    N     |
 | **jvm_heap_size**              | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                                                                                                                                                                             | 24                                                                                                                                                                                                                                                  |    N     |
 | **profile**                    | A named Databricks profile that you can specify to get the settings/credentials of the Databricks account                                                                                                                                                                                                                                                                                                 | "DEFAULT"                                                                                                                                                                                                                                           |    N     |
-| **tools_jar**                  | Path to a bundled jar including RAPIDS tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                                                                                                                                                           | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                                                                                                                                     |    N     |
+| **tools_jar**                  | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                                                                                                                                                           | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                                                                                                                                     |    N     |
 | **filter_apps**                | Filtering criteria of the applications listed in the final STDOUT table is one of the following (`ALL`, `SPEEDUPS`, `SAVINGS`). "`ALL`" means no filter applied. "`SPEEDUPS`" lists all the apps that are either '_Recommended_', or '_Strongly Recommended_' based on speedups. "`SAVINGS`" lists all the apps that have positive estimated GPU savings except for the apps that are '_Not Applicable_'. | `SAVINGS`                                                                                                                                                                                                                                           |    N     |
 | **gpu_cluster_recommendation** | The type of GPU cluster recommendation to generate. It accepts one of the following (`CLUSTER`, `JOB`, `MATCH`). `MATCH`: keep GPU cluster same number of nodes as CPU cluster; `CLUSTER`: recommend optimal GPU cluster by cost for entire cluster. `JOB`: recommend optimal GPU cluster by cost per job                                                                                                 | `MATCH`                                                                                                                                                                                                                                             |    N     |
 | **cpu_discount**               | A percent discount for the cpu cluster cost in the form of an integer value (e.g. 30 for 30% discount)                                                                                                                                                                                                                                                                                                    | N/A                                                                                                                                                                                                                                                 |    N     |
@@ -117,7 +117,7 @@ A typical workflow to successfully run the `qualification` command in local mode
    ```
    The wrapper generates a unique-Id for each execution in the format of `qual_<YYYYmmddHHmmss>_<0x%08X>`
    The above command will generate a directory containing `qualification_summary.csv` in addition to
-   the actual folder of the RAPIDS Qualification tool. The directory will be mirrored to ABFS path (`REMOTE_FOLDER`).
+   the actual folder of the cuDF plugin Qualification tool. The directory will be mirrored to ABFS path (`REMOTE_FOLDER`).
 
    ```
     ./qual_<YYYYmmddHHmmss>_<0x%08X>/qualification_summary.csv
@@ -152,7 +152,7 @@ For each app, the command output lists the following fields:
   ```
 
 The command creates a directory with UUID that contains the following:
-- Directory generated by the RAPIDS qualification tool `rapids_4_spark_qualification_output`;
+- Directory generated by the cuDF plugin qualification tool `rapids_4_spark_qualification_output`;
 - A CSV file that contains the summary of all the applications along with estimated absolute costs
 - Sample directory structure:
     ```
@@ -192,7 +192,7 @@ The local deployment runs on the local development machine. It requires:
 | **local_folder**     | Local work-directory path to store the output and to be used as root directory for temporary folders/files. The final output will go into a subdirectory named `prof-${EXEC_ID}` where `exec_id` is an auto-generated unique identifier of the execution.              | If the argument is NONE, the default value is the env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory.                                                                                                   |     N    |
 | **profile**          | A named Databricks profile that you can specify to get the settings/credentials of the Databricks account                                                                                                                                                              | "DEFAULT"                                                                                                                                                                                                                                       |     N    |
 | **jvm_heap_size**    | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                                          | 24                                                                                                                                                                                                                                              |     N    |
-| **tools_jar**        | Path to a bundled jar including RAPIDS tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                        | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                                                                                                                                 |     N    |
+| **tools_jar**        | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                        | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                                                                                                                                 |     N    |
 | **credentials_file** | The local path of JSON file that contains the application credentials                                                                                                                                                                                                  | If missing, loads the env variable `DATABRICKS_CONFIG_FILE` if any. Otherwise, it uses the default path `~/.databrickscfg` on Unix, Linux, or macOS                                                                                             |     N    |
 | **verbose**          | True or False to enable verbosity to the wrapper script                                                                                                                                                                                                                | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                                                                                                                                               |     N    |
 | **rapids_options**** | A list of valid [Profiling tool options](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/jar-usage.html#prof-tool-title-options). Note that (`output-directory`, `auto-tuner`, `combined`) flags are ignored                                                                               | N/A                                                                                                                                                                                                                                             |     N    |
@@ -217,7 +217,7 @@ A typical workflow to successfully run the `profiling` command in local mode is 
 
 For each successful execution, the wrapper generates a new directory in the format of
 `prof_<YYYYmmddHHmmss>_<0x%08X>`. The directory contains `tuning_summary.log` in addition to
-the actual folder of the RAPIDS Profiling tool. The directory will be mirrored to ABFS folder if the
+the actual folder of the cuDF plugin Profiling tool. The directory will be mirrored to ABFS folder if the
 argument `--remote_folder` was a valid ABFS path.
 
    ```

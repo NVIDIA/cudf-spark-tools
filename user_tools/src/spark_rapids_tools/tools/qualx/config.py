@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ Environment variables:
 - QUALX_DIR: root directory for Qualx execution, primarily used in dataset JSON files to locate
     dataset-specific plugins.
 - QUALX_LABEL: targeted label column for XGBoost model.
-- SPARK_RAPIDS_TOOLS_JAR: path to Spark RAPIDS Tools JAR file.
+- SPARK_RAPIDS_TOOLS_JAR: path to the cuDF plugin tools JAR file.
 """
 from typing import Type
 from spark_rapids_pytools.common.utilities import Utils

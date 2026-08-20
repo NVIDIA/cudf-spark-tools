@@ -34,15 +34,15 @@ import org.apache.spark.sql.rapids.tool.util.SparkRuntime
 object ToolUtils extends Logging {
   // List of recommended file-encodings on the GPUs.
   val SUPPORTED_ENCODINGS = Seq("UTF-8")
-  // the prefix of keys defined by the RAPIDS plugin
+  // the prefix of keys defined by the cuDF plugin
   val PROPS_RAPIDS_KEY_PREFIX = "spark.rapids"
-  // List of keys from sparkProperties that may point to RAPIDS jars.
+  // List of keys from sparkProperties that may point to cuDF plugin jars.
   // Note that we ignore "spark.yarn.secondary.jars" for now as it does not include a full path.
   val POSSIBLE_JARS_PROPERTIES = Set("spark.driver.extraClassPath",
     "spark.executor.extraClassPath",
     "spark.yarn.dist.jars",
     "spark.repl.local.jars")
-  // matches file paths or names of JAR files related to RAPIDS, cuDF, or CUDA:
+  // matches file paths or names of JAR files related to the cuDF plugin, cuDF, or CUDA:
   // - .*rapids-4-spark.*\.jar: Matches any JAR file whose name contains rapids-4-spark.
   // - .*cuda[0-9]+.*\.jar: Matches any JAR file whose name contains cuda followed by one or more
   //   digits.
@@ -214,11 +214,11 @@ object ToolUtils extends Logging {
   }
 
   /**
-   * Given a spark property key, this predicates checks if it is related to RAPIDS configurations.
-   * Note that, "related RAPIDS properties" do not always have 'spark.rapids' prefix.
+   * Given a spark property key, this predicates checks if it is related to cuDF plugin configurations.
+   * Note that, "cuDF plugin-related properties" do not always have 'spark.rapids' prefix.
    *
    * @param sparkPropKey the spark property key
-   * @return True if it is directly related to RAPIDS
+   * @return True if it is directly related to the cuDF plugin
    */
   def isRapidsPropKey(pKey: String): Boolean = {
     pKey.startsWith(PROPS_RAPIDS_KEY_PREFIX) || pKey.startsWith("spark.executorEnv.UCX") ||
@@ -235,9 +235,9 @@ object ToolUtils extends Logging {
   }
 
   /**
-   * Collects the paths that points to RAPIDS jars in a map of properties.
+   * Collects the paths that points to cuDF plugin jars in a map of properties.
    * @param properties the map of properties to holding the app configuration.
-   * @return set of unique file paths that matches RAPIDS jars patterns.
+   * @return set of unique file paths that matches cuDF plugin jars patterns.
    */
   def extractRAPIDSJarsFromProps(properties: collection.Map[String, String]): Set[String] = {
     properties.filterKeys(POSSIBLE_JARS_PROPERTIES.contains(_)).collect {

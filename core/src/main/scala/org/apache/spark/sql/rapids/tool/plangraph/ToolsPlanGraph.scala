@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -665,7 +665,7 @@ object ToolsPlanGraph {
         throw new RuntimeException(
           "Incompatible Spark runtime detected. " +
           "Please make sure the Spark version used at runtime is compatible with the " +
-          "version used to build the RAPIDS Accelerator for Spark tool jars.")
+          "version used to build the cuDF plugin tool jars.")
     }
   }
 
@@ -697,7 +697,7 @@ object ToolsPlanGraph {
         throw new RuntimeException(
           "Incompatible Spark runtime detected. " +
           "Please make sure the Spark version used at runtime is compatible with the " +
-          "version used to build the RAPIDS Accelerator for Spark tool jars.")
+          "version used to build the cuDF plugin tool jars.")
     }
   }
 

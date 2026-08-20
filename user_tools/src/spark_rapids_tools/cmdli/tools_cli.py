@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI to run tools associated with RAPIDS Accelerator for Apache Spark plugin."""
+"""CLI to run tools associated with the NVIDIA cuDF plugin for Apache Spark."""
 
 from typing import Optional
 
@@ -31,9 +31,9 @@ from spark_rapids_tools.utils.util import gen_app_banner, init_environment
 
 class ToolsCLI(object):  # pylint: disable=too-few-public-methods
     """CLI that provides a runtime environment that simplifies running performance analysis using
-    the RAPIDS Accelerator for Apache Spark.
+    the cuDF plugin.
 
-    A wrapper script to run RAPIDS Accelerator tools locally on the dev machine.
+    A wrapper script to run cuDF plugin tools locally on the dev machine.
     """
 
     def qualification(self,
@@ -88,12 +88,12 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
         :param verbose: True or False to enable verbosity of the script.
         :param tools_config_file: Path to a configuration file that contains the tools' options.
                 For sample configuration files, please visit
-                https://github.com/NVIDIA/spark-rapids-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
+                https://github.com/NVIDIA/cudf-spark-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
         :param submission_mode: Submission mode to run the qualification tool.
                 Supported modes are "local" and "distributed".
         :param target_cluster_info: Path to a YAML file that contains the target cluster information.
                 For sample target cluster info files, please visit
-                https://github.com/NVIDIA/spark-rapids-tools/tree/main/core/src/main/resources/targetClusterInfo
+                https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/src/main/resources/targetClusterInfo
         :param rapids_options: A list of valid Qualification tool options.
                 Note that the wrapper ignores ["output-directory", "platform"] flags, and it does not support
                 multiple "spark-property" arguments.
@@ -101,10 +101,10 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                 https://docs.nvidia.com/spark-rapids/user-guide/latest/qualification/jar-usage.html#running-the-qualification-tool-standalone-on-spark-event-logs
         :param tuning_configs: Path to a YAML file that contains the tuning configurations.
                 For sample tuning configs files, please visit
-                https://github.com/NVIDIA/spark-rapids-tools/tree/main/core/src/main/resources/bootstrap/tuningConfigs.yaml
+                https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/src/main/resources/bootstrap/tuningConfigs.yaml
         :param qualx_config: Path to a qualx-conf.yaml file to use for configuration.
                If not provided, the wrapper will use the default:
-               https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+               https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
         :return: The output folder where the qualification tool output is stored.
         :rtype: Optional[str]
         """
@@ -194,10 +194,10 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
         :param verbose: True or False to enable verbosity of the script.
         :param tools_config_file: Path to a configuration file that contains the tools' options.
                 For sample configuration files, please visit
-                https://github.com/NVIDIA/spark-rapids-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
+                https://github.com/NVIDIA/cudf-spark-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
         :param target_cluster_info: Path to a YAML file that contains the target cluster information.
                 For sample target cluster info files, please visit
-                https://github.com/NVIDIA/spark-rapids-tools/tree/main/core/src/main/resources/targetClusterInfo
+                https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/src/main/resources/targetClusterInfo
         :param rapids_options: A list of valid Profiling tool options.
                 Note that the wrapper ignores ["output-directory"] flags, and it does not support
                 multiple "spark-property" arguments.
@@ -205,7 +205,7 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                 https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/jar-usage.html#prof-tool-title-options
         :param tuning_configs: Path to a YAML file that contains the tuning configurations.
                 For sample tuning configs files, please visit
-                https://github.com/NVIDIA/spark-rapids-tools/tree/main/core/src/main/resources/bootstrap/tuningConfigs.yaml
+                https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/src/main/resources/bootstrap/tuningConfigs.yaml
         :return: The output folder where the profiling tool output is stored.
         :rtype: Optional[str]
         """
@@ -259,7 +259,7 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                          and "databricks-azure", "emr", default to "onprem".
         :param qualx_config: Path to a qualx-conf.yaml file to use for configuration.
                If not provided, the wrapper will use the default:
-               https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+               https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
         """
         # Since prediction is an internal tool with frequent output, we enable debug mode by default
         ToolLogging.enable_debug_mode()
@@ -310,7 +310,7 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                                  (Duration_speedup) and value.
         :param qualx_config: Path to a qualx-conf.yaml file to use for configuration.
                If not provided, the wrapper will use the default:
-               https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+               https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
         """
         # Since train is an internal tool with frequent output, we enable debug mode by default
         ToolLogging.enable_debug_mode()
@@ -339,7 +339,7 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
 
         :param qualx_pipeline_config: Path to YAML config file containing the required training parameters.
                                       For sample qualx-pipeline-conf-example.yaml files, please visit
-                                      https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-pipeline-conf-example.yaml.
+                                      https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-pipeline-conf-example.yaml.
         """
         # Since pipeline is an internal tool with frequent output, we enable debug mode by default
         ToolLogging.enable_debug_mode()

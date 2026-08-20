@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2024, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""Wrapper class to run tools associated with RAPIDS Accelerator for Apache Spark plugin on DATABRICKS_AZURE."""
+"""Wrapper class to run tools associated with the NVIDIA cuDF plugin for Apache Spark on DATABRICKS_AZURE."""
 
 from spark_rapids_pytools.common.utilities import ToolLogging
 from spark_rapids_pytools.rapids.diagnostic import Diagnostic
@@ -22,7 +22,7 @@ from spark_rapids_tools import CspEnv
 
 class CliDBAzureLocalMode:  # pylint: disable=too-few-public-methods
     """
-    A wrapper that runs the RAPIDS Accelerator tools locally on the dev machine for DATABRICKS_AZURE.
+    A wrapper that runs the cuDF plugin tools locally on the dev machine for DATABRICKS_AZURE.
     """
 
     @staticmethod
@@ -78,7 +78,7 @@ class CliDBAzureLocalMode:  # pylint: disable=too-few-public-methods
 
 class DBAzureWrapper:  # pylint: disable=too-few-public-methods
     """
-    A wrapper script to run RAPIDS Accelerator tools Diagnostic on Databricks_Azure.
+    A wrapper script to run cuDF plugin tools Diagnostic on Databricks_Azure.
     """
 
     def __init__(self):

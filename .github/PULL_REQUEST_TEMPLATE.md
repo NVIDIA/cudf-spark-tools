@@ -1,6 +1,6 @@
 <!--
 
-Thank you for contributing to Tools of RAPIDS Accelerator for Apache Spark!
+Thank you for contributing to tools for the NVIDIA cuDF plugin for Apache Spark!
 
 Here are some guidelines to help the review process go smoothly.
 

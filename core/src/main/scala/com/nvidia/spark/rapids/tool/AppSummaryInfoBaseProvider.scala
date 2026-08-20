@@ -64,6 +64,7 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = None
   override def getClassPathEntries: Map[String, String] = Map[String, String]()
   def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
+  def hasSqlCacheEvidence: Boolean = false
 }
 
 

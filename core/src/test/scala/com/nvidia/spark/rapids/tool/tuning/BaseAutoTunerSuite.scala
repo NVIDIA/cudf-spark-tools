@@ -52,7 +52,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
     val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
-    val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty)
+    val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
+    val hasSqlCache: Boolean = false)
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
   override def getMaxInput: Double = maxInput
@@ -74,6 +75,7 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def gpuShuffleStagesWithContainerOom: Set[Long] = gpuShuffleStagesWithContainerOomSet
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = maxColumnarExchangeDataSizeBytes
   override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = pySparkMemoryEvidence
+  override def hasSqlCacheEvidence: Boolean = hasSqlCache
 
   /**
    * Sets the spark master property in the properties map.
@@ -140,11 +142,13 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
       maxColumnarExchangeDataSizeBytes: Option[Long] = None,
-      pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty): AppInfoProviderMockTest = {
+      pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
+      hasSqlCache: Boolean = false): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
-      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, pySparkMemoryEvidence)
+      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, pySparkMemoryEvidence,
+      hasSqlCache)
   }
 
   /**

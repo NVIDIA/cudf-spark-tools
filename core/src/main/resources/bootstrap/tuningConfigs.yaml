@@ -306,6 +306,12 @@ default:
     max: 512m
     usedBy: spark.kryoserializer.buffer.max
 
+  - name: CACHE_SERIALIZER
+    description: >-
+      Serializer used for Spark SQL cached batches on the GPU
+    default: com.nvidia.spark.ParquetCachedBatchSerializer
+    usedBy: spark.sql.cache.serializer
+
   - name: LOCALITY_WAIT
     description: >-
       Time to wait to launch a data-local task before giving up and launching

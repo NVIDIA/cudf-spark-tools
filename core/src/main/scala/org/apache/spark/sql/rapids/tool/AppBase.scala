@@ -153,6 +153,8 @@ abstract class AppBase(
 
   def sqlPlans: immutable.Map[Long, SparkPlanInfo] = sqlManager.getPlanInfos
 
+  def hasSqlCacheEvidence: Boolean = sqlManager.hasSqlCacheEvidence
+
   def getStageIDsFromAccumIds(accumIds: Seq[Long]): Set[Int] = {
     accumIds.flatMap(accumManager.getAccStageIds).toSet
   }
@@ -264,6 +266,7 @@ abstract class AppBase(
   }
 
   def getOrCreateStage(info: StageInfo): StageModel = {
+    sqlManager.collectObservedRDDScopes(info.rddInfos)
     val stage = stageManager.addStageInfo(info)
     stage
   }

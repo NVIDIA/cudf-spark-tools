@@ -27,6 +27,7 @@ import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ConfTypeEnum, L
 import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
 import org.scalatest.exceptions.TestFailedException
+import org.scalatest.matchers.should.Matchers._
 import org.scalatest.prop.TableDrivenPropertyChecks._
 import org.scalatest.prop.TableFor3
 
@@ -57,10 +58,11 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
    * Helper method to return an instance of the Qualification AutoTuner with default properties
    */
   private def buildDefaultAutoTuner(
-      logEventsProps: mutable.Map[String, String] = defaultSparkProps): AutoTuner = {
+      logEventsProps: mutable.Map[String, String] = defaultSparkProps,
+      hasSqlCache: Boolean = false): AutoTuner = {
     val sparkPropsWithMemory = logEventsProps + ("spark.executor.memory" -> "212992MiB")
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
-      sparkPropsWithMemory, Some(testSparkVersion))
+      sparkPropsWithMemory, Some(testSparkVersion), hasSqlCache = hasSqlCache)
     val platform = PlatformFactory.createInstance(PlatformNames.EMR)
 
     // Configure cluster info: 32 cores, 5 workers, 4 GPUs per worker = 20 total executors
@@ -74,6 +76,43 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     )
 
     buildAutoTunerForTests(infoProvider, platform)
+  }
+
+  test("Qualification recommends cache serializer for InMemoryTableScan") {
+    val autoTuner = buildDefaultAutoTuner(hasSqlCache = true)
+    val (properties, _) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+    properties.find(_.name == AutoTuner.CACHE_SERIALIZER_PROPERTY).map(_.getTuneValue()) shouldBe
+      Some("com.nvidia.spark.ParquetCachedBatchSerializer")
+  }
+
+  test("Qualification preserves a custom cache serializer with an advisory") {
+    val customSerializer = "example.ExistingCachedBatchSerializer"
+    val logEventsProps =
+      defaultSparkProps + (AutoTuner.CACHE_SERIALIZER_PROPERTY -> customSerializer)
+    val autoTuner = buildDefaultAutoTuner(
+      logEventsProps, hasSqlCache = true)
+    val (properties, comments) =
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    properties.find(_.name == AutoTuner.CACHE_SERIALIZER_PROPERTY).map(_.getTuneValue()) shouldBe
+      Some(customSerializer)
+    commentText should include("custom cache serializer")
+    commentText should include("preserving")
+    commentText should include("GPU InMemoryTableScan")
+  }
+
+  test("Qualification skips cache serializer when GPU cache scans are disabled") {
+    val logEventsProps = defaultSparkProps +
+      (AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY -> "false")
+    val autoTuner = buildDefaultAutoTuner(logEventsProps, hasSqlCache = true)
+    val (properties, comments) = autoTuner.getRecommendedProperties()
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    properties.find(_.name == AutoTuner.CACHE_SERIALIZER_PROPERTY) shouldBe None
+    commentText should include("is not recommended")
+    commentText should include(AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY)
   }
 
   /**

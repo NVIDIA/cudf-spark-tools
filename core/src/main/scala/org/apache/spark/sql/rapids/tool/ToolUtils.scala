@@ -214,7 +214,8 @@ object ToolUtils extends Logging {
   }
 
   /**
-   * Given a spark property key, this predicates checks if it is related to cuDF plugin configurations.
+   * Given a Spark property key, this predicate checks whether it is related to cuDF plugin
+   * configurations.
    * Note that, "cuDF plugin-related properties" do not always have 'spark.rapids' prefix.
    *
    * @param sparkPropKey the spark property key

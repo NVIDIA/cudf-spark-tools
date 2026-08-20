@@ -17,9 +17,9 @@
 package com.nvidia.spark.rapids.tool
 
 /**
- * cuDF plugin tools analysis package holds the implementation of classes that process the information
- * gathered from the eventlogs to transform it into meaningful data which is consumed by the
- * reporting/heuristics engines.
+ * cuDF plugin tools analysis package holds the implementation of classes that process the
+ * information gathered from the eventlogs to transform it into meaningful data which is consumed
+ * by the reporting/heuristics engines.
  */
 package object analysis {
 

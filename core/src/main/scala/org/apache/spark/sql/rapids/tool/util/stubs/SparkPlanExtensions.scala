@@ -29,9 +29,9 @@ import org.apache.spark.sql.rapids.tool.util.stubs.rapids.RAPIDSSparkPlanInfo
 /**
  * Provides extension methods for converting upstream Spark execution plans to platform-aware plans.
  *
- * This object defines implicit conversions that enable the cuDF plugin tools to process execution plans
- * from different platforms (e.g., Databricks Photon, standard Spark) and convert them into
- * a unified representation that maintains both platform-specific and Spark-equivalent information.
+ * This object defines implicit conversions that enable the cuDF plugin tools to process execution
+ * plans from different platforms (e.g., Databricks Photon, standard Spark) and convert them into a
+ * unified representation that maintains both platform-specific and Spark-equivalent information.
  *
  * The primary use case is to take execution plans from the upstream Spark SQL engine
  * (org.apache.spark.sql.execution.SparkPlanInfo) and transform them into platform-aware

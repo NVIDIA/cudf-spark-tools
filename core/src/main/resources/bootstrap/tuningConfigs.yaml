@@ -139,6 +139,14 @@ default:
     default: 5000
     usedBy: spark.executor.metrics.pollingInterval
 
+  - name: PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS
+    description: >-
+      Whether to recommend Spark executor telemetry settings when a PySpark memory retry
+      needs process-tree memory evidence.
+    default: false
+    usedBy: spark.executor.processTreeMetrics.enabled,
+      spark.eventLog.logStageExecutorMetrics, spark.executor.metrics.pollingInterval
+
   - name: PYSPARK_MEMORY_REBALANCE_SOURCE
     description: >-
       Executor memory component from which PySpark memory is rebalanced. Valid values are

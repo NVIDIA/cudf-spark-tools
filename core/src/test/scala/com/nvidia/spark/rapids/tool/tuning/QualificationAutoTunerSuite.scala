@@ -2342,7 +2342,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
 
   forAll(Table("sourcePySparkMemory", None, Some("0"))) { sourcePySparkMemory =>
     test(s"Qualification PySpark evidence with $sourcePySparkMemory source limit " +
-        "enables telemetry only") {
+        "enables opted-in telemetry only") {
       val sourceProps = mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
         "spark.executor.instances" -> "2",
@@ -2359,7 +2359,11 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
         sparkProperties = sourceProps.toMap)
 
-      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+      val tuningConfigs = ToolTestUtils.buildTuningConfigs(qualification = List(
+        TuningConfigEntry(
+          name = "PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS", default = "true")))
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes),
+        Some(tuningConfigs))
       val (properties, comments) =
         autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
 

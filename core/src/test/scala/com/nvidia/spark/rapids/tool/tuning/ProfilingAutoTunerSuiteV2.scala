@@ -2611,7 +2611,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  test("PySpark memory evidence without a positive source limit enables telemetry only") {
+  test("PySpark memory evidence without a positive source limit does not enable telemetry " +
+      "by default") {
     val sourceProps = mutable.LinkedHashMap[String, String](
       "spark.executor.cores" -> "8",
       "spark.executor.instances" -> "2",
@@ -2630,11 +2631,11 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
     assert(!properties.exists(_.name == "spark.executor.pyspark.memory"))
     val values = properties.map(property => property.name -> property.getTuneValue()).toMap
-    assert(values("spark.executor.processTreeMetrics.enabled") == "true")
-    assert(values("spark.eventLog.logStageExecutorMetrics") == "true")
-    assert(values("spark.executor.metrics.pollingInterval") == "5000")
+    assert(!values.contains("spark.executor.processTreeMetrics.enabled"))
+    assert(!values.contains("spark.eventLog.logStageExecutorMetrics"))
+    assert(!values.contains("spark.executor.metrics.pollingInterval"))
     val guidance = comments.mkString("\n")
-    assert(guidance.contains("PySpark memory autotuning needs a telemetry-enabled retry"))
+    assert(!guidance.contains("PySpark memory autotuning needs a telemetry-enabled retry"))
   }
 
   test("OVERHEAD PySpark rebalance on standalone emits no partial recommendation") {
@@ -2685,7 +2686,9 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
   test("OVERHEAD PySpark rebalances preserve budget for evidence and telemetry retry") {
     val overheadConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
-      TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD")))
+      TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD"),
+      TuningConfigEntry(
+        name = "PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS", default = "true")))
 
     def run(evidence: Seq[PySparkMemoryEvidence]):
         (Map[String, Long], Map[String, String], Seq[String]) = {
@@ -2821,6 +2824,10 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
   }
 
   test("PySpark coordinated rebalance reports enforced conflicts without a partial pair") {
+    val telemetryConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
+      TuningConfigEntry(
+        name = "PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS", default = "true")))
+
     def run(
         enforced: Map[String, String],
         withMetrics: Boolean = true): (Map[String, String], Seq[String]) = {
@@ -2846,7 +2853,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         Some(targetClusterInfo))
       configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
         sparkProperties = sourceProps.toMap)
-      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes),
+        Some(telemetryConfigs))
       val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
       (properties.map(property => property.name -> property.getTuneValue()).toMap,
         comments.map(_.comment))

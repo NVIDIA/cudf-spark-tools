@@ -41,12 +41,14 @@ object PySparkMemoryRebalanceSource {
 case class PySparkMemoryTuningPolicy(
     evidenceHeadroomMultiplier: BigDecimal,
     retryGrowthFactor: BigDecimal,
+    recommendTelemetryConfigs: Boolean,
     rebalanceSource: PySparkMemoryRebalanceSource)
 
 object PySparkMemoryTuningPolicy {
   val EVIDENCE_HEADROOM_MULTIPLIER = "PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER"
   val RETRY_GROWTH_FACTOR = "PYSPARK_MEMORY_RETRY_GROWTH_FACTOR"
   val METRICS_POLLING_INTERVAL = "PYSPARK_MEMORY_METRICS_POLLING_INTERVAL"
+  val RECOMMEND_TELEMETRY_CONFIGS = "PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS"
   val REBALANCE_SOURCE = "PYSPARK_MEMORY_REBALANCE_SOURCE"
   val PYSPARK_MEMORY_KEY = "spark.executor.pyspark.memory"
   val PROCESS_TREE_METRICS_KEY = "spark.executor.processTreeMetrics.enabled"
@@ -61,6 +63,8 @@ object PySparkMemoryTuningPolicy {
       retryGrowthFactor = parseGrowingMultiplier(
         RETRY_GROWTH_FACTOR,
         configProvider.getEntry(RETRY_GROWTH_FACTOR).getDefault),
+      recommendTelemetryConfigs =
+        configProvider.getEntry(RECOMMEND_TELEMETRY_CONFIGS).getDefault.toBoolean,
       rebalanceSource = PySparkMemoryRebalanceSource.parse(
         configProvider.getEntry(REBALANCE_SOURCE).getDefault))
   }

@@ -38,6 +38,7 @@ class PySparkMemoryTuningPolicySuite extends AnyFunSuite {
 
     policy.evidenceHeadroomMultiplier shouldBe BigDecimal("1.25")
     policy.retryGrowthFactor shouldBe BigDecimal("1.5")
+    policy.recommendTelemetryConfigs shouldBe false
     policy.rebalanceSource shouldBe PySparkMemoryRebalanceSource.Heap
   }
 
@@ -49,13 +50,17 @@ class PySparkMemoryTuningPolicySuite extends AnyFunSuite {
           default = "1.40"),
         TuningConfigEntry(
           name = PySparkMemoryTuningPolicy.REBALANCE_SOURCE,
-          default = "OVERHEAD")),
+          default = "OVERHEAD"),
+        TuningConfigEntry(
+          name = PySparkMemoryTuningPolicy.RECOMMEND_TELEMETRY_CONFIGS,
+          default = "true")),
       profiling = List(TuningConfigEntry(
         name = PySparkMemoryTuningPolicy.RETRY_GROWTH_FACTOR,
         default = "1.75")))
 
     policy.evidenceHeadroomMultiplier shouldBe BigDecimal("1.40")
     policy.retryGrowthFactor shouldBe BigDecimal("1.75")
+    policy.recommendTelemetryConfigs shouldBe true
     policy.rebalanceSource shouldBe PySparkMemoryRebalanceSource.Overhead
   }
 

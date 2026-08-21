@@ -130,6 +130,10 @@ class SingleAppSummaryInfoProvider(
   override def isAppInfoAvailable: Boolean = Option(app).isDefined
   override def hasSqlCacheEvidence: Boolean = appInfo.hasSqlCacheEvidence
 
+  override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = {
+    PySparkMemoryEvidence.fromApp(appInfo)
+  }
+
   private def findPropertyInProfPropertyResults(
       key: String,
       props: Seq[RapidsPropertyProfileResult]): Option[String] = {

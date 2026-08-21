@@ -97,6 +97,8 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
 
   // Spark runtime version used for testing
   def testSparkVersion: String = ToolUtils.sparkRuntimeVersion
+  // Earliest Spark version with reliable ProcessTreePythonVMemory metrics
+  def reliableProcessTreeMetricsSparkVersion: String = "3.5.7"
   // Databricks version used for testing
   def testDatabricksVersion: String = "12.2.x-aarch64-scala2.12"
   // RapidsShuffleManager version used for testing

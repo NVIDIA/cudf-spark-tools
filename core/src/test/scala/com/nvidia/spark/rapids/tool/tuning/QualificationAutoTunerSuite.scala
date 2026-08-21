@@ -2318,7 +2318,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -2353,7 +2353,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         sourceProps.put("spark.executor.pyspark.memory", value))
       val peakBytes = 6L * 1024L * 1024L * 1024L
       val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-        Some(testSparkVersion),
+        Some(reliableProcessTreeMetricsSparkVersion),
         pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
       val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
       configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
@@ -2389,7 +2389,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -2422,7 +2422,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some("3.5.7"),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val nonBootstrapHeap = TuningEntryDefinition(
       label = "spark.executor.memory",

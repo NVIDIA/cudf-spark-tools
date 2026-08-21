@@ -2621,7 +2621,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
     configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
@@ -2649,7 +2649,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val tuningConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
       TuningConfigEntry(name = "PYSPARK_MEMORY_REBALANCE_SOURCE", default = "OVERHEAD")))
@@ -2700,7 +2700,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         "spark.executor.resource.gpu.amount" -> "1",
         "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
       val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-        Some(testSparkVersion), pySparkMemoryEvidence = evidence)
+        Some(reliableProcessTreeMetricsSparkVersion), pySparkMemoryEvidence = evidence)
       val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
         cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
         gpuDevice = Some(GpuTypes.L4.toString))
@@ -2763,7 +2763,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -2802,7 +2802,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(16), memoryGB = Some(64), gpuCount = Some(1),
@@ -2841,7 +2841,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
       val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
       val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-        Some(testSparkVersion),
+        Some(reliableProcessTreeMetricsSparkVersion),
         pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0,
           if (withMetrics) Seq(peakBytes) else Seq.empty)))
       val preserved = if (enforced.contains("spark.executor.memory")) List.empty
@@ -2904,7 +2904,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
       val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
       val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-        Some(testSparkVersion),
+        Some(reliableProcessTreeMetricsSparkVersion),
         pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
       val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
         cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -2948,7 +2948,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
       val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
       val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-        Some(testSparkVersion),
+        Some(reliableProcessTreeMetricsSparkVersion),
         pySparkMemoryEvidence = if (withEvidence) {
           Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes)))
         } else {
@@ -2996,7 +2996,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.executor.resource.gpu.amount" -> "1",
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(6L * 1024L * 1024L * 1024L))))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -3034,7 +3034,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     // ceil(20 * 0.95) is rank 19, so the single rank-20 outlier must not affect sizing.
     val peaks = Seq.fill(19)(lowPeak) :+ highPeak
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some(testSparkVersion),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, peaks)))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -3064,7 +3064,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val peakBytes = 2L * 1024L * 1024L * 1024L
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some("3.5.7"),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
     val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
       cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
@@ -3131,7 +3131,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       "spark.executor.resource.gpu.amount" -> "1",
       "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
-      Some("3.5.7"),
+      Some(reliableProcessTreeMetricsSparkVersion),
       pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq.empty)))
     val tuningConfigs = ToolTestUtils.buildTuningConfigs(profiling = List(
       TuningConfigEntry(

@@ -127,9 +127,9 @@ default:
 
   - name: PYSPARK_MEMORY_RETRY_GROWTH_FACTOR
     description: >-
-      Multiplier applied to the current positive spark.executor.pyspark.memory value after a
-      recognized Python out-of-memory failure when ProcessTreePythonVMemory evidence is
-      unavailable. The result is rounded up to the next GiB.
+      Multiplier applied to the current positive spark.executor.pyspark.memory value to set the
+      minimum retry target after a recognized Python out-of-memory failure. The result is rounded
+      up to the next GiB.
     default: 1.5
     usedBy: spark.executor.pyspark.memory
 

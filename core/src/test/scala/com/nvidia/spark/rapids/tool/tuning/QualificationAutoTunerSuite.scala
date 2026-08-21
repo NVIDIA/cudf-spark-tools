@@ -2409,4 +2409,43 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     val conflicts = comments.map(_.comment).filter(_.contains("constraint=enforced"))
     assert(conflicts.size == 1, comments.mkString("\n"))
   }
+
+  test("non-bootstrap source definition blocks both coordinated PySpark recommendations") {
+    import scala.jdk.CollectionConverters._
+
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some("3.5.7"),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val nonBootstrapHeap = TuningEntryDefinition(
+      label = "spark.executor.memory",
+      confType = ConfTypeEnum.Byte,
+      defaultUnit = Some("MiB"),
+      level = LevelEnum.Cluster,
+      bootstrapEntry = false)
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      tuningDefinitions = List(nonBootstrapHeap).asJava)
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, comments) =
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+    assert(!properties.exists(_.name == "spark.executor.memory"))
+    assert(properties.find(_.name == "spark.executor.pyspark.memory")
+      .forall(_.getTuneValue() != "7g"))
+    assert(comments.count(_.comment.contains("constraint=output-eligibility")) == 1)
+  }
 }

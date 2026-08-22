@@ -119,6 +119,7 @@ object ConfType {
  *                   track which plugin modified property.
  * @param confType A map containing the configuration type information with optional default unit
  *                 Example: { "name": "byte", "defaultUnit": "MiB" } or { "name": "string" }
+ * @param specialValues Values that should bypass type-specific normalization and formatting.
  * @param comments The defaults comments to be loaded for the entry. It is a map to represent
  *                 three different types of comments:
  *                 1. "missing" to represent the default comment to be appended to the AutoTuner's
@@ -138,6 +139,7 @@ class TuningEntryDefinition(
     @BeanProperty var defaultSpark: String,
     @BeanProperty var modifiedBy: String,
     @BeanProperty var confType: util.LinkedHashMap[String, String],
+    @BeanProperty var specialValues: util.List[String],
     @BeanProperty var comments: util.LinkedHashMap[String, String]) {
   private lazy val confTypeInfo: ConfType = ConfType.fromMap(confType)
   private lazy val categoryEnum: CategoryEnum.Value = CategoryEnum.fromString(category)
@@ -154,6 +156,7 @@ class TuningEntryDefinition(
       defaultSpark = null,
       modifiedBy = "",
       confType = new util.LinkedHashMap[String, String](),
+      specialValues = new util.ArrayList[String](),
       comments = new util.LinkedHashMap[String, String]())
   }
 
@@ -186,6 +189,10 @@ class TuningEntryDefinition(
 
   def getLevelAsEnum: LevelEnum.Value = {
     levelEnum
+  }
+
+  def isSpecialValue(value: String): Boolean = {
+    Option(specialValues).exists(_.asScala.contains(value))
   }
 
   /**
@@ -251,6 +258,7 @@ object TuningEntryDefinition {
    * @param bootstrapEntry whether this should be a bootstrap entry (default: true)
    * @param defaultSpark the default Spark value (default: null)
    * @param modifiedBy the plugin(s) that modified this entry (default: "")
+   * @param specialValues values that bypass type-specific normalization and formatting
    * @return a new TuningEntryDefinition instance
    */
   def apply(
@@ -263,7 +271,8 @@ object TuningEntryDefinition {
       category: CategoryEnum.Value = CategoryEnum.Tuning,
       bootstrapEntry: Boolean = true,
       defaultSpark: String = null,
-      modifiedBy: String = ""): TuningEntryDefinition = {
+      modifiedBy: String = "",
+      specialValues: Seq[String] = Seq.empty): TuningEntryDefinition = {
     // Create a new TuningEntryDefinition with the provided parameters.
     val defn = new TuningEntryDefinition()
     defn.setLabel(label)
@@ -274,6 +283,7 @@ object TuningEntryDefinition {
     defn.setBootstrapEntry(bootstrapEntry)
     defn.setDefaultSpark(defaultSpark)
     defn.setModifiedBy(modifiedBy)
+    defn.setSpecialValues(new util.ArrayList[String](specialValues.asJava))
     // Create the confType map with the provided confType and optional defaultUnit.
     val confTypeMap = Map("name" -> confType.toString) ++ defaultUnit.map("defaultUnit" -> _)
     defn.setConfType(new java.util.LinkedHashMap(confTypeMap.asJava))

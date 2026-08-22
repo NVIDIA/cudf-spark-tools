@@ -166,6 +166,36 @@ tuningDefinitions:
     confType:
       name: byte
       defaultUnit: MiB
+  - label: spark.executor.pyspark.memory
+    description: >-
+      Amount of memory to allocate to PySpark in each executor, in MiB unless otherwise specified.
+    enabled: true
+    level: cluster
+    category: tuning
+    confType:
+      name: byte
+      defaultUnit: MiB
+  - label: spark.executor.processTreeMetrics.enabled
+    description: Enables executor process-tree metrics collection.
+    enabled: true
+    level: job
+    category: tuning
+    confType:
+      name: boolean
+  - label: spark.executor.metrics.pollingInterval
+    description: Executor metrics polling interval in milliseconds.
+    enabled: true
+    level: job
+    category: tuning
+    confType:
+      name: long
+  - label: spark.eventLog.logStageExecutorMetrics
+    description: Enables logging peak executor metrics for each stage in the event log.
+    enabled: true
+    level: job
+    category: tuning
+    confType:
+      name: boolean
   - label: spark.executor.memoryOverhead
     description: >-
       Amount of additional memory to be allocated per executor process, in MiB unless otherwise specified.
@@ -327,6 +357,19 @@ tuningDefinitions:
     category: tuning
     confType:
       name: string
+  - label: spark.sql.cache.serializer
+    description: >-
+      Serializer used for Spark SQL cached batches.
+    enabled: true
+    level: job
+    category: functionality
+    bootstrapEntry: true
+    defaultSpark: org.apache.spark.sql.execution.columnar.DefaultCachedBatchSerializer
+    confType:
+      name: string
+    comments:
+      missing: enables GPU processing of Spark SQL cached batches.
+      updated: replacing Spark's default cache serializer enables GPU processing of cached batches.
   - label: spark.shuffle.manager
     description: >-
       The RAPIDS Shuffle Manager is an implementation of the ShuffleManager interface in Apache Spark that
@@ -411,6 +454,8 @@ tuningDefinitions:
     confType:
       name: byte
       defaultUnit: Byte
+    specialValues:
+      - "-1"
   - label: spark.sql.files.maxPartitionBytes
     description: >-
       The maximum number of bytes to pack into a single partition when reading files.

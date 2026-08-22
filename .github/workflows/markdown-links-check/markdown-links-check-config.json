@@ -4,6 +4,9 @@
       "pattern": "https://github.com/NVIDIA/spark-rapids-tools/issues/*"
     },
     {
+      "pattern": "https://github.com/NVIDIA/cudf-spark-tools/issues/*"
+    },
+    {
       "pattern": "http://localhost*"
     },
     {

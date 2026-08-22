@@ -15,6 +15,7 @@
 """Unit tests for CspPath normalization and file-info caching."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow.fs as arrow_fs
 import pytest
@@ -25,6 +26,7 @@ from spark_rapids_tools.storagelib.local.localpath import LocalPath
 from spark_rapids_tools.storagelib.s3.aws_config import resolve_s3_endpoint_override
 from spark_rapids_tools.storagelib.s3.s3fs import S3Fs
 from spark_rapids_tools.storagelib.s3.s3path import S3Path
+from spark_rapids_pytools.cloud_api.sp_types import CMDDriverBase
 
 
 class TestCspPathNormalization:
@@ -186,6 +188,20 @@ class TestS3EndpointResolution:
 
         assert resolve_s3_endpoint_override() == "https://nested-s3.example"
 
+    def test_s3_endpoint_preserves_percent_encoded_profile_url(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[profile swiftstack]\n"
+            "endpoint_url = https://swiftstack.example/bucket%2Fprefix\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+
+        assert resolve_s3_endpoint_override() == "https://swiftstack.example/bucket%2Fprefix"
+
     def test_s3_endpoint_ignores_invalid_profile_config(self, monkeypatch, tmp_path):
         config_file = tmp_path / "aws_config"
         config_file.write_text("endpoint_url = https://invalid.example\n", encoding="utf-8")
@@ -233,3 +249,25 @@ class TestS3EndpointResolution:
         S3Fs.create_fs_handler(endpoint_override="https://explicit.example")
 
         assert captured_kwargs["endpoint_override"] == "https://explicit.example"
+
+    def test_local_job_arguments_apply_profile_endpoint_to_hadoop(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[profile swiftstack]\n"
+            "endpoint_url = https://swiftstack.example\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+        driver = SimpleNamespace(
+            cloud_ctxt={},
+            get_rapids_job_configs=lambda _deploy_mode: None,
+        )
+
+        job_args = CMDDriverBase.build_local_job_arguments(driver, {})
+
+        assert job_args["jvmArgs"]["Drapids.tools.hadoop.fs.s3a.endpoint"] == \
+            "https://swiftstack.example"
+        assert job_args["jvmArgs"]["Drapids.tools.hadoop.fs.s3a.path.style.access"] == "true"

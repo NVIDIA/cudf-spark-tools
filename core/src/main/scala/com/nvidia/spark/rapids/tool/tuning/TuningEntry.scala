@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -126,6 +126,10 @@ class MemoryUnitTuningEntry(
     definition: Option[TuningEntryDefinition] = None)
   extends TuningEntryBase(name, originalValueRaw, tunedValueRaw, definition) {
 
+  private def isSpecialValue(value: String): Boolean = {
+    definition.exists(_.isSpecialValue(value))
+  }
+
   /**
    * Parse the default memory unit from the tuning table and store it as a ByteUnit value.
    * E.g. "MiB" -> ByteUnit.MiB
@@ -160,8 +164,12 @@ class MemoryUnitTuningEntry(
    * @return The normalized string with bytes unit (e.g. "1024b")
    */
   override def normalizeValue(propValue: String): String = {
-    val bytes = StringUtils.convertMemorySizeToBytes(propValue, Some(defaultMemoryUnit))
-    s"${bytes}b"
+    if (isSpecialValue(propValue)) {
+      propValue
+    } else {
+      val bytes = StringUtils.convertMemorySizeToBytes(propValue, Some(defaultMemoryUnit))
+      s"${bytes}b"
+    }
   }
 
   /**
@@ -172,9 +180,13 @@ class MemoryUnitTuningEntry(
    * @return The formatted string with appropriate unit (e.g. "1KiB")
    */
   override def formatOutput(propValue: String): String = {
-    // Remove the 'b' suffix and convert to bytes
-    val bytes = propValue.dropRight(1).toLong
-    StringUtils.convertBytesToLargestUnit(bytes)
+    if (isSpecialValue(propValue)) {
+      propValue
+    } else {
+      // Remove the 'b' suffix and convert to bytes
+      val bytes = propValue.dropRight(1).toLong
+      StringUtils.convertBytesToLargestUnit(bytes)
+    }
   }
 
   init()

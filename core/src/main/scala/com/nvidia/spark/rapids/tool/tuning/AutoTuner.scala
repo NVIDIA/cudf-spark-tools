@@ -23,7 +23,9 @@ import scala.util.matching.Regex
 
 import com.nvidia.spark.rapids.tool._
 import com.nvidia.spark.rapids.tool.profiling._
-import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ProfTuningConfigProvider, TuningConfigProvider, TuningConfiguration, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ProfTuningConfigProvider,
+  PySparkMemoryRebalanceSource, PySparkMemoryTuningPolicy, TuningConfigProvider,
+  TuningConfiguration, TuningEntryDefinition}
 import com.nvidia.spark.rapids.tool.tuning.plugins.TuningPluginManager
 import org.yaml.snakeyaml.constructor.ConstructorException
 
@@ -521,8 +523,38 @@ abstract class AutoTuner(
       platform.getUserEnforcedSparkProperty(key).isDefined
   }
 
-  def appendRecommendation(key: String, value: String): Unit = {
-    if (ignoreRecommendation(key)) {
+  private def ignoreCoordinatedPySparkMemoryRecommendation(key: String): Boolean = {
+    if (platform.isPropertyPreserved(key)) {
+      skippedRecommendations.contains(key) ||
+        platform.getUserEnforcedSparkProperty(key).isDefined
+    } else {
+      ignoreRecommendation(key)
+    }
+  }
+
+  private def isCoordinatedPySparkMemoryOutputEligible(key: String, valueMB: Long): Boolean = {
+    if (ignoreCoordinatedPySparkMemoryRecommendation(key)) {
+      false
+    } else {
+      finalTuningTable.get(key).exists { definition =>
+        val prospectiveEntry = TuningEntry.build(
+          key, getPropertyValue(key), None, Some(definition))
+        prospectiveEntry.setRecommendedValue(s"${valueMB}m")
+        shouldIncludeInFinalRecommendations(prospectiveEntry)
+      }
+    }
+  }
+
+  private def appendRecommendationInternal(
+      key: String,
+      value: String,
+      allowCoordinatedPreserveOverride: Boolean): Unit = {
+    val ignore = if (allowCoordinatedPreserveOverride) {
+      ignoreCoordinatedPySparkMemoryRecommendation(key)
+    } else {
+      ignoreRecommendation(key)
+    }
+    if (ignore) {
       return
     }
     // Update the recommendation entry or update the existing one.
@@ -543,6 +575,25 @@ abstract class AutoTuner(
       }
       // add the persistent comment if any.
       appendPersistentComment(key)
+    }
+  }
+
+  def appendRecommendation(key: String, value: String): Unit = {
+    appendRecommendationInternal(key, value, allowCoordinatedPreserveOverride = false)
+  }
+
+  /**
+   * Append one side of a fully validated PySpark memory transfer. This is deliberately narrower
+   * than normal recommendation handling: it may replace a preserved value, but never an enforced
+   * or skipped value. Callers must invoke it only after the complete source/target pair succeeds.
+   */
+  private def appendCoordinatedPySparkMemoryRecommendation(key: String, valueMB: Long): Unit = {
+    if (valueMB > 0L) {
+      // The successful heuristic replaces this one preserved value, so its earlier preserve
+      // comment would now be misleading. Preserve comments for every unrelated key remain.
+      comments -= getPreservedPropertyComment(key)
+      appendRecommendationInternal(key, s"${valueMB}m",
+        allowCoordinatedPreserveOverride = true)
     }
   }
 
@@ -695,7 +746,8 @@ abstract class AutoTuner(
     executorMemOverhead: Option[Long],
     pinnedMem: Option[Long],
     spillMem: Option[Long],
-    sparkOffHeapMem: Option[Long]
+    sparkOffHeapMem: Option[Long],
+    pySparkMem: Option[Long] = None
   ) {
     def hasAnyMemorySettings: Boolean = {
       executorMemOverhead.isDefined ||
@@ -714,6 +766,199 @@ abstract class AutoTuner(
     val spillMem = baseline("spark.rapids.memory.spillPool.size")
     val sparkOffHeapMem = baseline("spark.memory.offHeap.size")
     MemorySettings(executorHeap, executorMemOverhead, pinnedMem, spillMem, sparkOffHeapMem)
+  }
+
+  private case class PySparkMemoryAdjustment(
+      observedCurrentMB: Option[Long],
+      layoutCurrentMB: Long,
+      desiredTargetMB: Option[Long],
+      needsTelemetryRetry: Boolean,
+      guidance: Option[String])
+
+  // Validate policy overrides when the tuner is constructed, even when the application has no
+  // matching Python-memory evidence.
+  private val pySparkMemoryTuningPolicy = PySparkMemoryTuningPolicy.from(configProvider)
+
+  private val pySparkTelemetryGuidance =
+    "PySpark memory autotuning needs a telemetry-enabled retry."
+
+  private def hasReliableProcessTreePythonVMemory: Boolean = {
+    appInfoProvider.getSparkVersion.exists { sparkVersion =>
+      val isFixedSpark3 =
+        ToolUtils.compareVersions(sparkVersion, "3.5.7").exists(_ >= 0) &&
+          ToolUtils.compareVersions(sparkVersion, "4.0.0").exists(_ < 0)
+      val isFixedSpark4OrLater =
+        ToolUtils.compareVersions(sparkVersion, "4.0.1").exists(_ >= 0)
+      isFixedSpark3 || isFixedSpark4OrLater
+    }
+  }
+
+  private def recommendPySparkTelemetrySettings(): Unit = {
+    appendRecommendation(PySparkMemoryTuningPolicy.PROCESS_TREE_METRICS_KEY, "true")
+    appendRecommendation(PySparkMemoryTuningPolicy.STAGE_EXECUTOR_METRICS_KEY, "true")
+    appendRecommendation(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL_KEY,
+      configProvider.getEntry(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL).getDefault)
+  }
+
+  private def ceilToGiBInMB(value: BigDecimal): Option[Long] = {
+    val gibibytes = (value / BigDecimal(1024)).setScale(0, BigDecimal.RoundingMode.CEILING)
+    if (gibibytes.isValidLong) {
+      try {
+        Some(Math.multiplyExact(gibibytes.toLong, 1024L))
+      } catch {
+        case _: ArithmeticException => None
+      }
+    } else {
+      None
+    }
+  }
+
+  /** Derive a target without changing the normal executor-memory layout. */
+  private lazy val pySparkMemoryAdjustment: Option[PySparkMemoryAdjustment] = {
+    val evidence = appInfoProvider.getPySparkMemoryEvidence
+    if (evidence.isEmpty) {
+      None
+    } else {
+      val observedCurrent = platform.getPySparkMemoryMB(getPropertyValueFromSource).filter(_ > 0L)
+      val layoutCurrent = getBaselineSparkProperty(PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY)
+        .flatMap(value => platform.getPySparkMemoryMB(_ => Some(value)))
+        .getOrElse(observedCurrent.getOrElse(0L))
+      val peaks = evidence.iterator.flatMap(_.executorPythonVMemoryPeaks)
+        .filter(_ > 0L).toSeq.sorted
+      val processTreeEvidenceIsReliable = hasReliableProcessTreePythonVMemory
+      val reliableProcessTreeEvidence = peaks.nonEmpty && processTreeEvidenceIsReliable
+      val retryCandidate = observedCurrent.flatMap { current =>
+        ceilToGiBInMB(BigDecimal(current) * pySparkMemoryTuningPolicy.retryGrowthFactor)
+      }
+      val candidate = observedCurrent.flatMap { _ =>
+        if (reliableProcessTreeEvidence) {
+          val rank = ((peaks.size.toLong * 95L + 99L) / 100L).toInt
+          val peakMB = BigDecimal(peaks(rank - 1)) / BigDecimal(1024L * 1024L)
+          val evidenceCandidate =
+            ceilToGiBInMB(peakMB * pySparkMemoryTuningPolicy.evidenceHeadroomMultiplier)
+          for {
+            evidenceTarget <- evidenceCandidate
+            retryTarget <- retryCandidate
+          } yield Math.max(evidenceTarget, retryTarget)
+        } else {
+          retryCandidate
+        }
+      }
+      val needsTelemetryRetry = processTreeEvidenceIsReliable &&
+        (observedCurrent.isEmpty || peaks.isEmpty)
+      val telemetryGuidance = if (needsTelemetryRetry &&
+          pySparkMemoryTuningPolicy.recommendTelemetryConfigs) {
+        Some(pySparkTelemetryGuidance)
+      } else {
+        None
+      }
+      val versionGuidance = if (!processTreeEvidenceIsReliable) {
+        val sparkVersion = appInfoProvider.getSparkVersion.getOrElse("unknown")
+        Some("ProcessTreePythonVMemory evidence was not used because Spark version " +
+          s"$sparkVersion can report unreliable procfs metrics.")
+      } else {
+        None
+      }
+      val guidanceMessages = Seq(versionGuidance, telemetryGuidance).flatten
+      val retryGuidance = if (guidanceMessages.nonEmpty) {
+        Some(guidanceMessages.mkString(" "))
+      } else {
+        None
+      }
+      val guidance = if (observedCurrent.isEmpty) {
+        retryGuidance
+      } else if (candidate.isEmpty) {
+        val selectedKey = pySparkMemoryTuningPolicy.rebalanceSource match {
+          case PySparkMemoryRebalanceSource.Heap => "spark.executor.memory"
+          case PySparkMemoryRebalanceSource.Overhead => "spark.executor.memoryOverhead"
+        }
+        val retryGuidanceSuffix = retryGuidance.map(guidance => s" $guidance").getOrElse("")
+        Some("PySpark memory rebalance was not applied: " +
+          s"observedCurrentMB=${observedCurrent.get}, layoutCurrentMB=$layoutCurrent, " +
+          s"candidateMB=overflow, requiredDeltaMB=overflow, selectedSource=$selectedKey, " +
+          s"availableDeltaMB=unknown, constraint=arithmetic. Reduce the configured " +
+          s"multiplier to keep the candidate in the supported range.$retryGuidanceSuffix")
+      } else if (!reliableProcessTreeEvidence) {
+        retryGuidance
+      } else {
+        None
+      }
+      Some(PySparkMemoryAdjustment(observedCurrent, layoutCurrent,
+        candidate.map(value => Math.max(value, observedCurrent.get)),
+        needsTelemetryRetry, guidance))
+    }
+  }
+
+  private def applyPySparkMemoryAdjustment(
+      base: MemorySettings,
+      protectedHeapFloorMB: Long,
+      protectedOverheadFloorMB: Long): (MemorySettings, Option[String]) = {
+    pySparkMemoryAdjustment.flatMap { adjustment =>
+      adjustment.desiredTargetMB.filter(_ > adjustment.layoutCurrentMB).map { targetMB =>
+        val delta = targetMB - adjustment.layoutCurrentMB
+        val selectedKey = pySparkMemoryTuningPolicy.rebalanceSource match {
+          case PySparkMemoryRebalanceSource.Heap => "spark.executor.memory"
+          case PySparkMemoryRebalanceSource.Overhead => "spark.executor.memoryOverhead"
+        }
+        val availableDelta = pySparkMemoryTuningPolicy.rebalanceSource match {
+          case PySparkMemoryRebalanceSource.Heap =>
+            Math.max(0L, base.executorHeap.get - protectedHeapFloorMB)
+          case PySparkMemoryRebalanceSource.Overhead =>
+            Math.max(0L, base.executorMemOverhead.get - protectedOverheadFloorMB)
+        }
+        def conflict(category: String): (MemorySettings, Option[String]) = {
+          val observed = adjustment.observedCurrentMB.map(_.toString).getOrElse("absent")
+          val action = category match {
+            case "enforced" =>
+              " Remove or raise the conflicting enforced property to allow a full transfer."
+            case "capacity" =>
+              " Increase the selected source capacity or choose a larger executor layout."
+            case "source-capability" =>
+              " executor overhead is supported only for YARN and Kubernetes targets."
+            case "output-eligibility" =>
+              " Remove the selected source and PySpark memory from exclusion or limited-logic " +
+                "lists to allow a full transfer."
+            case _ => ""
+          }
+          (base, Some("PySpark memory rebalance was not applied: " +
+            s"observedCurrentMB=$observed, layoutCurrentMB=${adjustment.layoutCurrentMB}, " +
+            s"candidateMB=$targetMB, requiredDeltaMB=$delta, selectedSource=$selectedKey, " +
+            s"availableDeltaMB=$availableDelta, constraint=$category.$action"))
+        }
+        val hasEnforcedConflict =
+          platform.getUserEnforcedSparkProperty(selectedKey).isDefined ||
+            platform.getUserEnforcedSparkProperty(
+              PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY).isDefined
+        val rebalancedSourceMB = pySparkMemoryTuningPolicy.rebalanceSource match {
+          case PySparkMemoryRebalanceSource.Heap => base.executorHeap.get - delta
+          case PySparkMemoryRebalanceSource.Overhead => base.executorMemOverhead.get - delta
+        }
+        val hasOutputEligibilityConflict =
+          !isCoordinatedPySparkMemoryOutputEligible(selectedKey, rebalancedSourceMB) ||
+            !isCoordinatedPySparkMemoryOutputEligible(
+              PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY, targetMB)
+        if (hasEnforcedConflict) {
+          conflict("enforced")
+        } else if (hasOutputEligibilityConflict) {
+          conflict("output-eligibility")
+        } else if (pySparkMemoryTuningPolicy.rebalanceSource ==
+            PySparkMemoryRebalanceSource.Overhead &&
+            !sparkMaster.contains(Yarn) && !sparkMaster.contains(Kubernetes)) {
+          conflict("source-capability")
+        } else if (delta > availableDelta) {
+          conflict("capacity")
+        } else {
+          pySparkMemoryTuningPolicy.rebalanceSource match {
+            case PySparkMemoryRebalanceSource.Heap =>
+              (base.copy(executorHeap = Some(base.executorHeap.get - delta),
+                pySparkMem = Some(targetMB)), None)
+            case PySparkMemoryRebalanceSource.Overhead =>
+              (base.copy(executorMemOverhead = Some(base.executorMemOverhead.get - delta),
+                pySparkMem = Some(targetMB)), None)
+          }
+        }
+      }
+    }.getOrElse((base, None))
   }
 
   private def generateInsufficientMemoryComment(
@@ -795,17 +1040,21 @@ abstract class AutoTuner(
   private def calcOverallMemory(
       execHeapCalculator: () => Long,
       numExecutorCores: Int,
-      totalMemForExecExpr: () => Double): Either[String, (MemorySettings, Boolean)] = {
+      totalMemForExecExpr: () => Double):
+      Either[String, (MemorySettings, Boolean, Option[String])] = {
 
     // Set executor heap using a baseline value, if present, otherwise max of
     // calculator result and 2GB/core.
+    val unconstrainedExecutorHeapMB = execHeapCalculator()
     val executorHeapMB = baselineMemorySettings.executorHeap.getOrElse {
       Math.max(
-        execHeapCalculator(),
+        unconstrainedExecutorHeapMB,
         configProvider
           .getEntry("HEAP_PER_CORE")
           .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores)
     }
+    val protectedHeapFloorMB =
+      configProvider.getEntry("HEAP_PER_CORE").getMinAsMemory(ByteUnit.MiB) * numExecutorCores
     // Calculate total available memory for executors based on OS reserved memory:
     // - If nonExecutorMemory > 0: use absolute subtraction (for on-prem environments)
     // - If nonExecutorMemory = 0: use platform fraction (for CSPs with container managers)
@@ -822,7 +1071,8 @@ abstract class AutoTuner(
     val sparkOffHeapMemMB: Long = baselineMemorySettings.sparkOffHeapMem.getOrElse(
       calculateOffHeapMemorySize(numExecutorCores)
     )
-    val pySparkMemMB = platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L)
+    val pySparkMemMB = pySparkMemoryAdjustment.map(_.layoutCurrentMB)
+      .getOrElse(platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L))
     // Calculate executor memory overhead using new formula if OffHeapLimit.enabled=true
     var executorMemOverhead = if (isOffHeapLimitUserEnabled) {
       calculateExecutorMemoryOverhead(
@@ -919,9 +1169,17 @@ abstract class AutoTuner(
           executorMemOverhead + defaultPinnedMem + defaultSpillMem
         }
       }
-      // Add recommendations for executor memory settings and a boolean for maxBytesInFlight
-      Right((MemorySettings(Some(executorHeapMB), Some(finalExecutorMemOverhead), Some(pinnedMem),
-        Some(spillMem), Some(sparkOffHeapMemMB)), setMaxBytesInFlight))
+      val protectedOverheadFloorMB = if (isOffHeapLimitUserEnabled) {
+        executorMemOverhead
+      } else {
+        executorMemOverhead + pinnedMem + spillMem
+      }
+      val baseSettings = MemorySettings(Some(executorHeapMB), Some(finalExecutorMemOverhead),
+        Some(pinnedMem), Some(spillMem), Some(sparkOffHeapMemMB))
+      val (revisedSettings, rebalanceComment) = applyPySparkMemoryAdjustment(
+        baseSettings, protectedHeapFloorMB, protectedOverheadFloorMB)
+      // Return the complete layout so the caller can append an atomic recommendation set.
+      Right((revisedSettings, setMaxBytesInFlight, rebalanceComment))
     } else {
       // Add a warning comment indicating that the current setup is not optimal
       // and no memory-related tunings are recommended.
@@ -1213,6 +1471,11 @@ abstract class AutoTuner(
   }
 
   def calculateClusterLevelRecommendations(): Unit = {
+    pySparkMemoryAdjustment.filter(adjustment =>
+      adjustment.needsTelemetryRetry && pySparkMemoryTuningPolicy.recommendTelemetryConfigs)
+      .foreach(_ => recommendPySparkTelemetrySettings())
+    pySparkMemoryAdjustment.flatMap(_.guidance).foreach(appendComment)
+
     // only if we were able to figure out a node type to recommend do we make
     // specific recommendations
     if (platform.recommendedClusterInfo.isDefined) {
@@ -1241,8 +1504,10 @@ abstract class AutoTuner(
         val executorHeapInMB = calcInitialExecutorHeapInMB(availableMemPerExecExpr, execCores)
         val executorHeapExpr = () => executorHeapInMB
         calcOverallMemory(executorHeapExpr, execCores, availableMemPerExecExpr) match {
-          case Right((recomMemorySettings: MemorySettings, setMaxBytesInFlight)) =>
+          case Right((recomMemorySettings: MemorySettings, setMaxBytesInFlight,
+              rebalanceComment)) =>
             // Sufficient memory available, proceed with recommendations
+            rebalanceComment.foreach(appendComment)
             appendRecommendationForMemoryMB("spark.rapids.memory.pinnedPool.size",
               s"${recomMemorySettings.pinnedMem.get}")
             // scalastyle:off line.size.limit
@@ -1250,11 +1515,28 @@ abstract class AutoTuner(
             // Ref: https://spark.apache.org/docs/latest/configuration.html#:~:text=This%20option%20is%20currently%20supported%20on%20YARN%20and%20Kubernetes.
             // scalastyle:on line.size.limit
             if (sparkMaster.contains(Yarn) || sparkMaster.contains(Kubernetes)) {
-              appendRecommendationForMemoryMB("spark.executor.memoryOverhead",
-                s"${recomMemorySettings.executorMemOverhead.get}")
+              if (recomMemorySettings.pySparkMem.isDefined &&
+                  pySparkMemoryTuningPolicy.rebalanceSource ==
+                    PySparkMemoryRebalanceSource.Overhead) {
+                appendCoordinatedPySparkMemoryRecommendation("spark.executor.memoryOverhead",
+                  recomMemorySettings.executorMemOverhead.get)
+              } else {
+                appendRecommendationForMemoryMB("spark.executor.memoryOverhead",
+                  s"${recomMemorySettings.executorMemOverhead.get}")
+              }
             }
-            appendRecommendationForMemoryMB("spark.executor.memory",
-              s"${recomMemorySettings.executorHeap.get}")
+            if (recomMemorySettings.pySparkMem.isDefined &&
+                pySparkMemoryTuningPolicy.rebalanceSource == PySparkMemoryRebalanceSource.Heap) {
+              appendCoordinatedPySparkMemoryRecommendation("spark.executor.memory",
+                recomMemorySettings.executorHeap.get)
+            } else {
+              appendRecommendationForMemoryMB("spark.executor.memory",
+                s"${recomMemorySettings.executorHeap.get}")
+            }
+            recomMemorySettings.pySparkMem.foreach { pySparkMemMB =>
+              appendCoordinatedPySparkMemoryRecommendation(
+                PySparkMemoryTuningPolicy.PYSPARK_MEMORY_KEY, pySparkMemMB)
+            }
 
             // Add off-heap memory recommendation based on hybrid scan detection
             val offHeapSizeMB = recomMemorySettings.sparkOffHeapMem.getOrElse(0L)
@@ -1331,12 +1613,53 @@ abstract class AutoTuner(
     // Recommend shuffle partitions here.
     // Note that this may get overridden if AQE is enabled.
     recommendShufflePartitions()
+    recommendCacheSerializer()
     recommendKryoSerializerSetting()
     recommendGCProperty()
     if (platform.requirePathRecommendations) {
       recommendClassPathEntries()
     }
     recommendSystemProperties()
+  }
+
+  private def recommendCacheSerializer(): Unit = {
+    val propertyKey = AutoTuner.CACHE_SERIALIZER_PROPERTY
+    if (appInfoProvider.hasSqlCacheEvidence && !skippedRecommendations.contains(propertyKey)) {
+      val gpuCacheScanDisabled = getPropertyValue(AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY)
+        .exists(_.trim.equalsIgnoreCase("false"))
+      if (gpuCacheScanDisabled) {
+        appendComment(propertyKey,
+          s"is not recommended because '${AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY}' is disabled, " +
+            "so GPU cache scans remain disabled.")
+      } else {
+        AutoTuner.getCacheSerializerDefinition(finalTuningTable).foreach { tuningDefinition =>
+          val recommendedSerializer = configProvider
+            .getEntry(AutoTuner.CACHE_SERIALIZER_CONFIG).getDefault
+          val sparkDefault = tuningDefinition.getDefaultSpark
+
+          getPropertyValue(propertyKey) match {
+            case Some(current) if current == recommendedSerializer => ()
+            case Some(current) if platform.isPropertyUserOverridden(propertyKey) =>
+              appendComment(propertyKey,
+                s"is fixed by target cluster configuration to '$current'; preserving it. " +
+                  s"'$recommendedSerializer' is required for GPU InMemoryTableScan.")
+            case Some(current) if current != sparkDefault =>
+              // Preserve explicit custom serializers and surface the compatibility requirement.
+              appendComment(propertyKey,
+                s"uses custom cache serializer '$current'; preserving it. " +
+                  s"'$recommendedSerializer' is required for GPU InMemoryTableScan.")
+            case _ =>
+              appendRecommendation(propertyKey, recommendedSerializer)
+          }
+
+          if (appInfoProvider.getSparkVersion.exists(AutoTuner.hasAqeCacheScanFallback)) {
+            appendComment(propertyKey,
+              "remains compatible, but Spark 3.5.0 and 3.5.1 disable GPU InMemoryTableScan " +
+                "under AQE, so cached scans may remain on the CPU.")
+          }
+        }
+      }
+    }
   }
 
   // if the user set the serializer to use Kryo, make sure we recommend using the GPU version
@@ -2172,6 +2495,21 @@ abstract class AutoTuner(
 }
 
 object AutoTuner {
+  private[tuning] val CACHE_SERIALIZER_PROPERTY = "spark.sql.cache.serializer"
+  private[tuning] val CACHE_SERIALIZER_CONFIG = "CACHE_SERIALIZER"
+  private[tuning] val IN_MEMORY_TABLE_SCAN_PROPERTY =
+    "spark.rapids.sql.exec.InMemoryTableScanExec"
+
+  private[tuning] def hasAqeCacheScanFallback(sparkVersion: String): Boolean = {
+    ToolUtils.compareVersions(sparkVersion, "3.5.0").exists(_ >= 0) &&
+      ToolUtils.compareVersions(sparkVersion, "3.5.2").exists(_ < 0)
+  }
+
+  private[tuning] def getCacheSerializerDefinition(
+      tuningTable: Map[String, TuningEntryDefinition]): Option[TuningEntryDefinition] = {
+    tuningTable.get(CACHE_SERIALIZER_PROPERTY)
+  }
+
   /**
    * Helper function to get a combined property function that can be used
    * to retrieve the value of a property in the following priority order:

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,11 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 
 import scala.concurrent.duration._
-import scala.xml.XML
 
-import com.nvidia.spark.rapids.tool.ToolTestUtils
 import com.nvidia.spark.rapids.tool.profiling.{ProfileOutputWriter, ProfileResult}
 import org.scalatest.AppendedClues.convertToClueful
 import org.scalatest.funsuite.AnyFunSuite
-import org.scalatest.matchers.should.Matchers.{contain, convertToAnyShouldWrapper, equal, not}
+import org.scalatest.matchers.should.Matchers.{convertToAnyShouldWrapper, equal, not}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.ByteUnit
@@ -36,102 +34,6 @@ import org.apache.spark.sql.rapids.tool.InvalidMemoryUnitFormatException
 import org.apache.spark.sql.rapids.tool.util._
 
 class ToolUtilsSuite extends AnyFunSuite with Logging {
-  test("get page links of a url") {
-    // Tests that getPageLinks return all the [href] in a page.
-    // This is done manually by checking against a URL that won't likely change
-    // (aka. an old release page should be stable).
-
-    val version = "25.08.0"
-    val mvnPrefix = ToolTestUtils.pluginMvnPrefix(version)
-    val webURL = ToolTestUtils.pluginMvnURL(version)
-    val allLinks = WebCrawlerUtil.getPageLinks(webURL, None)
-
-    val expected = Set[String](
-      s"$mvnPrefix.pom.asc.sha1",
-      s"$mvnPrefix-javadoc.jar.asc.sha1",
-      s"${ToolTestUtils.RAPIDS_MVN_BASE_URL}",
-      s"$mvnPrefix-sources.jar.md5",
-      s"$mvnPrefix-cuda12.jar.md5",
-      s"$mvnPrefix.pom.asc",
-      s"$mvnPrefix-sources.jar.asc.sha1",
-      s"$mvnPrefix-sources.jar",
-      s"$mvnPrefix.jar.asc",
-      s"$mvnPrefix.pom.asc.md5",
-      s"$mvnPrefix.jar.sha1",
-      s"$mvnPrefix.jar.md5",
-      s"$mvnPrefix-cuda12.jar",
-      s"$mvnPrefix.pom",
-      s"$mvnPrefix-sources.jar.asc",
-      s"$mvnPrefix-cuda12.jar.asc.sha1",
-      s"$mvnPrefix.pom.md5",
-      s"$mvnPrefix-sources.jar.asc.md5",
-      s"$mvnPrefix.pom.sha1",
-      s"$mvnPrefix-javadoc.jar.asc",
-      s"$mvnPrefix-cuda12.jar.sha1",
-      s"$mvnPrefix-javadoc.jar",
-      s"$mvnPrefix-javadoc.jar.asc.md5",
-      s"$mvnPrefix.jar",
-      s"$mvnPrefix-cuda12.jar.asc.md5",
-      s"$mvnPrefix-javadoc.jar.md5",
-      s"$mvnPrefix-javadoc.jar.sha1",
-      s"$mvnPrefix-sources.jar.sha1",
-      s"$mvnPrefix.jar.asc.sha1",
-      s"$mvnPrefix.jar.asc.md5",
-      s"$mvnPrefix-cuda12.jar.asc"
-    )
-
-    // all links should be matching
-    allLinks should contain theSameElementsAs expected
-  }
-
-  // checks that regex is used correctly to filter the href pulled from a given url
-  test("get page links of a url with regex") {
-    // see the list of available regex in https://jsoup.org/cookbook/extracting-data/selector-syntax
-    val version = "25.08.0"
-    val mvnPrefix = ToolTestUtils.pluginMvnPrefix(version)
-    val webURL = ToolTestUtils.pluginMvnURL(version)
-    val jarFileRegEx = ".*\\.jar$"
-    val allLinks = WebCrawlerUtil.getPageLinks(webURL, Some(jarFileRegEx))
-    val expected = Set[String](
-      s"$mvnPrefix-cuda12.jar",
-      s"$mvnPrefix-javadoc.jar",
-      s"$mvnPrefix-sources.jar",
-      s"$mvnPrefix.jar"
-    )
-    // all links should end with jar files
-    allLinks should contain theSameElementsAs expected
-  }
-
-  //
-  test("list available mvn releases") {
-    // use mvn repo url got testing
-    val artifactID = "rapids-4-spark_2.12"
-    val baseURL = ToolTestUtils.RAPIDS_MVN_BASE_URL
-    val nvReleases = WebCrawlerUtil.getMvnReleasesForNVPackage(artifactID)
-    // get all the links on the page
-    val allLinks = WebCrawlerUtil.getPageLinks(baseURL, None).mkString("\n")
-    val versionPattern = "(\\d{2}\\.\\d{2}\\.\\d+)/".r
-    val actualVersions = versionPattern.findAllMatchIn(allLinks).map(_.group(1)).toSeq
-    nvReleases should contain theSameElementsAs actualVersions
-  }
-
-  test("get latest release") {
-    // use mvn repo url got testing
-    val artifactID = "rapids-4-spark_2.12"
-    val baseURL = ToolTestUtils.RAPIDS_MVN_BASE_URL
-    val latestRelease = WebCrawlerUtil.getLatestMvnReleaseForNVPackage(artifactID) match {
-      case Some(v) => v
-      case None => fail("Could not find pull the latest release successfully")
-    }
-    // get all the links on the page
-    val mavenMetaXml = XML.load(s"${baseURL}maven-metadata.xml")
-    val allVersions = (mavenMetaXml \\ "metadata" \ "versioning" \ "versions" \ "version").toList
-    // get the latest release from the mvn url
-    val actualRelease = allVersions.last.text
-    actualRelease.matches("\\d{2}\\.\\d{2}\\.\\d+") shouldBe true
-    latestRelease shouldBe actualRelease
-  }
-
   test("Hadoop Configuration should load system properties") {
     // Tests that Hadoop configurations can load the system property passed to the
     // command line. i.e., "-Drapids.tools.hadoop.property.key=value"

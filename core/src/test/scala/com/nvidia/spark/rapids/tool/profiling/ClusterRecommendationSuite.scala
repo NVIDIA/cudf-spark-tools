@@ -325,7 +325,6 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
       val profileLogContent = FSUtils.readFileContentAsUTF8(logFile)
       val actualResults = extractAutoTunerResults(profileLogContent)
 
-      val testAppJarVer = "25.02.0"
       // scalastyle:off line.size.limit
       val expectedResults =
         s"""|
@@ -370,7 +369,6 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- ${getEnforcedPropertyComment("spark.sql.shuffle.partitions")}
-            |- ${latestPluginJarComment(latestPluginJarUrl, testAppJarVer)}
             |- $shufflePartitionsCommentForSpilling
             |- ${classPathComments("rapids.shuffle.jars")}
             |""".stripMargin.trim
@@ -450,7 +448,6 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
       val profileLogContent = FSUtils.readFileContentAsUTF8(logFile)
       val actualResults = extractAutoTunerResults(profileLogContent)
 
-      val testAppJarVer = "25.02.0"
       // scalastyle:off line.size.limit
       val expectedResults =
         s"""|
@@ -490,7 +487,6 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
-            |- ${latestPluginJarComment(latestPluginJarUrl, testAppJarVer)}
             |- $shufflePartitionsCommentForSpilling
             |- ${classPathComments("rapids.shuffle.jars")}
             |""".stripMargin.trim

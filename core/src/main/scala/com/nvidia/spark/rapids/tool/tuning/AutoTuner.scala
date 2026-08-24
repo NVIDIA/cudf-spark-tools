@@ -32,7 +32,7 @@ import org.yaml.snakeyaml.constructor.ConstructorException
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.rapids.tool.ToolUtils
-import org.apache.spark.sql.rapids.tool.util.{StringUtils, ValidatableProperties, WebCrawlerUtil}
+import org.apache.spark.sql.rapids.tool.util.{StringUtils, ValidatableProperties}
 
 /**
  * A wrapper class that stores all the GPU properties.
@@ -1870,7 +1870,6 @@ abstract class AutoTuner(
    * 2- If there are more than 1 entry for ".*rapids-4-spark.*jar", then add a comment that
    *    there should be only 1 jar in the class path.
    * 3- If there are cudf jars, ignore that for now.
-   * 4- If there is a new release recommend that to the user
    */
   private def recommendClassPathEntries(): Unit = {
     val missingRapidsJarsEntry = classPathComments("rapids.jars.missing")
@@ -1887,27 +1886,7 @@ abstract class AutoTuner(
             case v: Seq[String] if v.length > 1 =>
               val comment = s"$multipleRapidsJarsEntry [${v.mkString(", ")}]"
               appendComment(comment)
-            case Seq(jarVer) =>
-              // compare jarVersion to the latest release
-              val latestPluginVersion = WebCrawlerUtil.getLatestPluginRelease
-              latestPluginVersion match {
-                case Some(ver) =>
-                  if (ToolUtils.compareVersions(jarVer, ver).exists(_ < 0)) {
-                    val jarURL = WebCrawlerUtil.getPluginMvnDownloadLink(ver)
-                    appendComment(
-                      "A newer RAPIDS Accelerator for Apache Spark plugin is available:\n" +
-                        s"  $jarURL\n" +
-                        s"  Version used in application is $jarVer.")
-                  }
-                case None =>
-                  logError("Could not pull the latest release of RAPIDS-plugin jar.")
-                  val pluginRepoUrl = WebCrawlerUtil.getMVNArtifactURL("rapids.plugin")
-                  appendComment(
-                    "Failed to validate the latest release of Apache Spark plugin.\n" +
-                    s"  Verify that the version used in application ($jarVer) is the latest on:\n" +
-                    s"  $pluginRepoUrl")
-
-            }
+            case Seq(_) => () // One RAPIDS plugin JAR needs no classpath recommendation.
         }
     }
   }
@@ -2823,14 +2802,6 @@ trait AutoTunerStaticComments {
       |To include additional plugins for the GPU cluster, specify 'spark.plugins' in the
       |'sparkProperties.enforced' section in '--target_cluster_info'.
       |""".stripMargin.trim.replaceAll("\n", "\n  ")
-  }
-
-  def latestPluginJarComment(latestJarMvnUrl: String, currentJarVer: String): String = {
-    s"""
-       |A newer RAPIDS Accelerator for Apache Spark plugin is available:
-       |$latestJarMvnUrl
-       |Version used in application is $currentJarVer.
-       |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
   def notEnoughMemComment(minSizeInMB: Long): String = {

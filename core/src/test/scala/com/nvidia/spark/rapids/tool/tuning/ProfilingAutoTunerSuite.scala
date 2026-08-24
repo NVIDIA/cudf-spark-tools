@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.tool.tuning
 
 import java.io.{File, FileNotFoundException}
+import java.time.YearMonth
 
 import scala.collection.mutable
 
@@ -1535,12 +1536,27 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  test("Single RAPIDS plugin jar does not add a latest-release comment") {
+  test("Outdated cuDF plugin jar triggers a release comment") {
     val output = generateRecommendationsForRapidsJars(
       Seq("rapids-4-spark_2.12-23.02.0.jar"))
 
-    assert(!output.contains("A newer RAPIDS Accelerator for Apache Spark plugin is available"))
-    assert(!output.contains("Failed to validate the latest release of Apache Spark plugin"))
+    assert(output.contains(
+      "The NVIDIA cuDF plugin for Apache Spark used by this application may be outdated."))
+    assert(output.contains(
+      "Check the latest release: https://nvidia.github.io/cudf-spark/docs/download.html"))
+  }
+
+  test("cuDF plugin jar staleness allows a two-month grace period") {
+    val testCases = Seq(
+      ("26.06.1", YearMonth.of(2026, 8), false),
+      ("26.06.1", YearMonth.of(2026, 9), true),
+      ("26.08.0", YearMonth.of(2026, 9), false),
+      ("invalid", YearMonth.of(2026, 9), false))
+
+    testCases.foreach { case (pluginVersion, currentYearMonth, expected) =>
+      assert(autoTunerHelper.isPluginJarProbablyOutdated(pluginVersion, currentYearMonth) ===
+        expected)
+    }
   }
 
   // Helper that runs the AutoTuner without pre-setting `spark.rapids.sql.concurrentGpuTasks`
@@ -3226,6 +3242,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
             |- ${notEnoughMemCommentForKey("spark.executor.memory")}
             |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
             |- $shufflePartitionsCommentForSpilling
+            |- ${classPathComments("rapids.jars.outdated")}
             |- ${classPathComments("rapids.shuffle.jars")}
             |- ${notEnoughMemComment(40140)}
             |- $missingGpuDiscoveryScriptComment

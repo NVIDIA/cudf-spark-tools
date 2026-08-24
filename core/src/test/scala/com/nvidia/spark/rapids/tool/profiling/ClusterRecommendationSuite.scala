@@ -370,6 +370,7 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- ${getEnforcedPropertyComment("spark.sql.shuffle.partitions")}
             |- $shufflePartitionsCommentForSpilling
+            |- ${classPathComments("rapids.jars.outdated")}
             |- ${classPathComments("rapids.shuffle.jars")}
             |""".stripMargin.trim
       // scalastyle:on line.size.limit
@@ -488,6 +489,7 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- $shufflePartitionsCommentForSpilling
+            |- ${classPathComments("rapids.jars.outdated")}
             |- ${classPathComments("rapids.shuffle.jars")}
             |""".stripMargin.trim
       // scalastyle:on line.size.limit

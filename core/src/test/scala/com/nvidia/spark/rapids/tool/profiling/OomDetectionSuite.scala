@@ -16,9 +16,13 @@
 
 package com.nvidia.spark.rapids.tool.profiling
 
+import com.nvidia.spark.rapids.tool.AppSummaryInfoBaseProvider
 import org.scalatest.funsuite.AnyFunSuite
 
 class OomDetectionSuite extends AnyFunSuite {
+
+  private val pythonWrapper = "org.apache.spark.api.python.PythonException: " +
+    "Traceback (most recent call last):\n"
 
   // (description, failureReason, expectedIsGpuOom)
   private val gpuOomTestCases = Seq(
@@ -58,5 +62,56 @@ class OomDetectionSuite extends AnyFunSuite {
     test(s"isGpuOom: $desc") {
       assert(SparkRapidsOomExceptions.isGpuOom(reason) === expected)
     }
+  }
+
+  Seq(
+    "MemoryError" -> "MemoryError: unable to allocate",
+    "NumPy _ArrayMemoryError" ->
+      "numpy.core._exceptions._ArrayMemoryError: Unable to allocate an array",
+    "NumPy 2.x _ArrayMemoryError" ->
+      "numpy._core._exceptions._ArrayMemoryError: Unable to allocate an array",
+    "PyArrow ArrowMemoryError" -> "pyarrow.lib.ArrowMemoryError: malloc failed"
+  ).foreach { case (description, allocationFailure) =>
+    test(s"isPythonMemoryLimitFailure: $description") {
+      assert(PySparkMemoryEvidence.isPythonMemoryLimitFailure(
+        pythonWrapper + allocationFailure))
+    }
+  }
+
+  Seq(
+    "Java OutOfMemoryError" ->
+      (pythonWrapper + "java.lang.OutOfMemoryError: Java heap space"),
+    "generic Python exception" -> (pythonWrapper + "ValueError: invalid value"),
+    "prose mentioning MemoryError" ->
+      (pythonWrapper + "RuntimeError: user message mentions MemoryError but is not one"),
+    "executor loss" -> "ExecutorLostFailure (executor 5 exited) Exit status: 137",
+    "allocation exception without PythonException wrapper" -> "MemoryError: allocation failed",
+    "truncated wrapper" -> "org.apache.spark.api.python.PythonException: Traceback truncated"
+  ).foreach { case (description, reason) =>
+    test(s"isPythonMemoryLimitFailure rejects $description") {
+      assert(!PySparkMemoryEvidence.isPythonMemoryLimitFailure(reason))
+    }
+  }
+
+  test("collect preserves exact failed attempts and empty telemetry evidence") {
+    val failedAttempts = Seq(
+      (3, 0, pythonWrapper + "MemoryError: failed attempt"),
+      (4, 2, pythonWrapper + "pyarrow.lib.ArrowMemoryError: no samples"),
+      (5, 0, pythonWrapper + "ValueError: unrelated failure"))
+    val samples = Map(
+      (3, 0) -> Map("1" -> 7L, "2" -> 5L, "driver" -> 101L, "3" -> 0L),
+      // A successful retry for stage 3 must not contribute to failed attempt 0.
+      (3, 1) -> Map("1" -> 99L))
+
+    val evidence = PySparkMemoryEvidence.collect(failedAttempts,
+      (stageId, attemptId) => samples.getOrElse((stageId, attemptId), Map.empty))
+
+    assert(evidence === Seq(
+      PySparkMemoryEvidence(3, 0, Seq(5L, 7L)),
+      PySparkMemoryEvidence(4, 2, Seq.empty)))
+  }
+
+  test("base app summary provider has no PySpark memory evidence") {
+    assert(new AppSummaryInfoBaseProvider().getPySparkMemoryEvidence.isEmpty)
   }
 }

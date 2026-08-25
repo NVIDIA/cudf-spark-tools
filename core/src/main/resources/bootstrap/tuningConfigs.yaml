@@ -118,6 +118,44 @@ default:
     min: 750m
     usedBy: spark.executor.memory
 
+  - name: PYSPARK_MEMORY_EVIDENCE_HEADROOM_MULTIPLIER
+    description: >-
+      Multiplier applied to the observed p95 ProcessTreePythonVMemory executor peak when sizing
+      spark.executor.pyspark.memory. The result is rounded up to the next GiB.
+    default: 1.25
+    usedBy: spark.executor.pyspark.memory
+
+  - name: PYSPARK_MEMORY_RETRY_GROWTH_FACTOR
+    description: >-
+      Multiplier applied to the current positive spark.executor.pyspark.memory value to set the
+      minimum retry target after a recognized Python out-of-memory failure. The result is rounded
+      up to the next GiB.
+    default: 1.5
+    usedBy: spark.executor.pyspark.memory
+
+  - name: PYSPARK_MEMORY_METRICS_POLLING_INTERVAL
+    description: >-
+      Executor metrics polling interval in milliseconds recommended for a telemetry-enabled
+      PySpark memory retry.
+    default: 5000
+    usedBy: spark.executor.metrics.pollingInterval
+
+  - name: PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS
+    description: >-
+      Whether to recommend Spark executor telemetry settings when a PySpark memory retry
+      needs process-tree memory evidence.
+    default: false
+    usedBy: spark.executor.processTreeMetrics.enabled,
+      spark.eventLog.logStageExecutorMetrics, spark.executor.metrics.pollingInterval
+
+  - name: PYSPARK_MEMORY_REBALANCE_SOURCE
+    description: >-
+      Executor memory component from which PySpark memory is rebalanced. Valid values are
+      HEAP and OVERHEAD.
+    default: HEAP
+    usedBy: spark.executor.memory, spark.executor.memoryOverhead,
+      spark.executor.pyspark.memory
+
   - name: OFFHEAP_PER_CORE
     description: >-
       Amount of off-heap memory allocated per CPU core for hybrid scan operations
@@ -321,6 +359,12 @@ default:
       Buffer size for Kryo serializer
     max: 512m
     usedBy: spark.kryoserializer.buffer.max
+
+  - name: CACHE_SERIALIZER
+    description: >-
+      Serializer used for Spark SQL cached batches on the GPU
+    default: com.nvidia.spark.ParquetCachedBatchSerializer
+    usedBy: spark.sql.cache.serializer
 
   - name: LOCALITY_WAIT
     description: >-

@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import com.nvidia.spark.rapids.tool.AppSummaryInfoBaseProvider
 import com.nvidia.spark.rapids.tool.analysis.{AggRawMetricsResult, AppSQLPlanAnalyzer}
-import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, ShuffleInputProvenance, ShuffleStageInputAnalysis}
+import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, PySparkMemoryEvidence, ShuffleInputProvenance, ShuffleStageInputAnalysis}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
@@ -71,6 +71,8 @@ class QualAppSummaryInfoProvider(
   override def getSparkVersion: Option[String] = {
     Option(appInfo.sparkVersion)
   }
+
+  override def hasSqlCacheEvidence: Boolean = appInfo.hasSqlCacheEvidence
 
   def getAppID: String = appInfo.appId
 
@@ -158,5 +160,9 @@ class QualAppSummaryInfoProvider(
     sqlAnalyzer
       .map(_.shuffleStageInputAnalysis)
       .getOrElse(ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Estimated))
+  }
+
+  override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = {
+    PySparkMemoryEvidence.fromApp(appInfo)
   }
 }

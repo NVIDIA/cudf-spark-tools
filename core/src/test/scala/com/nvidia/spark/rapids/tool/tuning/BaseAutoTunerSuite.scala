@@ -52,6 +52,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
     val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+    val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
+    val hasSqlCache: Boolean = false,
     val shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
       ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured))
     extends BaseProfilingAppSummaryInfoProvider {
@@ -74,6 +76,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def scanStagesWithGpuOom: Set[Long] = scanStagesWithGpuOomSet
   override def gpuShuffleStagesWithContainerOom: Set[Long] = gpuShuffleStagesWithContainerOomSet
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = maxColumnarExchangeDataSizeBytes
+  override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = pySparkMemoryEvidence
+  override def hasSqlCacheEvidence: Boolean = hasSqlCache
   override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = shuffleStageInputAnalysis
 
   /**
@@ -96,6 +100,8 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
 
   // Spark runtime version used for testing
   def testSparkVersion: String = ToolUtils.sparkRuntimeVersion
+  // Earliest Spark version with reliable ProcessTreePythonVMemory metrics
+  def reliableProcessTreeMetricsSparkVersion: String = "3.5.7"
   // Databricks version used for testing
   def testDatabricksVersion: String = "12.2.x-aarch64-scala2.12"
   // RapidsShuffleManager version used for testing
@@ -141,12 +147,15 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
       maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+      pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
+      hasSqlCache: Boolean = false,
       shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
         ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
-      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, shuffleStageInputAnalysis)
+      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, pySparkMemoryEvidence,
+      hasSqlCache, shuffleStageInputAnalysis)
   }
 
   /**

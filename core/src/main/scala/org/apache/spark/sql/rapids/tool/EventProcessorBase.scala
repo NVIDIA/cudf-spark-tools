@@ -83,6 +83,9 @@ abstract class EventProcessorBase[T <: AppBase](app: T) extends SparkListener wi
       case _: SparkListenerStageCompleted =>
         doSparkListenerStageCompleted(app,
           event.asInstanceOf[SparkListenerStageCompleted])
+      case _: SparkListenerStageExecutorMetrics =>
+        doSparkListenerStageExecutorMetrics(app,
+          event.asInstanceOf[SparkListenerStageExecutorMetrics])
       case _: SparkListenerTaskGettingResult =>
         doSparkListenerTaskGettingResult(app,
           event.asInstanceOf[SparkListenerTaskGettingResult])
@@ -539,6 +542,19 @@ abstract class EventProcessorBase[T <: AppBase](app: T) extends SparkListener wi
 
   override def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit = {
     doSparkListenerStageCompleted(app, stageCompleted)
+  }
+
+  def doSparkListenerStageExecutorMetrics(
+      app: T,
+      event: SparkListenerStageExecutorMetrics): Unit = {
+    logDebug("Processing event: " + event.getClass)
+    val pythonVMemory = event.executorMetrics.getMetricValue("ProcessTreePythonVMemory")
+    app.stageExecutorMetricsManager.addPythonVMemory(
+      event.stageId, event.stageAttemptId, event.execId, pythonVMemory)
+  }
+
+  override def onStageExecutorMetrics(event: SparkListenerStageExecutorMetrics): Unit = {
+    doSparkListenerStageExecutorMetrics(app, event)
   }
 
   def doSparkListenerTaskGettingResult(

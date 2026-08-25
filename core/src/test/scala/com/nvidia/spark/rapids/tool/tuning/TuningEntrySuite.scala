@@ -16,7 +16,8 @@
 
 package com.nvidia.spark.rapids.tool.tuning
 
-import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, ProfTuningConfigProvider,
+  TuningConfigProvider, TuningEntryDefinition}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 
@@ -55,5 +56,21 @@ class TuningEntrySuite extends AnyFunSuite {
     val definition = TuningEntryDefinition
       .getEntryDefinition("spark.sql.adaptive.autoBroadcastJoinThreshold").get
     definition.isSpecialValue("-1") shouldBe true
+  }
+
+  test("cache serializer configuration is loaded from YAML") {
+    val configProvider = TuningConfigProvider.builder.build[ProfTuningConfigProvider]
+    configProvider.getEntry(AutoTuner.CACHE_SERIALIZER_CONFIG).getDefault shouldBe
+      "com.nvidia.spark.ParquetCachedBatchSerializer"
+
+    val definition = TuningEntryDefinition
+      .getEntryDefinition(AutoTuner.CACHE_SERIALIZER_PROPERTY).get
+    definition.getDefaultSpark shouldBe
+      "org.apache.spark.sql.execution.columnar.DefaultCachedBatchSerializer"
+    definition.isBootstrap() shouldBe true
+  }
+
+  test("cache serializer definition lookup is safe when the entry is unavailable") {
+    AutoTuner.getCacheSerializerDefinition(Map.empty) shouldBe None
   }
 }

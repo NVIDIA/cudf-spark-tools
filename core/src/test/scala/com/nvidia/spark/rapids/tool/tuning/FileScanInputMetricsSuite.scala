@@ -22,7 +22,7 @@ import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathPro
   PlatformFactory, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
 import com.nvidia.spark.rapids.tool.profiling.{ApplicationSummaryInfo, CollectInformation,
-  DataSourceProfileResult, ProfileArgs, SingleAppSummaryInfoProvider,
+  DataSourceProfileResult, ProfileArgs, PySparkMemoryEvidence, SingleAppSummaryInfoProvider,
   StageAggTaskMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 
@@ -167,6 +167,7 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
     override def getSystemProperty(propKey: String): Option[String] = None
     override def getSparkVersion: Option[String] = Some(testSparkVersion)
     override def hasSqlCacheEvidence: Boolean = false
+    override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
     override def getClassPathEntries: Map[String, String] = Map.empty
   }
 
@@ -184,6 +185,7 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
     override def getSystemProperty(propKey: String): Option[String] = None
     override def getSparkVersion: Option[String] = Some(testSparkVersion)
     override def hasSqlCacheEvidence: Boolean = false
+    override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
     override def scanStagesWithGpuOom: Set[Long] = Set.empty
     override def getClassPathEntries: Map[String, String] = Map.empty
   }

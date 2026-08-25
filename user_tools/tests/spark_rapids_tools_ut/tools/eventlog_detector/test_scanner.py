@@ -90,8 +90,8 @@ class TestScanEvents:
         assert result.events_scanned == 2
 
     def test_env_update_with_gpu_is_decisive(self):
-        # Scala tools and the RAPIDS plugin both default spark.rapids.sql.enabled to true,
-        # so the plugin marker alone is enough to classify the runtime as RAPIDS.
+        # Scala tools and the cuDF plugin both default spark.rapids.sql.enabled to true,
+        # so the plugin marker alone is enough to classify it as a cuDF plugin runtime.
         lines = iter(
             [
                 log_start(),

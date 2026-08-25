@@ -409,7 +409,7 @@ object SQLPlanParser extends Logging {
     //  We do not want them to appear as independent expressions.
     "structfield", "structtype")
 
-  // As RAPIDS plugin rev 2b09372, it only supports parse_url(*,HOST|PROTOCOL|QUERY|PATH[,*]).
+  // As cuDF plugin rev 2b09372, it only supports parse_url(*,HOST|PROTOCOL|QUERY|PATH[,*]).
   // the following partToExtract parse_url(*,REF|FILE|AUTHORITY|USERINFO[,*]) are not supported
   val unsupportedParseURLParts = Set("FILE", "REF", "AUTHORITY", "USERINFO")
   // define a pattern to identify whether a certain string contains the unsupported extractParts of
@@ -1044,8 +1044,8 @@ object SQLPlanParser extends Logging {
   def isSMJConditionUnsupported(joinCondition: String): Boolean = {
     // TODO: This is a temporary solution to check for unsupported conditions in SMJ.
     // Remove these checks once below issues are resolved:
-    // https://github.com/NVIDIA/spark-rapids/issues/11213
-    // https://github.com/NVIDIA/spark-rapids/issues/11214
+    // https://github.com/NVIDIA/cudf-spark/issues/11213
+    // https://github.com/NVIDIA/cudf-spark/issues/11214
 
     // Regular expressions for corner cases that mark the SMJ as not supported
     val castAsDateRegex = """(?i)\bcast\(\s*.+\s+as\s+date\s*\)""".r

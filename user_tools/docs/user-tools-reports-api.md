@@ -239,7 +239,7 @@ build_info = (JSONReport(qual_core_handler)
 
 if build_info.success:
     info_list = build_info.to_list()  # For JSON arrays
-    print(f"RAPIDS version: {info_list[0]['sparkRapidsBuildInfo']['version']}")
+    print(f"cuDF plugin version: {info_list[0]['sparkRapidsBuildInfo']['version']}")
 ```
 
 #### JSONL (JSON Lines) Format
@@ -371,7 +371,7 @@ json_result = (JSONReport(qual_wrapper_handler)
     .load())
 json_data = json_result.to_dict()  # or to_list() for arrays
 
-# Java Properties: Returns JPropsResult  
+# Java Properties: Returns JPropsResult
 props_result = JPropsReport(handler).table("runtimeProperties").load()
 properties = props_result.props
 

@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ jobs:
           chmod +x scripts/prefetch_deps.sh
           scripts/prefetch_deps.sh "$RAPIDS_USER_TOOLS_CACHE_FOLDER" "onprem,dataproc,emr,databricks_aws,databricks_azure" "user_tools/src/spark_rapids_pytools/resources"
 
-      - name: Upload RAPIDS cache artifact
+      - name: Upload cuDF plugin cache artifact
         uses: actions/upload-artifact@v6
         with:
           name: rapids-cache
@@ -81,7 +81,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Restore RAPIDS cache artifact
+      - name: Restore cuDF plugin cache artifact
         uses: actions/download-artifact@v7
         with:
           name: rapids-cache

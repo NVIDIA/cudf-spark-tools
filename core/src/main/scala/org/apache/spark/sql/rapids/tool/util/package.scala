@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package org.apache.spark.sql.rapids.tool
 import scala.jdk.CollectionConverters._
 
 /**
- * RAPIDS tools utilities.
+ * cuDF plugin tools utilities.
  */
 package object util {
   val RAPIDS_TOOLS_SYS_PROP_PREFIX = "rapids.tools."

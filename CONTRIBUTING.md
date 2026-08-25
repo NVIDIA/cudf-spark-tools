@@ -1,15 +1,15 @@
-# Contributing to RAPIDS Accelerator for Apache Spark Tools
+# Contributing to NVIDIA cuDF plugin for Apache Spark Tools
 
-Contributions to RAPIDS Accelerator for Apache Spark Tools fall into the following three categories.
+Contributions to the cuDF plugin tools fall into the following three categories.
 
 1. To report a bug, request a new feature, or report a problem with
-    documentation, please file an [issue](https://github.com/NVIDIA/spark-rapids-tools/issues/new/choose)
+    documentation, please file an [issue](https://github.com/NVIDIA/cudf-spark-tools/issues/new/choose)
     describing in detail the problem or new feature. The project team evaluates
     and triages issues, and schedules them for a release. If you believe the
     issue needs priority attention, please comment on the issue to notify the
     team.
 2. To propose and implement a new Feature, please file a new feature request
-    [issue](https://github.com/NVIDIA/spark-rapids-tools/issues/new/choose). Describe the
+    [issue](https://github.com/NVIDIA/cudf-spark-tools/issues/new/choose). Describe the
     intended feature and discuss the design and implementation with the team and
     community. Once the team agrees that the plan looks good, go ahead and
     implement it using the [code contributions](#code-contributions) guide below.
@@ -47,7 +47,7 @@ Please follow the style of the existing codebase.
   $ # install tox
   $ pip install tox
   $ # run tox
-  $ tox  
+  $ tox
   ```
 
 ### Sign your work
@@ -70,8 +70,8 @@ Signed-off-by: Your Name <your@email.com>
 ```
 
 The sign-off is a simple line at the end of the explanation for the patch. Your signature certifies
-that you wrote the patch or otherwise have the right to pass it on as an open-source patch.  
-Use your real name, no pseudonyms or anonymous contributions.  
+that you wrote the patch or otherwise have the right to pass it on as an open-source patch.
+Use your real name, no pseudonyms or anonymous contributions.
 If you set your `user.name` and `user.email` git configs, you can sign your commit automatically with
 `git commit -s`.
 

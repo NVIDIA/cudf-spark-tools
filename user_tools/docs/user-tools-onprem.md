@@ -1,6 +1,6 @@
-# RAPIDS User Tools on OnPrem platform
+# NVIDIA cuDF plugin for Apache Spark User Tools on OnPrem platform
 
-This is a guide for the RAPIDS tools for Apache Spark clusters that are provisioned manually (a.k.a onPrem). At the end of this guide, the user will be able to run the RAPIDS tools to analyze the clusters and the applications running on-premises.  
+This is a guide for the tools for the NVIDIA cuDF plugin for Apache Spark clusters that are provisioned manually (a.k.a onPrem). At the end of this guide, the user will be able to run the cuDF plugin tools to analyze the clusters and the applications running on-premises.
 Additionally, user can see cost savings and speedup recommendations for a comparable cluster on different cloud platforms by providing target_platform. Currently "`dataproc`" platform is supported.
 If the target_platform is not specified, then the qualification recommendation is based on speedup which is the default behavior.
 ## Assumptions
@@ -9,10 +9,10 @@ The tool currently only supports event logs stored on local path. The remote out
 
 ## Prerequisites
 
-### 1.RAPIDS tools
+### 1.cuDF plugin tools
 
 - Spark event logs:
-  - The RAPIDS tools can process Apache Spark CPU event logs from Spark 2.0 or higher (raw, .lz4, .lzf, .snappy, .zstd)
+  - The cuDF plugin tools can process Apache Spark CPU event logs from Spark 2.0 or higher (raw, .lz4, .lzf, .snappy, .zstd)
   - For `qualification` commands, the event logs need to be archived to an accessible local directory
 
 ### 2.Install the package
@@ -29,9 +29,9 @@ The tool currently only supports event logs stored on local path. The remote out
 ### 3.Environment variables
 
 Before running any command, you can set environment variables to specify configurations.
-- RAPIDS variables have a naming pattern `RAPIDS_USER_TOOLS_*`:
-  - `RAPIDS_USER_TOOLS_CACHE_FOLDER`: specifies the location of a local directory that the RAPIDS-cli uses to store and cache the downloaded resources. The default is `/var/tmp/spark_rapids_user_tools_cache`.  Note that caching the resources locally has an impact on the total execution time of the command.
-  - `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY`: specifies the location of a local directory that the RAPIDS-cli uses to generate the output. The wrapper CLI arguments override that environment variable (`--local_folder` for Qualification).
+- User tools variables use the `RAPIDS_USER_TOOLS_*` naming pattern:
+  - `RAPIDS_USER_TOOLS_CACHE_FOLDER`: specifies the location of a local directory that the cuDF plugin CLI uses to store and cache the downloaded resources. The default is `/var/tmp/spark_rapids_user_tools_cache`.  Note that caching the resources locally has an impact on the total execution time of the command.
+  - `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY`: specifies the location of a local directory that the cuDF plugin CLI uses to generate the output. The wrapper CLI arguments override that environment variable (`--local_folder` for Qualification).
 
 ## Qualification command
 
@@ -56,7 +56,7 @@ The local deployment runs on the local development machine. It requires:
 | **local_folder**     | Local work-directory path to store the output and to be used as root directory for temporary folders/files. The final output will go into a subdirectory named `qual-${EXEC_ID}` where `exec_id` is an auto-generated unique identifier of the execution.                             | If the argument is NONE, the default value is the env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory.        |    N     |
 | **target_platform**  | Cost savings and speedup recommendation for comparable cluster in target_platform based on on-premises cluster configuration. Currently only `dataproc` is supported for target_platform.If not provided, the final report will be limited to GPU speedups only without cost-savings. | N/A                                                                                                                                                  |    N     |
 | **jvm_heap_size**    | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                                                         | 24                                                                                                                                                   |    N     |
-| **tools_jar**        | Path to a bundled jar including RAPIDS tool. The path is a local filesystem                                                                                                                                                                                                           | Downloads the latest rapids-tools_*.jar from mvn repo                                                                                                |    N     |
+| **tools_jar**        | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem                                                                                                                                                                                                           | Downloads the latest rapids-tools_*.jar from mvn repo                                                                                                |    N     |
 | **filter_apps**      | Filtering criteria of the applications listed in the final STDOUT table is one of the following (`ALL`, `SPEEDUPS`). "`ALL`" means no filter applied. "`SPEEDUPS`" lists all the apps that are either '_Recommended_', or '_Strongly Recommended_' based on speedups.                 | `SPEEDUPS`                                                                                                                                           |    N     |
 | **cpu_discount**     | A percent discount for the cpu cluster cost in the form of an integer value (e.g. 30 for 30% discount)                                                                                                                                                                                | N/A                                                                                                                                                  |    N     |
 | **gpu_discount**     | A percent discount for the gpu cluster cost in the form of an integer value (e.g. 30 for 30% discount)                                                                                                                                                                                | N/A                                                                                                                                                  |    N     |
@@ -87,7 +87,7 @@ A typical workflow to successfully run the `qualification` command in local mode
    ```
    The wrapper generates a unique-Id for each execution in the format of `qual_<YYYYmmddHHmmss>_<0x%08X>`
    The above command will generate a directory containing `qualification_summary.csv` in addition to
-   the actual folder of the RAPIDS Qualification tool.
+   the actual folder of the cuDF plugin Qualification tool.
 
    ```
     ./qual_<YYYYmmddHHmmss>_<0x%08X>/qualification_summary.csv
@@ -113,7 +113,7 @@ For each app, the command output lists the following fields:
 
 
 The command creates a directory with UUID that contains the following:
-- Directory generated by the RAPIDS qualification tool `rapids_4_spark_qualification_output`;
+- Directory generated by the cuDF plugin qualification tool `rapids_4_spark_qualification_output`;
 - A CSV file that contains the summary of all the applications along with estimated absolute costs
 - Sample directory structure:
     ```
@@ -169,7 +169,7 @@ is described as follows:
    ```
    The wrapper generates a unique-Id for each execution in the format of `qual_<YYYYmmddHHmmss>_<0x%08X>`
    The above command will generate a directory containing `qualification_summary.csv` in addition to
-   the actual folder of the RAPIDS Qualification tool.
+   the actual folder of the cuDF plugin Qualification tool.
 
    ```
     ./qual_<YYYYmmddHHmmss>_<0x%08X>/qualification_summary.csv
@@ -203,7 +203,7 @@ For each app, the command output lists the following fields:
   estimated_saving = 100 - ((100 * gpu_cost) / cpu_cost)
 
 The command creates a directory with UUID that contains the following:
-- Directory generated by the RAPIDS qualification tool `rapids_4_spark_qualification_output`;
+- Directory generated by the cuDF plugin qualification tool `rapids_4_spark_qualification_output`;
 - A CSV file that contains the summary of all the applications along with estimated absolute costs
 - Sample directory structure:
     ```
@@ -245,7 +245,7 @@ The local deployment runs on the local development machine. It requires:
 | **eventlogs**        | A comma separated list to event logs or directory                                                                                                                                                                                                         | None                                                                                                                                          | N        |
 | **local_folder**     | Local work-directory path to store the output and to be used as root directory for temporary folders/files. The final output will go into a subdirectory named `prof-${EXEC_ID}` where `exec_id` is an auto-generated unique identifier of the execution. | If the argument is NONE, the default value is the env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory. | N        |
 | **jvm_heap_size**    | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                             | 24                                                                                                                                            | N        |
-| **tools_jar**        | Path to a bundled jar including RAPIDS tool. The path is a local filesystem.                                                                                                                                                                              | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                               | N        |
+| **tools_jar**        | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem.                                                                                                                                                                              | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                               | N        |
 | **verbose**          | True or False to enable verbosity to the wrapper script                                                                                                                                                                                                   | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                                             | N        |
 | **rapids_options**** | A list of valid [Profiling tool options](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/jar-usage.html#prof-tool-title-options). Note that (`output-directory`, `auto-tuner`, `combined`) flags are ignored                                                                  | N/A                                                                                                                                           | N        |
 
@@ -263,7 +263,7 @@ A typical workflow to successfully run the `profiling` command in local mode is 
 
 For each successful execution, the wrapper generates a new directory in the format of
 `prof_<YYYYmmddHHmmss>_<0x%08X>`. The directory contains `tuning_summary.log` in addition to
-the actual folder of the RAPIDS Profiling tool.
+the actual folder of the cuDF plugin Profiling tool.
 
    ```
     ./prof_<YYYYmmddHHmmss>_<0x%08X>/tuning_summary.log

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Abstract class representing wrapper around the RAPIDS acceleration tools."""
+"""Abstract class representing wrapper around the cuDF plugin tools."""
 
 import concurrent
 import copy
@@ -54,13 +54,13 @@ from spark_rapids_tools.utils.net_utils import DownloadTask
 @dataclass
 class RapidsTool(object):
     """
-    A generic class that represents a RAPIDS plugin tool.
+    A generic class that represents a cuDF plugin tool.
     :param platform_type: the type of platform associated with the current execution.
     :param cluster: name of the cluster on which the application will be running
     :param output_folder: location to store the output of the execution
     :param config_path: location of the configuration file of the current tool
     :param wrapper_options: dictionary containing options specific to the wrapper tool execution.
-    :param rapids_options: dictionary containing the options to be passed as CLI arguments to the RAPIDS Accelerator.
+    :param rapids_options: dictionary containing the options to be passed as CLI arguments to the cuDF plugin.
     :param name: the name of the tool
     :param ctxt: context manager for the current tool execution.
     :param logger: the logger instant associated to the current tool.
@@ -153,7 +153,7 @@ class RapidsTool(object):
     def __post_init__(self):
         # when debug is set to true set it in the environment.
         self.logger = ToolLogging.get_and_setup_logger(f'rapids.tools.{self.name}')
-        self.logger.info('Using Spark RAPIDS user tools version %s', spark_rapids_pytools.__version__)
+        self.logger.info('Using cuDF plugin user tools version %s', spark_rapids_pytools.__version__)
 
     def _check_environment(self) -> None:
         self.ctxt.platform.setup_and_validate_env()
@@ -187,7 +187,7 @@ class RapidsTool(object):
         try:
             # 0- process the output location
             self._process_output_args()
-            # 1- process any arguments to be passed to the RAPIDS tool
+            # 1- process any arguments to be passed to the cuDF plugin tool
             self._process_rapids_args()
             # 2- we need to process the arguments of the CLI
             self._process_custom_args()
@@ -452,7 +452,7 @@ class RapidsTool(object):
 @dataclass
 class RapidsJarTool(RapidsTool, Generic[ToolResultHandlerT]):
     """
-    A wrapper class to represent wrapper commands that require RAPIDS jar file.
+    A wrapper class to represent wrapper commands that require the cuDF plugin jar file.
     """
     _HADOOP_PATH_ARG_KEYS = frozenset({
         'driverlog',
@@ -578,7 +578,7 @@ class RapidsJarTool(RapidsTool, Generic[ToolResultHandlerT]):
                                                                         self.ctxt.get_local_work_dir(),
                                                                         fail_ok=False,
                                                                         create_dir=True)
-                self.logger.info('RAPIDS accelerator tools jar is downloaded to work_dir %s', jar_path)
+                self.logger.info('cuDF plugin tools jar is downloaded to work_dir %s', jar_path)
         except Exception as e:    # pylint: disable=broad-except
             self.logger.exception('Exception occurred processing jar %s', tools_jar_url)
             raise e
@@ -587,7 +587,7 @@ class RapidsJarTool(RapidsTool, Generic[ToolResultHandlerT]):
         jar_file_name = FSUtil.get_resource_name(jar_path)
         version_match = re.search(r'\d{2}\.\d{2}\.\d+', jar_file_name)
         jar_version = version_match.group() if version_match else 'Unknown'
-        self.logger.info('Using Spark RAPIDS Accelerator Tools jar version %s', jar_version)
+        self.logger.info('Using cuDF plugin tools jar version %s', jar_version)
         #  add jar file name to the tool args
         self.ctxt.add_rapids_args('jarFileName', jar_file_name)
         self.ctxt.add_rapids_args('jarFilePath', jar_path)

@@ -1,4 +1,4 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ class AdlsPath(CspPath):
         if valid_prefix:
             # Check if AZURE_STORAGE_ACCOUNT_NAME env_variable is defined. If not,
             # set it to avoid failures when user is not specifying the platform.
-            # https://github.com/NVIDIA/spark-rapids-tools/issues/981
+            # https://github.com/NVIDIA/cudf-spark-tools/issues/981
             if "AZURE_STORAGE_ACCOUNT_NAME" not in os.environ:
                 account_name = cls.get_abfs_account_name(value)
                 os.environ["AZURE_STORAGE_ACCOUNT_NAME"] = account_name

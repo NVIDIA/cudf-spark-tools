@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 # Example custom tuning configuration file for use with the Tools AutoTuner and Bootstrap.
 # This file demonstrates the case to override the plugin behavior by disabling a specific rule.
 # In this example, the "DeltaOSSWriteRule" from the "deltaLakeOSSTuningPlugin" is disabled,
-# which prevents the AutoTuner from appending comments related to the RAPIDS Accelerator
+# which prevents the AutoTuner from appending comments related to the cuDF plugin
 # writes on Delta Lake tables.
 #
 # Notes:

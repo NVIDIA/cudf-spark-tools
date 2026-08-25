@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -187,13 +187,13 @@ Spark Properties:
 
 Comments:
 - 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+- 'spark.plugins' should be set to the class name required for the cuDF plugin.
   Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
 - 'spark.rapids.memory.pinnedPool.size' was not set.
 - 'spark.rapids.sql.concurrentGpuTasks' was not set.
 - 'spark.task.resource.gpu.amount' was not set.
-- RAPIDS Accelerator for Apache Spark plugin jar is missing from the classpath entries.
-  If the Spark RAPIDS jar is being bundled with your Spark distribution, this step is not needed.
+- Required jar for the NVIDIA cuDF plugin for Apache Spark is missing from the classpath entries.
+  If the cuDF plugin jar is being bundled with your Spark distribution, this step is not needed.
 - To enable Spark to discover and schedule GPU resources, set the
   'spark.executor.resource.gpu.discoveryScript' property according to cluster
   manager's documentation. Sample discovery script is available at

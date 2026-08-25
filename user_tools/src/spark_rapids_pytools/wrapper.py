@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2024, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wrapper class to run tools associated with RAPIDS Accelerator for Apache Spark plugin."""
+"""Wrapper class to run tools associated with the NVIDIA cuDF plugin for Apache Spark."""
 
 import fire
 

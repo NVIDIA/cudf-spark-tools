@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import com.nvidia.spark.rapids.tool.tuning.config.TuningPluginsConfig
 import org.apache.spark.internal.Logging
 
 /**
- * Manages the lifecycle and execution of tuning plugins for Spark RAPIDS AutoTuner.
+ * Manages the lifecycle and execution of tuning plugins for the cuDF plugin AutoTuner.
  *
  * The TuningPluginManager is responsible for:
  * - Loading and initializing tuning plugins from configuration

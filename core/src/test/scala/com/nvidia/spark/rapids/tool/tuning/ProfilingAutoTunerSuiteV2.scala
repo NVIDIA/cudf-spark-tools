@@ -1570,14 +1570,14 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
           |- 'spark.sql.files.maxPartitionBytes' was not set.
-          |- RAPIDS Accelerator for Apache Spark plugin jar is missing
+          |- Required jar for the NVIDIA cuDF plugin for Apache Spark is missing
           |  from the classpath entries.
-          |  If the Spark RAPIDS jar is being bundled with your
+          |  If the cuDF plugin jar is being bundled with your
           |  Spark distribution, this step is not needed.
           |- The RAPIDS Shuffle Manager requires spark.driver.extraClassPath
           |  and spark.executor.extraClassPath settings to include the
-          |  path to the Spark RAPIDS plugin jar.
-          |  If the Spark RAPIDS jar is being bundled with your Spark
+          |  path to the cuDF plugin jar.
+          |  If the cuDF plugin jar is being bundled with your Spark
           |  distribution, this step is not needed.
           |""".stripMargin
     // scalastyle:on line.size.limit
@@ -1680,14 +1680,14 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
           |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' adjusted from 2560 to 3001 based on ColumnarExchange data size (6442450944000 bytes) and GPU batch size (2147483647 bytes)
           |- 'spark.sql.files.maxPartitionBytes' was not set.
-          |- RAPIDS Accelerator for Apache Spark plugin jar is missing
+          |- Required jar for the NVIDIA cuDF plugin for Apache Spark is missing
           |  from the classpath entries.
-          |  If the Spark RAPIDS jar is being bundled with your
+          |  If the cuDF plugin jar is being bundled with your
           |  Spark distribution, this step is not needed.
           |- The RAPIDS Shuffle Manager requires spark.driver.extraClassPath
           |  and spark.executor.extraClassPath settings to include the
-          |  path to the Spark RAPIDS plugin jar.
-          |  If the Spark RAPIDS jar is being bundled with your Spark
+          |  path to the cuDF plugin jar.
+          |  If the cuDF plugin jar is being bundled with your Spark
           |  distribution, this step is not needed.
           |""".stripMargin
     // scalastyle:on line.size.limit
@@ -1783,14 +1783,14 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
           |- 'spark.sql.files.maxPartitionBytes' was not set.
-          |- RAPIDS Accelerator for Apache Spark plugin jar is missing
+          |- Required jar for the NVIDIA cuDF plugin for Apache Spark is missing
           |  from the classpath entries.
-          |  If the Spark RAPIDS jar is being bundled with your
+          |  If the cuDF plugin jar is being bundled with your
           |  Spark distribution, this step is not needed.
           |- The RAPIDS Shuffle Manager requires spark.driver.extraClassPath
           |  and spark.executor.extraClassPath settings to include the
-          |  path to the Spark RAPIDS plugin jar.
-          |  If the Spark RAPIDS jar is being bundled with your Spark
+          |  path to the cuDF plugin jar.
+          |  If the cuDF plugin jar is being bundled with your Spark
           |  distribution, this step is not needed.
           |""".stripMargin
     // scalastyle:on line.size.limit
@@ -1913,14 +1913,14 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
           |- 'spark.sql.files.maxPartitionBytes' was not set.
           |- 'spark.task.resource.gpu.amount' was user-enforced in the target cluster properties.
-          |- RAPIDS Accelerator for Apache Spark plugin jar is missing
+          |- Required jar for the NVIDIA cuDF plugin for Apache Spark is missing
           |  from the classpath entries.
-          |  If the Spark RAPIDS jar is being bundled with your
+          |  If the cuDF plugin jar is being bundled with your
           |  Spark distribution, this step is not needed.
           |- The RAPIDS Shuffle Manager requires spark.driver.extraClassPath
           |  and spark.executor.extraClassPath settings to include the
-          |  path to the Spark RAPIDS plugin jar.
-          |  If the Spark RAPIDS jar is being bundled with your Spark
+          |  path to the cuDF plugin jar.
+          |  If the cuDF plugin jar is being bundled with your Spark
           |  distribution, this step is not needed.
           |""".stripMargin
     // scalastyle:on line.size.limit
@@ -2526,7 +2526,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         s"got ${recommendedProps.get("spark.rapids.memory.pinnedPool.size")}")
   }
 
-  // Test for https://github.com/NVIDIA/spark-rapids-tools/issues/2074
+  // Test for https://github.com/NVIDIA/cudf-spark-tools/issues/2074
   // When HEAP_PER_CORE caps executor heap (48g -> 16g with 8 cores), the freed memory
   // should be redistributed into overhead to preserve the total memory budget (~66g).
   test("On-prem K8s with large heap reduced by HEAP_PER_CORE redistributes freed memory") {

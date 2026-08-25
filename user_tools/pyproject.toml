@@ -21,7 +21,7 @@ name = "spark-rapids-user-tools"
 authors = [
   { name="NVIDIA Corporation" , email="spark-rapids-support@nvidia.com" },
 ]
-description = "A simple wrapper process around cloud service providers to run tools for the RAPIDS Accelerator for Apache Spark."
+description = "A simple wrapper process around cloud service providers to run tools for the NVIDIA cuDF plugin for Apache Spark."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 classifiers = [

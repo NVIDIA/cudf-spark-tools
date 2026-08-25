@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@
 package com.nvidia.spark.rapids.tool
 
 /**
- * RAPIDS tools analysis package holds the implementation of classes that process the information
- * gathered from the eventlogs to transform it into meaningful data which is consumed by the
- * reporting/heuristics engines.
+ * cuDF plugin tools analysis package holds the implementation of classes that process the
+ * information gathered from the eventlogs to transform it into meaningful data which is consumed
+ * by the reporting/heuristics engines.
  */
 package object analysis {
 

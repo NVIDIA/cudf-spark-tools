@@ -39,7 +39,7 @@ object SparkRuntime extends Enumeration {
   val SPARK: SparkRuntime = Value
 
   /**
-   * Represents the Spark RAPIDS runtime environment.
+   * Represents the cuDF plugin runtime environment.
    */
   val SPARK_RAPIDS: SparkRuntime = Value
 
@@ -128,7 +128,7 @@ trait CacheablePropsHandler extends AppPropPlugContainerTrait {
     _sparkVersion = value
   }
 
-  // A flag to indicate whether the eventlog is an eventlog with Spark RAPIDS runtime.
+  // A flag to indicate whether the eventlog is an eventlog with the cuDF plugin runtime.
   var gpuMode = false
   // Indicates the ML eventlogType (i.e., Scala or pyspark). It is set only when MLOps are detected.
   // By default, it is empty.

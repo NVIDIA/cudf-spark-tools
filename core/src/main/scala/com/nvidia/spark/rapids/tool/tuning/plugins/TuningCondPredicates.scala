@@ -161,7 +161,7 @@ object TuningCondPredicates {
    * Checks if GPU acceleration is enabled in the application.
    *
    * This predicate verifies two conditions:
-   * 1. The RAPIDS Accelerator plugin is registered in `spark.plugins`
+   * 1. The cuDF plugin is registered in `spark.plugins`
    * 2. The `spark.rapids.sql.enabled` property is set to true (or defaults to true)
    *
    * This is one of the most commonly used predicates, as many tuning rules only

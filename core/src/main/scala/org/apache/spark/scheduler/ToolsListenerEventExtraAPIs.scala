@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import org.apache.spark.sql.rapids.tool.annotation.ToolsReflection
  * Base trait for events related to SparkRapids build info. This used to add extra APIs that are
  * not defined in the base Spark trait. This is a work around to be compatible in
  * runtime with custom Spark implementations that define abstract methods in the trait.
- * see https://github.com/NVIDIA/spark-rapids-tools/issues/1360
+ * see https://github.com/NVIDIA/cudf-spark-tools/issues/1360
  */
 trait ToolsListenerEventExtraAPIs {
   @ToolsReflection("BD-3.2.1",

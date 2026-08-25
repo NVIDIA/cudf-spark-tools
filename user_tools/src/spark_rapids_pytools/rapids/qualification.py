@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Implementation class representing wrapper around the RAPIDS acceleration Qualification tool."""
+"""Implementation class representing wrapper around the cuDF plugin Qualification tool."""
 
 import json
 import re

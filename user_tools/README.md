@@ -1,17 +1,16 @@
 # spark-rapids-user-tools
 
-User tools to help with the adoption, installation, execution, and tuning of RAPIDS Accelerator for Apache Spark.
+User tools to help with the adoption, installation, execution, and tuning of the NVIDIA cuDF plugin for Apache Spark.
 
 The wrapper improves end-user experience within the following dimensions:
-1. **Qualification**: Educate the CPU customer on the cost savings and acceleration potential of RAPIDS Accelerator for
-   Apache Spark. The output shows a list of apps recommended for RAPIDS Accelerator for Apache Spark with estimated savings
+1. **Qualification**: Educate the CPU customer on the cost savings and acceleration potential of the cuDF plugin. The output shows a list of apps recommended for the cuDF plugin with estimated savings
    and speed-up.
-2. **Tuning**: Tune RAPIDS Accelerator for Apache Spark configs based on initial job run leveraging Spark event logs. The output
-   shows recommended per-app RAPIDS Accelerator for Apache Spark config settings.
-3. **Diagnostics**: Run diagnostic functions to validate the Dataproc with RAPIDS Accelerator for Apache Spark environment to
+2. **Tuning**: Tune the cuDF plugin configs based on initial job run leveraging Spark event logs. The output
+   shows recommended per-app cuDF plugin configuration settings.
+3. **Diagnostics**: Run diagnostic functions to validate the Dataproc environment with the cuDF plugin to
    make sure the cluster is healthy and ready for Spark jobs.
-4. **Prediction**: Predict the speedup of running a Spark application with Spark RAPIDS on GPUs.
-5. **Train**: Train a model to predict the performance of a Spark job on RAPIDS Accelerator for Apache Spark. The output shows
+4. **Prediction**: Predict the speedup of running a Spark application with the cuDF plugin on GPUs.
+5. **Train**: Train a model to predict the performance of a Spark job with the cuDF plugin. The output shows
    the model file that can be used to predict the performance of a Spark job.
 
 
@@ -68,7 +67,7 @@ Set up a Python environment similar to the steps above.
    ```
 
 3. **Fat Mode:** Similar to `fat jar` in Java, this mode solves the problem when web access is not
-   available to download resources having Url-paths (http/https).  
+   available to download resources having Url-paths (http/https).
    The command builds the tools jar file and downloads the necessary dependencies and packages them
    with the source code into a single 'wheel' file.
 
@@ -87,11 +86,11 @@ Possible levels include `DEBUG`, `INFO`, `WARN`, `ERROR`.
 
 ## Usage and supported platforms
 
-Please refer to [spark-rapids-user-tools guide](https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/docs/index.md) for details on how to use the tools
+Please refer to [spark-rapids-user-tools guide](https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/docs/index.md) for details on how to use the tools
 and the platform.
 
-Please refer to [qualx guide](https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/docs/qualx.md) for details on how to use the QualX tool for prediction and training.
+Please refer to [qualx guide](https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/docs/qualx.md) for details on how to use the QualX tool for prediction and training.
 
 ## What's new
 
-Please refer to [CHANGELOG.md](https://github.com/NVIDIA/spark-rapids-tools/blob/main/CHANGELOG.md) for our latest changes.
+Please refer to [CHANGELOG.md](https://github.com/NVIDIA/cudf-spark-tools/blob/main/CHANGELOG.md) for our latest changes.

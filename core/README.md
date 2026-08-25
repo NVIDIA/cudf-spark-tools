@@ -1,6 +1,6 @@
 # Qualification and Profiling tools
 
-The Qualification tool is used to look at a set of applications to determine if the RAPIDS Accelerator for Apache Spark
+The Qualification tool is used to look at a set of applications to determine if the NVIDIA cuDF plugin for Apache Spark
 might be a good fit for those applications.
 
 The Profiling tool generates information which can be used for debugging and profiling applications.
@@ -21,7 +21,7 @@ mvn clean package
 
 After a successful build, the jar will be in the `target/` directory. By default, builds target Scala 2.12
 and the artifact is named like `rapids-4-spark-tools_2.12-*-SNAPSHOT.jar`. To build for Scala 2.13, use the
-Maven profile `-Pscala213`, which produces artifacts named like `rapids-4-spark-tools_2.13-*-SNAPSHOT.jar`.  
+Maven profile `-Pscala213`, which produces artifacts named like `rapids-4-spark-tools_2.13-*-SNAPSHOT.jar`.
 This will build the plugin for a single version of Spark. By default, this is Apache Spark 3.5.7.
 
 Example: build for Scala 2.13 (default Spark 3.5.7)
@@ -31,7 +31,7 @@ mvn clean package -Pscala213
 ```
 
 For development purpose, you may need to run the tests against different spark versions.
-To run the tests against a specific Spark version, you can use the `-Dbuildver=XXX` command line option.  
+To run the tests against a specific Spark version, you can use the `-Dbuildver=XXX` command line option.
 For instance to build Spark 3.5.7 you would use:
 
 ```shell script
@@ -69,7 +69,7 @@ mvn test -Dsuites=com.nvidia.spark.rapids.tool.qualification.QualificationSuite
 
 ### Setting up an Integrated Development Environment
 
-Before proceeding with importing spark-rapids-tools into IDEA or switching to a different Spark
+Before proceeding with importing cudf-spark-tools into IDEA or switching to a different Spark
 profile, execute the installation's phase cmd with the corresponding `buildver`, e.g. for Spark 3.5.7:
 
 ##### Manual Maven Install for a target Spark build

@@ -2365,7 +2365,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     // The comment must say the input was estimated, not measured, for a CPU event log, and it must
     // name the wave arithmetic so the recommendation can be audited without re-running the tool.
     val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 800"))
-    assert(applied.size == 1, s"expected exactly one applied comment in: ${comments.map(_.comment)}")
+    assert(applied.size == 1,
+      s"expected exactly one applied comment in: ${comments.map(_.comment)}")
     assert(applied.head.contains("estimated"))
     assert(applied.head.contains("input size factor 0.8"))
     assert(applied.head.contains(s"25 execution wave(s) of $QUAL_SLOTS cluster task slots"))
@@ -2381,7 +2382,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
     assertExpectedLinesExist(Seq("--conf spark.sql.shuffle.partitions=416"), autoTunerOutput)
     val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 416"))
-    assert(applied.size == 1, s"expected exactly one applied comment in: ${comments.map(_.comment)}")
+    assert(applied.size == 1,
+      s"expected exactly one applied comment in: ${comments.map(_.comment)}")
     assert(applied.head.contains("input size factor 0.4"))
     assert(applied.head.contains("raw requirement 400 partitions"))
     assert(applied.head.contains(s"13 execution wave(s) of $QUAL_SLOTS cluster task slots"))

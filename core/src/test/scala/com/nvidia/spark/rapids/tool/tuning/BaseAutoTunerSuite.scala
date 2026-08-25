@@ -150,7 +150,8 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
       hasSqlCache: Boolean = false,
       shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
-        ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)): AppInfoProviderMockTest = {
+        ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)
+  ): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,

@@ -2732,7 +2732,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       }
   }
 
-  test("Downward pass keeps the normal recommendation and stays quiet with no recommended cluster") {
+  test("Downward pass keeps the normal recommendation and stays quiet " +
+    "with no recommended cluster") {
     val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
       configureClusterInfo = false)
     assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))

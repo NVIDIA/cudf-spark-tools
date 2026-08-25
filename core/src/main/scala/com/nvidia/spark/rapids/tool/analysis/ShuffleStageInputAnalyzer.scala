@@ -286,7 +286,8 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
   private def resolveExchangeDataSize(
       node: SparkPlanGraphNode, producerStages: Set[Int]): Option[Long] = {
     node.metrics.find(_.name == DATA_SIZE_METRIC).flatMap { metric =>
-      val fromStages = app.accumManager.accumInfoMap.get(metric.accumulatorId).flatMap { accumInfo =>
+      val accumInfoOpt = app.accumManager.accumInfoMap.get(metric.accumulatorId)
+      val fromStages = accumInfoOpt.flatMap { accumInfo =>
         val stageValues = producerStages.toSeq.sorted.flatMap(accumInfo.getTotalForStage)
         // Fall back to the accumulator's own maximum when the producing stage cannot be pinned
         // down, which keeps the existing driver/task maximum semantics.

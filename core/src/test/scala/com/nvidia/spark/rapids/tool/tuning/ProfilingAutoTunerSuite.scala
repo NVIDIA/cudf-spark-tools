@@ -121,7 +121,7 @@ abstract class ProfilingAutoTunerSuiteBase extends BaseAutoTunerSuite {
       case Some(v) => v
       case None => fail("Could not find pull the latest release successfully")
     }
-    ToolTestUtils.pluginMvnPrefix(latestRelease) + ".jar"
+    WebCrawlerUtil.getPluginMvnDownloadLink(latestRelease)
   }
 }
 

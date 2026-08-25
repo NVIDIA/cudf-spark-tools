@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ from spark_rapids_pytools.common.utilities import ToolLogging
 from spark_rapids_tools import CspPath
 from spark_rapids_tools.storagelib import CspFs
 from spark_rapids_tools.storagelib.tools.fs_utils import FileVerificationResult
+from spark_rapids_tools.utils.util import Utilities
 
 
 def download_url_request(url: str, fpath: str, timeout: float = None,
@@ -65,7 +66,8 @@ def download_url_request(url: str, fpath: str, timeout: float = None,
     # 3. This is why we need our own timeout check for the total download time
     # 4. We check timeout after writing each chunk, but allow the last chunk to complete
     start_time = time.time()
-    with requests.get(url, stream=True, timeout=timeout) as r:
+    with requests.get(url, stream=True, timeout=timeout,
+                      headers=Utilities.get_maven_http_headers(url)) as r:
         r.raise_for_status()
         with open(fpath, 'wb') as f:
             # Set chunk size to 16 MB to lower the count of iterations.
@@ -92,7 +94,10 @@ def download_url_urllib(url: str, fpath: str) -> str:
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     # We create a context here to fix and issue with urlib requests issue.
     context = ssl.create_default_context(cafile=certifi.where())
-    with urllib.request.urlopen(url, context=context) as resp:
+    request = urllib.request.Request(url)
+    for key, value in Utilities.get_maven_http_headers(url).items():
+        request.add_header(key, value)
+    with urllib.request.urlopen(request, context=context) as resp:
         with open(fpath, 'wb') as f:
             shutil.copyfileobj(resp, f, 64 * 1024 * 1024)
     return fpath

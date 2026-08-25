@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 """This file include unit-test for utilities related to network/downloads"""
 
+import base64
 import time
 import pytest
 from unittest.mock import patch
@@ -74,6 +75,27 @@ def test_normal_download(temp_file, mock_response):
         with open(temp_file, 'rb') as f:
             content = f.read()
         assert content == b'chunk1chunk2chunk3chunk4'
+
+
+def test_maven_download_uses_configured_basic_auth(monkeypatch, temp_file, mock_response):
+    """Test Maven downloads include credentials when Maven auth env vars are configured."""
+    user = 'maven-user'
+    password = 'maven-password'
+    monkeypatch.setenv('RAPIDS_TOOLS_MAVEN_BASE_URL', 'https://mirror.example/maven')
+    monkeypatch.setenv('RAPIDS_TOOLS_MAVEN_USERNAME', user)
+    monkeypatch.setenv('RAPIDS_TOOLS_MAVEN_PASSWORD', password)
+    expected_auth = 'Basic ' + base64.b64encode(f'{user}:{password}'.encode()).decode()
+
+    def fake_get(url, stream, timeout, headers):  # pylint: disable=unused-argument
+        assert headers == {'Authorization': expected_auth}
+        return mock_response
+
+    with patch('requests.get', side_effect=fake_get):
+        result = download_url_request(
+            'https://mirror.example/maven/com/nvidia/artifact.jar',
+            temp_file,
+            timeout=10)
+        assert result == temp_file
 
 
 def test_timeout_before_last_chunk(temp_file, slow_mock_response):

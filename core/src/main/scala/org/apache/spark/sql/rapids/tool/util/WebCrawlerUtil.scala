@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,10 @@
 
 package org.apache.spark.sql.rapids.tool.util
 
-import java.io.IOException
+import java.io.{InputStream, IOException}
 import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -34,7 +36,11 @@ import org.apache.spark.internal.Logging
  */
 object WebCrawlerUtil extends Logging {
   private val MAX_CRAWLER_DEPTH = 1
-  private val NV_MVN_BASE_URL = "https://repo1.maven.org/maven2/com/nvidia"
+  private val MAVEN_CENTRAL_BASE_URL = "https://repo1.maven.org/maven2"
+  private val RAPIDS_GROUP_PATH = "com/nvidia"
+  private val MAVEN_BASE_URL_ENV = "RAPIDS_TOOLS_MAVEN_BASE_URL"
+  private val MAVEN_USERNAME_ENV = "RAPIDS_TOOLS_MAVEN_USERNAME"
+  private val MAVEN_PASSWORD_ENV = "RAPIDS_TOOLS_MAVEN_PASSWORD"
   // defines the artifacts of the RAPIDS libraries
   private val NV_ARTIFACTS_LOOKUP = Map(
     "rapids.plugin" -> "rapids-4-spark_2.12",
@@ -44,15 +50,57 @@ object WebCrawlerUtil extends Logging {
   // regular expression used to extract the version number from
   // the mvn repository url
   private val ARTIFACT_VERSION_REGEX = "\\d{2}\\.\\d{2}\\.\\d+/"
-  // given an artifactID returns the full mvn url that lists all the
-  // releases
-  def getMVNArtifactURL(artifactID: String) : String = {
-    val artifactUrlPart = NV_ARTIFACTS_LOOKUP.getOrElse(artifactID, artifactID)
-    s"$NV_MVN_BASE_URL/$artifactUrlPart"
+
+  def normalizeMavenBaseUrl(baseUrl: String): String = {
+    baseUrl.stripSuffix("/")
   }
 
-  def getMVNMetaURL(artifactID: String) : String = {
-    val artifactUrlPart = getMVNArtifactURL(artifactID)
+  def getMavenBaseUrl(env: Map[String, String] = sys.env): String = {
+    env.get(MAVEN_BASE_URL_ENV)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(normalizeMavenBaseUrl)
+      .getOrElse(MAVEN_CENTRAL_BASE_URL)
+  }
+
+  private def getMavenArtifactRootUrl(env: Map[String, String]): String = {
+    s"${getMavenBaseUrl(env)}/$RAPIDS_GROUP_PATH"
+  }
+
+  private def getMavenBasicAuthHeader(env: Map[String, String]): Option[String] = {
+    for {
+      user <- env.get(MAVEN_USERNAME_ENV).map(_.trim).filter(_.nonEmpty)
+      password <- env.get(MAVEN_PASSWORD_ENV).filter(_.nonEmpty)
+    } yield {
+      val token = Base64.getEncoder.encodeToString(
+        s"$user:$password".getBytes(StandardCharsets.UTF_8))
+      s"Basic $token"
+    }
+  }
+
+  private def openMavenUrlStream(
+      mavenURL: String,
+      env: Map[String, String]): InputStream = {
+    val connection = new URL(mavenURL).openConnection()
+    getMavenBasicAuthHeader(env).foreach { authHeader =>
+      connection.setRequestProperty("Authorization", authHeader)
+    }
+    connection.getInputStream
+  }
+
+  // given an artifactID returns the full mvn url that lists all the
+  // releases
+  def getMVNArtifactURL(
+      artifactID: String,
+      env: Map[String, String] = sys.env) : String = {
+    val artifactUrlPart = NV_ARTIFACTS_LOOKUP.getOrElse(artifactID, artifactID)
+    s"${getMavenArtifactRootUrl(env)}/$artifactUrlPart"
+  }
+
+  def getMVNMetaURL(
+      artifactID: String,
+      env: Map[String, String] = sys.env) : String = {
+    val artifactUrlPart = getMVNArtifactURL(artifactID, env)
     s"$artifactUrlPart/$MAVEN_META_FILE"
   }
 
@@ -67,7 +115,8 @@ object WebCrawlerUtil extends Logging {
   def getPageLinks(
       webURL: String,
       regEx: Option[String],
-      maxDepth: Int = MAX_CRAWLER_DEPTH): mutable.Set[String] = {
+      maxDepth: Int = MAX_CRAWLER_DEPTH,
+      env: Map[String, String] = sys.env): mutable.Set[String] = {
     def removeDefaultPorts(rawLink: String): String = {
       val jURL: URL = new URL(rawLink)
       jURL.getProtocol match {
@@ -84,7 +133,11 @@ object WebCrawlerUtil extends Logging {
         allLinks: mutable.Set[String]): Unit = {
       if (currDepth < maxDepth && !allLinks.contains(currURL)) {
         try {
-          val doc = Jsoup.connect(currURL).get
+          val connection = Jsoup.connect(currURL)
+          getMavenBasicAuthHeader(env).foreach { authHeader =>
+            connection.header("Authorization", authHeader)
+          }
+          val doc = connection.get
           val pageURLs = doc.select(cssQuery).asScala.toList
           val newDepth = currDepth + 1
           for (page <- pageURLs) {
@@ -111,19 +164,28 @@ object WebCrawlerUtil extends Logging {
 
   // given an artifactID, returns a list of strings containing all
   // available releases.
-  def getMvnReleasesForNVPackage(artifactID: String): Seq[String] = {
-    val mvnURL = getMVNArtifactURL(artifactID)
-    val definedLinks = getPageLinks(mvnURL, Some(ARTIFACT_VERSION_REGEX)).toSeq.sorted
+  def getMvnReleasesForNVPackage(
+      artifactID: String,
+      env: Map[String, String] = sys.env): Seq[String] = {
+    val mvnURL = getMVNArtifactURL(artifactID, env)
+    val definedLinks = getPageLinks(mvnURL, Some(ARTIFACT_VERSION_REGEX), env = env).toSeq.sorted
     definedLinks.map(_.split("/").last)
   }
 
   // given an artifactID, will return the latest version if any
-  def getLatestMvnReleaseForNVPackage(artifactID: String): Option[String] = {
+  def getLatestMvnReleaseForNVPackage(
+      artifactID: String,
+      env: Map[String, String] = sys.env): Option[String] = {
     // Reads maven-metadata.xml file to extract the latest version
-    val mvnMetaFile = getMVNMetaURL(artifactID)
+    val mvnMetaFile = getMVNMetaURL(artifactID, env)
     try {
-      val xml = XML.load(mvnMetaFile)
-      Some((xml \\ "metadata" \ "versioning" \ "latest").text)
+      val inputStream = openMavenUrlStream(mvnMetaFile, env)
+      try {
+        val xml = XML.load(inputStream)
+        Some((xml \\ "metadata" \ "versioning" \ "latest").text)
+      } finally {
+        inputStream.close()
+      }
     } catch {
       case NonFatal(e) =>
         logWarning(s"Exception loading maven-metadata.xml: ${mvnMetaFile}", e)
@@ -132,12 +194,17 @@ object WebCrawlerUtil extends Logging {
   }
 
   // given artifactID and release, returns the full mvn url to download the jar
-  def getMvnDownloadLink(artifactID: String, release: String): String = {
-    s"${getMVNArtifactURL(artifactID)}/$release/$artifactID-$release.jar"
+  def getMvnDownloadLink(
+      artifactID: String,
+      release: String,
+      env: Map[String, String] = sys.env): String = {
+    s"${getMVNArtifactURL(artifactID, env)}/$release/$artifactID-$release.jar"
   }
 
-  def getPluginMvnDownloadLink(release: String): String = {
-    getMvnDownloadLink(NV_ARTIFACTS_LOOKUP("rapids.plugin"), release)
+  def getPluginMvnDownloadLink(
+      release: String,
+      env: Map[String, String] = sys.env): String = {
+    getMvnDownloadLink(NV_ARTIFACTS_LOOKUP("rapids.plugin"), release, env)
   }
 
   // get the latest version available for rapids plugin

@@ -438,7 +438,7 @@
           "content": {
             "header": [
               "",
-              "For the new GPU-accelerated cluster with RAPIDS Accelerator for Apache Spark,",
+              "For the new GPU-accelerated cluster with the cuDF plugin,",
               "  it is recommended to set the following Spark configurations:",
               ""
             ]
@@ -452,7 +452,7 @@
             "header": [
               "",
               "To generate the recommended configurations on an existing GPU-Cluster,",
-              "  re-run the Bootstrap tool to provide optimized RAPIDS Accelerator",
+              "  re-run the Bootstrap tool to provide optimized cuDF plugin",
               "  for Apache Spark configs based on GPU cluster shape.",
               "  Notes:",
               "    - Overriding the Apache Spark default configurations on the cluster",

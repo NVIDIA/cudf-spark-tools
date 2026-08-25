@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the 'License');
 # you may not use this file except in compliance with the License.
@@ -87,7 +87,7 @@ class SparkJarRunner:
             f"{self.get_env_var('JAVA_HOME')}/bin/java",       # Java executable path
             *self.jar_cmd_args.jvm_args,                       # JVM Arguments: Log configuration, memory settings, etc.
             '-cp', classpath,                                  # Classpath for dependencies
-            self.jar_cmd_args.jar_main_class,                  # Spark RAPIDS Tools main class
+            self.jar_cmd_args.jar_main_class,                  # cuDF plugin tools main class
             '--output-directory', executor_output_path,        # Tools Argument: Specify the output directory
             *self.jar_cmd_args.rapids_args,                    # Tools Argument: Other arguments for the Tools JAR
             file_path                                          # Tools Argument: Event logs path

@@ -271,7 +271,7 @@ def init_environment(short_name: str) -> str:
     print(Utils.gen_report_sec_header('Application Logs'))
     print(f"Run ID  : {Utils.get_or_set_rapids_tools_env('RUN_ID')}")
     print(f'Location: {log_file}')
-    print('In case of any errors, please share the log file with the Spark RAPIDS team.\n')
+    print('In case of any errors, please share the log file with the cuDF plugin team.\n')
 
     return uuid
 

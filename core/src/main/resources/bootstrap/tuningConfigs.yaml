@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This YAML file defines tunable configuration constants and plugins for RAPIDS Accelerator for
-#  Apache Spark tools.
+# This YAML file defines tunable configuration constants and plugins for the NVIDIA cuDF
+# plugin for Apache Spark tools.
 #
 # Structure:
 # - 'default': Base configuration values used by both Bootstrap (Qualification Tool) and AutoTuner (Profiling Tool)
@@ -340,7 +340,7 @@ default:
     description: >-
       If the user has enabled AQE auto shuffle, the auto-tuner should recommend to disable this
       feature before recommending shuffle partitions.
-      Reference: https://github.com/NVIDIA/spark-rapids-tools/pull/710
+      Reference: https://github.com/NVIDIA/cudf-spark-tools/pull/710
     default: false
     usedBy: spark.databricks.adaptive.autoOptimizeShuffle.enabled
 
@@ -396,31 +396,31 @@ default:
   # Start Delta Lake OSS specific tuning configs
   - name: DELTA_LAKE_OSS_SUPPORT_COMMENT
     description: >-
-      Comment to indicate that Delta Lake OSS is supported by RAPIDS Accelerator for Apache Spark.
+      Comment to indicate that Delta Lake OSS is supported by cuDF plugin.
     default: |-
-      Delta Lake is enabled on this spark application. The RAPIDS Accelerator provides limited support for Delta Lake tables.
+      Delta Lake is enabled on this spark application. The cuDF plugin provides limited support for Delta Lake tables.
         Please refer to https://docs.nvidia.com/spark-rapids/user-guide/latest/additional-functionality/delta-lake-support.html
     pluginRules: DeltaOSSMigrationRule
 
   - name: RECOMMENDED_DELTA_LAKE_VERSION
     description: >-
-      Recommended Delta Lake version for optimal compatibility with RAPIDS Accelerator for Apache Spark.
+      Recommended Delta Lake version for optimal compatibility with the cuDF plugin.
     min: 3.3.0
     pluginRules: DeltaOSSVersionRule
 
   - name: DELTA_LAKE_OSS_VERSION_RECOMMENDATION
     description: >-
-      Comment to indicate the recommended minimum Delta Lake version used for compatibility with RAPIDS.
+      Comment to indicate the recommended minimum Delta Lake version used for compatibility with the cuDF plugin.
     default: |-
-      Delta Lake version is [ACTUAL_VERSION]. It is recommended to upgrade to Delta Lake version [RECOMMENDED_VERSION] or above for better compatibility with the RAPIDS Accelerator for Apache Spark.
+      Delta Lake version is [ACTUAL_VERSION]. It is recommended to upgrade to Delta Lake version [RECOMMENDED_VERSION] or above for better compatibility with the cuDF plugin.
     pluginRules: DeltaOSSVersionRule
 
   - name: DELTA_LAKE_OSS_VERSION_UNDEFINED
     description: >-
       In case the Delta Lake version could not be extracted from the app properties, this comment is
-      added to the recommended minimum Delta Lake version used for compatibility with RAPIDS.
+      added to the recommended minimum Delta Lake version used for compatibility with the cuDF plugin.
     default: |-
-      Delta Lake version could not be determined. It is recommended to use Delta Lake version [RECOMMENDED_VERSION] or above for better compatibility with the RAPIDS Accelerator for Apache Spark.
+      Delta Lake version could not be determined. It is recommended to use Delta Lake version [RECOMMENDED_VERSION] or above for better compatibility with the cuDF plugin.
     pluginRules: DeltaOSSVersionRule
   # end of Delta Lake OSS specific tuning configs
 
@@ -490,7 +490,7 @@ pluginConfigs:
     # Delta Lake-specific optimizations and compatibility checks.
     - name: DeltaOSSVersionRule
       description: >-
-        Ensures that the Delta Lake version used is compatible with RAPIDS acceleration and
+        Ensures that the Delta Lake version used is compatible with the cuDF plugin and
         recommends upgrading to the latest supported version if needed.
       className: com.nvidia.spark.rapids.tool.tuning.plugins.delta.DeltaOSSVersionRule
       pluginName: deltaLakeOSSTuningPlugin

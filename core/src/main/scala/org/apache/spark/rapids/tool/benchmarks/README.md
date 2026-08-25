@@ -1,6 +1,6 @@
 # Benchmarking Tools
 
-This package contains the relevant classes to write and run benchmarks for `SPARK RAPIDS TOOLS` for Apache Spark.
+This package contains the relevant classes to write and run benchmarks for `NVIDIA cuDF plugin for Apache Spark tools` for Apache Spark.
 
 ## Writing a benchmark -
 * Extend `BenchmarkBase` and override the `runBenchmarkSuite` function
@@ -37,4 +37,4 @@ org.apache.spark.rapids.tool.benchmarks.SingleThreadedQualToolBenchmark \
 * `$EVENT_LOGS_DIR` : Path to the event logs directory
 
 #### NOTES
-* `$SPARK_HOME/jars/*` : Include the `SPARK` jars in the classpath in case benchmarking `QUALIFICATION/PROFILING` tool 
+* `$SPARK_HOME/jars/*` : Include the `SPARK` jars in the classpath in case benchmarking `QUALIFICATION/PROFILING` tool

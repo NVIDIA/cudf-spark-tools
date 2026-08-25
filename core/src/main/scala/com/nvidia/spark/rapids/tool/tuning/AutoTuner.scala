@@ -168,7 +168,7 @@ object SparkMaster {
 
 /**
  * AutoTuner module that uses event logs and worker's system properties to recommend Spark
- * RAPIDS configuration based on heuristics.
+ * cuDF plugin configuration based on heuristics.
  *
  * Example:
  * a. Success:
@@ -683,7 +683,7 @@ abstract class AutoTuner(
   }
 
   /**
-   * Extracts the unique RAPIDS plugin jar version from the application's classpath
+   * Extracts the unique cuDF plugin jar version from the application's classpath
    * entries. Returns None if no version (or more than one distinct version) is found.
    */
   private def getRapidsPluginJarVersion: Option[String] = {
@@ -696,10 +696,10 @@ abstract class AutoTuner(
   }
 
   /**
-   * Returns true when the application uses a RAPIDS plugin version that already
+   * Returns true when the application uses a cuDF plugin version that already
    * auto-tunes `spark.rapids.sql.concurrentGpuTasks` at runtime, in which case
    * the AutoTuner should drop its recommendation for that property.
-   * Reference: https://github.com/NVIDIA/spark-rapids/pull/12374
+   * Reference: https://github.com/NVIDIA/cudf-spark/pull/12374
    */
   private def isConcurrentGpuTasksAutoTunedByPlugin: Boolean = {
     getRapidsPluginJarVersion.exists { jarVer =>
@@ -724,7 +724,7 @@ abstract class AutoTuner(
   /**
    * Recommendation for maxBytesInFlight.
    *
-   * TODO: To be removed in the future https://github.com/NVIDIA/spark-rapids-tools/issues/1710
+   * TODO: To be removed in the future https://github.com/NVIDIA/cudf-spark-tools/issues/1710
    */
   private lazy val recommendedMaxBytesInFlightMB: Long = {
     val valueStr =
@@ -1482,7 +1482,7 @@ abstract class AutoTuner(
     // only if we were able to figure out a node type to recommend do we make
     // specific recommendations
     if (platform.recommendedClusterInfo.isDefined) {
-      // Set to low value for Spark RAPIDS usage as task parallelism will be honoured
+      // Set to low value for the cuDF plugin as task parallelism will be honoured
       // by `spark.executor.cores`.
       recommendExecutorResourceGpuProps()
       appendRecommendation("spark.task.resource.gpu.amount",
@@ -1494,7 +1494,7 @@ abstract class AutoTuner(
           isConcurrentGpuTasksAutoTunedByPlugin) {
         // Plugin version auto-tunes concurrent GPU tasks based on memory usage,
         // so suppress the AutoTuner recommendation and the corresponding missing comment.
-        // Reference: https://github.com/NVIDIA/spark-rapids/pull/12374
+        // Reference: https://github.com/NVIDIA/cudf-spark/pull/12374
         skippedRecommendations += concGpuTasksKey
       } else {
         appendRecommendation(concGpuTasksKey, calcGpuConcTasks())
@@ -2587,7 +2587,7 @@ class ProfilingAutoTuner(
 
   /**
    * Profiling AutoTuner retains existing "spark.plugins" property and
-   * RAPIDS plugin is added to it.
+   * cuDF plugin is added to it.
    */
   override def recommendPluginPropsInternal(): Unit = {
     recommendClassNameProperty("spark.plugins", autoTunerHelper.rapidsPluginClassName)
@@ -2625,7 +2625,7 @@ trait AutoTunerHelper extends Logging {
     }
   }
 
-  // Starting with this plugin version, the RAPIDS plugin auto-tunes the number of
+  // Starting with this plugin version, the cuDF plugin auto-tunes the number of
   // concurrent GPU tasks based on memory usage (see spark-rapids#12374), so the
   // AutoTuner should no longer recommend `spark.rapids.sql.concurrentGpuTasks`.
   lazy val pluginVersionAutoConcurrentGpuTasks: String = "25.06.0"
@@ -2767,12 +2767,12 @@ trait AutoTunerStaticComments {
 
   val classPathComments: Map[String, String] = Map(
     "rapids.jars.missing" ->
-      ("RAPIDS Accelerator for Apache Spark plugin jar is missing\n" +
+      ("Required jar for the NVIDIA cuDF plugin for Apache Spark is missing\n" +
         "  from the classpath entries.\n" +
-        "  If the Spark RAPIDS jar is being bundled with your\n" +
+        "  If the cuDF plugin jar is being bundled with your\n" +
         "  Spark distribution, this step is not needed."),
     "rapids.jars.multiple" ->
-      ("Multiple RAPIDS Accelerator for Apache Spark plugin jar\n" +
+      ("Multiple cuDF plugin jar\n" +
         "  exist on the classpath.\n" +
         "  Make sure to keep only a single jar."),
     "rapids.jars.outdated" ->
@@ -2781,8 +2781,8 @@ trait AutoTunerStaticComments {
     "rapids.shuffle.jars" ->
       ("The RAPIDS Shuffle Manager requires spark.driver.extraClassPath\n" +
         "  and spark.executor.extraClassPath settings to include the\n" +
-        "  path to the Spark RAPIDS plugin jar.\n" +
-        "  If the Spark RAPIDS jar is being bundled with your Spark\n" +
+        "  path to the cuDF plugin jar.\n" +
+        "  If the cuDF plugin jar is being bundled with your Spark\n" +
         "  distribution, this step is not needed.")
   )
 
@@ -2837,10 +2837,10 @@ trait AutoTunerStaticComments {
 
   def notEnoughMemComment(minSizeInMB: Long): String = {
     s"""
-       |This node/worker configuration is not ideal for using the RAPIDS Accelerator
-       |for Apache Spark because it doesn't have enough memory for the executors.
+       |This node/worker configuration is not ideal for using the cuDF plugin
+       |because it doesn't have enough memory for the executors.
        |We recommend either using nodes with more memory or reducing 'spark.memory.offHeap.size',
-       |as off-heap memory is unused by the RAPIDS Accelerator, unless explicitly required by
+       |as off-heap memory is unused by the cuDF plugin, unless explicitly required by
        |the application. Need at least $minSizeInMB MB memory per executor.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }

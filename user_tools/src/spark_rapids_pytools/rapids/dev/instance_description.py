@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Implementation class representing wrapper around the RAPIDS acceleration Prediction tool."""
+"""Implementation class representing wrapper around the cuDF plugin Prediction tool."""
 
 import os
 from dataclasses import dataclass

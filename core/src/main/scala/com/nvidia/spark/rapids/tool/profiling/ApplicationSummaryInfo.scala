@@ -298,7 +298,7 @@ object SingleAppSummaryInfoProvider {
   /**
    * Computes the set of shuffle stage IDs that had container OOM failures (YARN only).
    * Detects ExecutorLostFailure with exit code 137 (SIGKILL from container memory enforcement).
-   * See: https://github.com/NVIDIA/spark-rapids-tools/issues/1566
+   * See: https://github.com/NVIDIA/cudf-spark-tools/issues/1566
    */
   def computeShuffleStagesWithContainerOom(
       pluginEnabled: Boolean,

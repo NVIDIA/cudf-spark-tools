@@ -1873,8 +1873,8 @@ abstract class AutoTuner(
    * 2- If there are more than 1 entry for ".*rapids-4-spark.*jar", then add a comment that
    *    there should be only 1 jar in the class path.
    * 3- If there are cudf jars, ignore that for now.
-   * 4- If the plugin jar is older than the expected two-month release cadence, recommend checking
-   *    the latest release.
+   * 4- If the plugin jar's release month is at least two months old, recommend checking the
+   *    latest release.
    */
   private def recommendClassPathEntries(): Unit = {
     val missingRapidsJarsEntry = classPathComments("rapids.jars.missing")
@@ -2610,7 +2610,8 @@ trait AutoTunerHelper extends Logging {
   lazy val pluginJarRegEx: Regex = "rapids-4-spark_\\d\\.\\d+-(\\d{2}\\.\\d{2}\\.\\d+).*\\.jar".r
 
   /**
-   * Returns whether a plugin version is older than its expected bi-monthly release cadence.
+   * Returns whether a plugin version's release month is at least two months before the current
+   * month, based on the expected release cadence.
    * Patch releases within the same release month are intentionally ignored.
    */
   def isPluginJarProbablyOutdated(
@@ -2621,7 +2622,9 @@ trait AutoTunerHelper extends Logging {
       false
     } else {
       Try(YearMonth.of(2000 + versionParts(0).toInt, versionParts(1).toInt)).toOption
-        .exists(_.isBefore(currentYearMonth.minusMonths(pluginReleaseIntervalMonths)))
+        .exists { releaseYearMonth =>
+          !releaseYearMonth.isAfter(currentYearMonth.minusMonths(pluginReleaseIntervalMonths))
+        }
     }
   }
 

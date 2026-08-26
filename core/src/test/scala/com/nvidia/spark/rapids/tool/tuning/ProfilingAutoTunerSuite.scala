@@ -1546,9 +1546,10 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
       "Check the latest release: https://nvidia.github.io/cudf-spark/docs/download.html"))
   }
 
-  test("cuDF plugin jar staleness allows a two-month grace period") {
+  test("cuDF plugin jar staleness follows the two-month release cadence") {
     val testCases = Seq(
-      ("26.06.1", YearMonth.of(2026, 8), false),
+      ("26.06.1", YearMonth.of(2026, 7), false),
+      ("26.06.1", YearMonth.of(2026, 8), true),
       ("26.06.1", YearMonth.of(2026, 9), true),
       ("26.08.0", YearMonth.of(2026, 9), false),
       ("invalid", YearMonth.of(2026, 9), false))

@@ -49,7 +49,7 @@ class _InferencePlatform:
 
     @staticmethod
     def generate_cluster_configuration(render_args):
-        return {
+        return json.dumps({
             'cluster_id': 'inferred-cluster',
             'config': {
                 'workerConfig': {
@@ -60,7 +60,7 @@ class _InferencePlatform:
                     'machineType': render_args['DRIVER_NODE_TYPE'].strip('"')
                 }
             }
-        }
+        })
 
     def load_cluster_by_prop(self, cluster_prop, is_inferred=False):
         self.loaded_cluster_prop = cluster_prop
@@ -135,6 +135,8 @@ def test_cluster_inference_uses_abstract_prop_container():
     assert inferred_cluster is platform.loaded_cluster_prop
     assert platform.loaded_is_inferred is True
     assert isinstance(platform.loaded_cluster_prop, AbstractPropContainer)
+    assert platform.loaded_cluster_prop.props['cluster_id'] == 'inferred-cluster'
+    assert platform.loaded_cluster_prop.get_value('config', 'workerConfig', 'numInstances') == 2
     assert not _deprecated_prop_container_warnings(caught_warnings)
 
 

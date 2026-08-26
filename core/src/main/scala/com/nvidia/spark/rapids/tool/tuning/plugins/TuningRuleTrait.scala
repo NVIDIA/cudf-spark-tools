@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.nvidia.spark.rapids.tool.plugins.ConditionTrait
 import com.nvidia.spark.rapids.tool.tuning.AutoTuner
 
 /**
- * Trait defining the contract for tuning rules in the RAPIDS auto-tuning system.
+ * Trait defining the contract for tuning rules in the cuDF plugin auto-tuning system.
  *
  * A tuning rule encapsulates a specific optimization strategy that can be applied to
  * Spark applications to improve performance when running on GPU. Each rule consists of:

@@ -25,7 +25,7 @@ import org.apache.spark.sql.rapids.tool.AppFilterImpl
 class ProfileArgs(arguments: Seq[String]) extends ScallopConf(arguments) with Logging {
 
   banner("""
-Profiling Tool for the RAPIDS Accelerator and Apache Spark
+Profiling tool for the NVIDIA cuDF plugin for Apache Spark
 
 Usage: java -cp rapids-4-spark-tools_2.12-<version>.jar:$SPARK_HOME/jars/*
        com.nvidia.spark.rapids.tool.profiling.ProfileMain [options]

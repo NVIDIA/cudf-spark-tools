@@ -1,4 +1,4 @@
-# QualX: Spark RAPIDS Qualification Tool using XGBoost
+# QualX: NVIDIA cuDF plugin for Apache Spark Qualification Tool using XGBoost
 
 Tool to qualify Spark applications for GPU acceleration, based on XGBoost.
 
@@ -6,7 +6,7 @@ Tool to qualify Spark applications for GPU acceleration, based on XGBoost.
 
 ### Prediction
 
-To predict the speedup of running a Spark application with Spark RAPIDS on GPUs, use the cmd below. It uses an XGBoost model trained on matching CPU and GPU runs of various Spark applications.
+To predict the speedup of running a Spark application with the cuDF plugin on GPUs, use the cmd below. It uses an XGBoost model trained on matching CPU and GPU runs of various Spark applications.
 
 ```bash
 spark_rapids prediction \
@@ -20,7 +20,7 @@ Arguments:
 - qual_output: Path to a directory containing qualification tool output.
 - output_folder: Path to store the output.
 - custom_model_file: (OPTIONAL) Path to a custom-trained model.json file.
-- qualx_config: (OPTIONAL) Path to a qualx-conf.yaml file to use for configuration. If not provided, the wrapper will use the default: https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+- qualx_config: (OPTIONAL) Path to a qualx-conf.yaml file to use for configuration. If not provided, the wrapper will use the default: https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
 
 Output files:
 - prediction.csv: per-application speedup predictions.
@@ -32,7 +32,7 @@ Output files:
 
 ### Training
 
-To train an XGBoost model on a specific dataset, follow these steps below. Refer to [Getting Started](https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/README.md#getting-started) section for installing the required dependencies for training.
+To train an XGBoost model on a specific dataset, follow these steps below. Refer to [Getting Started](https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/README.md#getting-started) section for installing the required dependencies for training.
 
 #### Environment Setup
 
@@ -135,7 +135,7 @@ Arguments:
 - n_trials: (OPTIONAL) Number of trials for hyperparameter search, default: 200.
 - base_model: (OPTIONAL) Path to pre-trained model to serve as a base for fine-tuning/continued-training.
 - features_csv_dir: (OPTIONAL) Path to a directory containing one or more features.csv files to augment the training dataset.
-- qualx_config: (OPTIONAL) Path to a qualx-conf.yaml file to use for configuration. If not provided, the wrapper will use the default: https://github.com/NVIDIA/spark-rapids-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+- qualx_config: (OPTIONAL) Path to a qualx-conf.yaml file to use for configuration. If not provided, the wrapper will use the default: https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
 
 Continuing the example from above, we would use:
 ```bash

@@ -72,7 +72,7 @@ reportDefinitions:
       - label: runtimeProperties
         description: >-
           Contains the runtime properties of the qualification tool.
-          It includes the version of the tool, the Spark version, and the Spark RAPIDS plugin version.
+          It includes the version of the tool, the Spark version, and the cuDF plugin version.
         fileName: runtime.properties
         fileFormat: PROPERTIES
         scope: global
@@ -297,8 +297,8 @@ reportDefinitions:
               The action to be taken for Exec. It can be one of the following:
               NONE if the Exec is supported,
               IgnoreNoPerf if the Exec is removed from the migrated plan,
-              IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the RAPIDS plugin, or
-              Triage if the Exec has an impact on performance and it is likely to be handled by the RAPIDS plugin.
+              IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the cuDF plugin, or
+              Triage if the Exec has an impact on performance and it is likely to be handled by the cuDF plugin.
       - label: unsupportedOpsCSVReport
         description: >-
           Report containing the details of each unsupported operator in the SQL
@@ -343,8 +343,8 @@ reportDefinitions:
             description: >-
               The action to be taken for the unsupported operator. It can be one of the following:
               IgnoreNoPerf if the Exec is removed from the migrated plan,
-              IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the RAPIDS plugin, or
-              Triage if the Exec has an impact on performance and it is likely to be handled by the RAPIDS plugin.
+              IgnorePerf if the Exec has an impact on performance but it is not likely to be handled by the cuDF plugin, or
+              Triage if the Exec has an impact on performance and it is likely to be handled by the cuDF plugin.
       - label: operatorsStatsCSVReport
         description: >-
           Report containing the details of each operator in the SQL

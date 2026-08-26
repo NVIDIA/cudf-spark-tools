@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2024, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""Wrapper class to run tools associated with RAPIDS Accelerator for Apache Spark plugin on AWS-EMR."""
+"""Wrapper class to run tools associated with the NVIDIA cuDF plugin for Apache Spark on AWS-EMR."""
 
 from spark_rapids_pytools.common.utilities import ToolLogging
 from spark_rapids_pytools.rapids.bootstrap import Bootstrap
@@ -23,7 +23,7 @@ from spark_rapids_tools import CspEnv
 
 class CliEmrLocalMode:  # pylint: disable=too-few-public-methods
     """
-    A wrapper that runs the RAPIDS Accelerator tools locally on the dev machine.
+    A wrapper that runs the cuDF plugin tools locally on the dev machine.
     """
 
     @staticmethod
@@ -113,7 +113,7 @@ class CliEmrLocalMode:  # pylint: disable=too-few-public-methods
 
 class EMRWrapper:  # pylint: disable=too-few-public-methods
     """
-    A wrapper script to run RAPIDS Accelerator tools (Bootstrap, and Diagnostic) on Amazon EMR.
+    A wrapper script to run cuDF plugin tools (Bootstrap, and Diagnostic) on Amazon EMR.
     """
 
     def __init__(self):

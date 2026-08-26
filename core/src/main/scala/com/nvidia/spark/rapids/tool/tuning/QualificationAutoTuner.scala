@@ -54,8 +54,8 @@ class QualificationAutoTuner(
 
   /**
    * Qualification Bootstrap ignores existing "spark.plugins" property and
-   * RAPIDS plugin is added.
-   * Reference: https://github.com/NVIDIA/spark-rapids-tools/issues/1825#issuecomment-3138122418
+   * cuDF plugin is added.
+   * Reference: https://github.com/NVIDIA/cudf-spark-tools/issues/1825#issuecomment-3138122418
    */
   override def recommendPluginPropsInternal(): Unit = {
     appendRecommendation("spark.plugins", autoTunerHelper.rapidsPluginClassName)

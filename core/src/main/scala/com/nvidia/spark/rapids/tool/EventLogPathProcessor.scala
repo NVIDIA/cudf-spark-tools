@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2021-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -186,7 +186,7 @@ object EventLogPathProcessor extends Logging {
    * Identifies if the input file or directory is a valid event log.
    *
    * TODO - Need to handle size of files in directory, for now document its not supported.
-   *        Reference: https://github.com/NVIDIA/spark-rapids-tools/pull/1275
+   *        Reference: https://github.com/NVIDIA/cudf-spark-tools/pull/1275
    *
    * @param s   FileStatus to be identified.
    * @param fs  FileSystem instance for file system operations.

@@ -87,7 +87,7 @@ class TestAcceptsStringPath:
 
 
 class TestRapidsLog:
-    """Test detection on RAPIDS event logs."""
+    """Test detection on cuDF plugin event logs."""
 
     def test_build_info_event_classifies_as_profiling(self, tmp_path):
         log = tmp_path / "eventlog"

@@ -26,7 +26,7 @@ GPU_ENABLED_KEY: str = "spark.rapids.sql.enabled"
 # Defaults to true when missing or unparseable.
 GPU_ENABLED_DEFAULT: bool = True
 
-# RAPIDS 24.06+ plugin marker.
+# cuDF plugin 24.06+ marker.
 # Scala: com/nvidia/spark/rapids/SparkRapidsBuildInfoEvent.scala
 EVENT_SPARK_RAPIDS_BUILD_INFO: str = "com.nvidia.spark.rapids.SparkRapidsBuildInfoEvent"
 EVENT_SPARK_RAPIDS_BUILD_INFO_SHORTNAME: str = "SparkRapidsBuildInfoEvent"

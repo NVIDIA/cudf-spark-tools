@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ object ProfLogPathView extends AppLogPathViewTrait with ProfAppIndexMapperTrait 
 }
 
 trait AppRapidsJarViewTrait extends ViewableTrait[RapidsJarProfileResult] {
-  override def getLabel: String = "Rapids Accelerator Jar and cuDF Jar"
+  override def getLabel: String = "NVIDIA cuDF plugin for Apache Spark Jar and cuDF Jar"
 
   override def getDescription: String = "Rapids 4 Spark Jars"
 

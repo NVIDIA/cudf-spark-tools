@@ -304,7 +304,7 @@ class WriteOperationParserSuite extends AnyFunSuite {
 
   test("GpuInsertIntoHadoopFsRelationCommand — Broken RAPIDS formats") {
     // The GPU eventlog may have incorrect formats
-    // https://github.com/NVIDIA/spark-rapids-tools/issues/1561
+    // https://github.com/NVIDIA/cudf-spark-tools/issues/1561
     // this test ensures that the tools can tolerate the broken formats by converting them to
     // proper formats.
     val testFileFormats = Seq(

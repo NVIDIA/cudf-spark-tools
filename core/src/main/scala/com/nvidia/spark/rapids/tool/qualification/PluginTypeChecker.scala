@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2021-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ object OpSuppLevel extends Enumeration {
 }
 
 /**
- * This class is used to check what the RAPIDS Accelerator for Apache Spark
+ * This class is used to check what the cuDF plugin
  * supports for data formats and data types.
  * By default it relies on a csv file included in the jar which is generated
  * by the plugin which lists the formats and types supported.

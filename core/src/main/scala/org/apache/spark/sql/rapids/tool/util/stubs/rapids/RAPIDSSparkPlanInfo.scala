@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import org.apache.spark.sql.rapids.tool.util.stubs.{PWSparkPlanInfo, SparkPlanIn
 /**
  * Represents execution plan information for NVIDIA RAPIDS GPU-accelerated Spark nodes.
  *
- * RAPIDS Accelerator for Apache Spark enables GPU acceleration of Spark workloads.
+ * cuDF plugin enables GPU acceleration of Spark workloads.
  * This class captures both the GPU-specific node information (e.g., "GpuProject",
  * "GpuColumnarToRow") and the equivalent CPU Spark node information for compatibility
  * and cross-platform analysis.

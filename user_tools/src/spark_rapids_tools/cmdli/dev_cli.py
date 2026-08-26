@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ class DevCLI(object):  # pylint: disable=too-few-public-methods
                 Default is calculated as a function of the total number of cores and the heap size on the host.
         :param tools_config_file: Path to a configuration file that contains the tools' options.
                For sample configuration files, please visit
-               https://github.com/NVIDIA/spark-rapids-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
+               https://github.com/NVIDIA/cudf-spark-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
         :param verbose: True or False to enable verbosity of the script.
         :param rapids_options: A list of valid Qualification tool options.
         :return: The output folder where the qualification results are stored.
@@ -110,7 +110,7 @@ class DevCLI(object):  # pylint: disable=too-few-public-methods
                 Default is calculated as a function of the total number of cores and the heap size on the host.
         :param tools_config_file: Path to a configuration file that contains the tools' options.
                For sample configuration files, please visit
-               https://github.com/NVIDIA/spark-rapids-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
+               https://github.com/NVIDIA/cudf-spark-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid
         :param verbose: True or False to enable verbosity of the script.
         :param rapids_options: A list of valid Profiling tool options.
         :return: The output folder where the profiling results are stored.

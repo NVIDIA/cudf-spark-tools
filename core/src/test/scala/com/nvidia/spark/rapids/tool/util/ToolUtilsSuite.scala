@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -174,7 +174,7 @@ class ToolUtilsSuite extends AnyFunSuite with Logging {
 
   test("parse memory sizes from RAPIDS metrics") {
     // This unit test is to evaluate the parser used to handle the new GPU metrics introduced in
-    // https://github.com/NVIDIA/spark-rapids/pull/12517
+    // https://github.com/NVIDIA/cudf-spark/pull/12517
     // Note that:
     // - the metrics are in human readable format (e.g., 0.74GB (11534336000 bytes)).
     // - we do not care to evaluate the case when the metric is just "0" because this would be

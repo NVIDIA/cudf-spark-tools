@@ -16,7 +16,7 @@
 
 The scanner extracts Spark properties from event-log records and passes the
 merged map to this module. This module only answers whether those properties
-represent standard Spark or a RAPIDS-enabled application.
+represent standard Spark or a cuDF plugin-enabled application.
 """
 
 from typing import Mapping
@@ -42,7 +42,7 @@ def _parse_bool(raw: str, default: bool) -> bool:
 
 
 def _is_spark_rapids(props: Mapping[str, str]) -> bool:
-    """Return true when Spark properties show the RAPIDS SQL plugin is active."""
+    """Return true when Spark properties show the cuDF plugin is active."""
     plugins = props.get(m.GPU_PLUGIN_KEY, "")
     if m.GPU_PLUGIN_CLASS_SUBSTRING not in plugins:
         return False
@@ -53,10 +53,10 @@ def _is_spark_rapids(props: Mapping[str, str]) -> bool:
 
 
 def has_rapids_conf_markers(props: Mapping[str, str]) -> bool:
-    """Return true when properties contain any RAPIDS-related configuration.
+    """Return true when properties contain any cuDF plugin-related configuration.
 
     This is intentionally broader than ``_is_spark_rapids``. A disabled or
-    incomplete RAPIDS configuration is not classified as RAPIDS, but its
+    incomplete cuDF plugin configuration is not classified as a cuDF plugin runtime, but its
     presence should prevent early CPU routing because later events may update
     the effective configuration.
     """

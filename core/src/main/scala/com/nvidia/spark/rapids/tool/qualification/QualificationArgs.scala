@@ -25,7 +25,7 @@ import org.apache.spark.sql.rapids.tool.AppFilterImpl
 class QualificationArgs(arguments: Seq[String]) extends ScallopConf(arguments) with Logging {
 
   banner("""
-RAPIDS Accelerator for Apache Spark qualification tool
+NVIDIA cuDF plugin for Apache Spark qualification tool
 
 Usage: java -cp rapids-4-spark-tools_2.12-<version>.jar:$SPARK_HOME/jars/*
        com.nvidia.spark.rapids.tool.qualification.QualificationMain [options]

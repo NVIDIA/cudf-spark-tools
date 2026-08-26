@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ CYAN='\033[36;1m'
 WHITE='\033[37;1m'
 ENDCOLOR='\033[0m'
 
-PRODUCT_NAME="Spark RAPIDS user tools"
+PRODUCT_NAME="cuDF plugin user tools"
 
 log_msg() {
   echo -e "${1}${2}${ENDCOLOR}"

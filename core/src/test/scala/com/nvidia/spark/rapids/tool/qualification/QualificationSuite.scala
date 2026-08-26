@@ -862,7 +862,7 @@ class QualificationSuite extends BaseWithSparkSuite {
   }
 
   test("map_zip_with is supported") {
-    // While the RAPIDS plugin does not support all the TZ types, the evntlog won't show the
+    // While the cuDF plugin does not support all the TZ types, the evntlog won't show the
     // information that helps in determining if the TZ type is used. So the test just
     // makes sure that map_zip_with is not listed in the unsupported operators.
     QToolTestCtxtBuilder()
@@ -907,7 +907,7 @@ class QualificationSuite extends BaseWithSparkSuite {
       ("zstd", true),
       ("snappy", true),
       // The following compressions should not be supported
-      // https://github.com/NVIDIA/spark-rapids-tools/issues/1750
+      // https://github.com/NVIDIA/cudf-spark-tools/issues/1750
       // Note that hadoop-lzo needs a specific jar ("lzo", true)
       ("lz4", false), ("gzip", false)
       // No need to test the following 2 since they are incompatible with older spark releases.
@@ -1099,7 +1099,7 @@ class QualificationSuite extends BaseWithSparkSuite {
     val compressionsItems = Seq(
       // ("uncompressed", true), ("none", true), ("zstd", true), ("snappy", true),
       // The following 2 compressions should not be supported
-      // https://github.com/NVIDIA/spark-rapids-tools/issues/1750
+      // https://github.com/NVIDIA/cudf-spark-tools/issues/1750
       // Note that hadoop-lzo needs a specific jar ("lzo", true)
       ("lz4", false), ("gzip", false), ("lz4raw", false), ("lz4_raw", false)
     )

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ object StringUtils extends Logging {
   private val regExMemorySize =
     "^(?i)(\\d+(?:\\.\\d+)?)(b|k(?:ib|b)?|m(?:ib|b)?|g(?:ib|b)?|t(?:ib|b)?|p(?:ib|b)?)$".r
   // Regular expression to retrieve the memory size of GPU metrics into 3 groups.
-  // The new GPU metrics introduced in https://github.com/NVIDIA/spark-rapids/pull/12517 are not
+  // The new GPU metrics introduced in https://github.com/NVIDIA/cudf-spark/pull/12517 are not
   // parsed as long. Instead, it is parsed as a composite string of the value and the unit:
   // - 111534336000 -> 0.74GB (11534336000 bytes)
   // - 1289750 -> 1.23MB (1289750 bytes)
@@ -76,7 +76,7 @@ object StringUtils extends Logging {
 
   /**
    * A utility that parses the value of RAPIDS GPU metrics that were introduced in
-   * https://github.com/NVIDIA/spark-rapids/pull/12517.
+   * https://github.com/NVIDIA/cudf-spark/pull/12517.
    * The metrics are in human readable format (e.g., 0.74GB (11534336000 bytes)).
    * @param strData the metric value
    * @return the number of bytes if the string is in the expected format

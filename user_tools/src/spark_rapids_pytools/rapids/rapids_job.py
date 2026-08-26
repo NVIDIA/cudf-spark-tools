@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ from spark_rapids_tools_distributed.jar_cmd_args import JarCmdArgs
 @dataclass
 class RapidsJobPropContainer(JSONPropertiesContainer):
     """
-    Manages properties and arguments needed to running RAPIDS tools.
+    Manages properties and arguments needed to running cuDF plugin tools.
     """
 
     def _init_fields(self):
@@ -60,7 +60,7 @@ class RapidsJobPropContainer(JSONPropertiesContainer):
 @dataclass
 class RapidsJob:
     """
-    Represents an actual execution of a RAPIDS-tools job on the cloud platform.
+    Represents an actual execution of a cuDF plugin tools job on the cloud platform.
     """
     prop_container: RapidsJobPropContainer
     exec_ctxt: ToolContext
@@ -209,7 +209,7 @@ class RapidsJob:
 @dataclass
 class RapidsLocalJob(RapidsJob):
     """
-    Implementation of a RAPIDS job that runs local on a machine.
+    Implementation of a cuDF plugin job that runs local on a machine.
     """
 
     def _build_submission_cmd(self) -> list:
@@ -233,7 +233,7 @@ class RapidsLocalJob(RapidsJob):
 @dataclass
 class RapidsDistributedJob(RapidsJob):
     """
-    Implementation of a RAPIDS job that runs distributed on a cluster.
+    Implementation of a cuDF plugin job that runs distributed on a cluster.
     """
 
     def _build_submission_cmd(self) -> JarCmdArgs:
@@ -248,7 +248,7 @@ class RapidsDistributedJob(RapidsJob):
 
     def _build_classpath(self) -> List[str]:
         """
-        Only the Spark RAPIDS Tools JAR file is needed for the classpath.
+        Only the cuDF plugin tools JAR file is needed for the classpath.
         Assumption: Each worker node should have the Spark Jars pre-installed.
         TODO: Ship the Spark JARs to the cluster to avoid version mismatch issues.
         """

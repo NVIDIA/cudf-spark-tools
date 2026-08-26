@@ -362,7 +362,7 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
   // scalastyle:off line.size.limit
   // Supported Spark version to RapidsShuffleManager version mapping.
   // Reference: https://docs.nvidia.com/spark-rapids/user-guide/latest/additional-functionality/rapids-shuffle.html#rapids-shuffle-manager
-  // TODO: Issue to automate this https://github.com/NVIDIA/spark-rapids-tools/issues/1676
+  // TODO: Issue to automate this https://github.com/NVIDIA/cudf-spark-tools/issues/1676
   // scalastyle:on line.size.limit
   val supportedShuffleManagerVersionMap: Array[(String, String)] = Array(
     "3.2.0" -> "320",
@@ -841,7 +841,7 @@ abstract class DatabricksPlatform(gpuDevice: Option[GpuDevice],
   )
 
   // Supported Databricks version to RapidsShuffleManager version mapping.
-  // TODO: Issue to automate this https://github.com/NVIDIA/spark-rapids-tools/issues/1676
+  // TODO: Issue to automate this https://github.com/NVIDIA/cudf-spark-tools/issues/1676
   override val supportedShuffleManagerVersionMap: Array[(String, String)] = Array(
     "12.2" -> "332db",
     "13.3" -> "341db"

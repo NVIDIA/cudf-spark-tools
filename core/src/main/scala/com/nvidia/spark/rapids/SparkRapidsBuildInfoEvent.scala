@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import org.apache.spark.sql.rapids.tool.annotation.ToolsReflection
 
 
 /**
- * This is a copy from spark-rapids: https://github.com/NVIDIA/spark-rapids/blob/
+ * This is a copy from spark-rapids: https://github.com/NVIDIA/cudf-spark/blob/
  * branch-24.10/sql-plugin/src/main/scala/com/nvidia/spark/rapids/Plugin.scala#L416.
  *
  * TODO: set up a automated job to sync this with spark-rapids plugin.

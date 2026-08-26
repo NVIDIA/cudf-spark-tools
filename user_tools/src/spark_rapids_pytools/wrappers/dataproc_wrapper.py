@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2024, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wrapper class to run tools associated with RAPIDS Accelerator for Apache Spark plugin on Dataproc."""
+"""Wrapper class to run tools associated with the NVIDIA cuDF plugin for Apache Spark on Dataproc."""
 
 from spark_rapids_pytools.common.utilities import ToolLogging
 from spark_rapids_pytools.rapids.bootstrap import Bootstrap
@@ -22,7 +22,7 @@ from spark_rapids_tools import CspEnv
 
 class CliDataprocLocalMode:  # pylint: disable=too-few-public-methods
     """
-    A wrapper that runs the RAPIDS Accelerator tools locally on the dev machine for Dataproc.
+    A wrapper that runs the cuDF plugin tools locally on the dev machine for Dataproc.
     """
 
     @staticmethod
@@ -91,7 +91,7 @@ class CliDataprocLocalMode:  # pylint: disable=too-few-public-methods
 
 class DataprocWrapper:  # pylint: disable=too-few-public-methods
     """
-    A wrapper script to run RAPIDS Accelerator tools (Diagnostics and Bootstrap) on Gcloud Dataproc.
+    A wrapper script to run cuDF plugin tools (Diagnostics and Bootstrap) on Gcloud Dataproc.
     """
     def __init__(self):
         self.bootstrap = CliDataprocLocalMode.bootstrap

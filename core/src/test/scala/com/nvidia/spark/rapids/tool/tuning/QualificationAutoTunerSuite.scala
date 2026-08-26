@@ -21,12 +21,13 @@ import java.nio.file.Paths
 import scala.collection.mutable
 
 import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, PlatformFactory, PlatformNames, ToolTestUtils}
-import com.nvidia.spark.rapids.tool.profiling.Profiler
+import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence}
 import com.nvidia.spark.rapids.tool.qualification.{QualificationArgs, QualificationMain}
 import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ConfTypeEnum, LevelEnum, TuningConfigEntry, TuningEntryDefinition}
 import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
 import org.scalatest.exceptions.TestFailedException
+import org.scalatest.matchers.should.Matchers._
 import org.scalatest.prop.TableDrivenPropertyChecks._
 import org.scalatest.prop.TableFor3
 
@@ -57,10 +58,11 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
    * Helper method to return an instance of the Qualification AutoTuner with default properties
    */
   private def buildDefaultAutoTuner(
-      logEventsProps: mutable.Map[String, String] = defaultSparkProps): AutoTuner = {
+      logEventsProps: mutable.Map[String, String] = defaultSparkProps,
+      hasSqlCache: Boolean = false): AutoTuner = {
     val sparkPropsWithMemory = logEventsProps + ("spark.executor.memory" -> "212992MiB")
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
-      sparkPropsWithMemory, Some(testSparkVersion))
+      sparkPropsWithMemory, Some(testSparkVersion), hasSqlCache = hasSqlCache)
     val platform = PlatformFactory.createInstance(PlatformNames.EMR)
 
     // Configure cluster info: 32 cores, 5 workers, 4 GPUs per worker = 20 total executors
@@ -74,6 +76,43 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     )
 
     buildAutoTunerForTests(infoProvider, platform)
+  }
+
+  test("Qualification recommends cache serializer for InMemoryTableScan") {
+    val autoTuner = buildDefaultAutoTuner(hasSqlCache = true)
+    val (properties, _) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+    properties.find(_.name == AutoTuner.CACHE_SERIALIZER_PROPERTY).map(_.getTuneValue()) shouldBe
+      Some("com.nvidia.spark.ParquetCachedBatchSerializer")
+  }
+
+  test("Qualification preserves a custom cache serializer with an advisory") {
+    val customSerializer = "example.ExistingCachedBatchSerializer"
+    val logEventsProps =
+      defaultSparkProps + (AutoTuner.CACHE_SERIALIZER_PROPERTY -> customSerializer)
+    val autoTuner = buildDefaultAutoTuner(
+      logEventsProps, hasSqlCache = true)
+    val (properties, comments) =
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    properties.find(_.name == AutoTuner.CACHE_SERIALIZER_PROPERTY).map(_.getTuneValue()) shouldBe
+      Some(customSerializer)
+    commentText should include("custom cache serializer")
+    commentText should include("preserving")
+    commentText should include("GPU InMemoryTableScan")
+  }
+
+  test("Qualification skips cache serializer when GPU cache scans are disabled") {
+    val logEventsProps = defaultSparkProps +
+      (AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY -> "false")
+    val autoTuner = buildDefaultAutoTuner(logEventsProps, hasSqlCache = true)
+    val (properties, comments) = autoTuner.getRecommendedProperties()
+    val commentText = comments.map(_.comment).mkString("\n")
+
+    properties.find(_.name == AutoTuner.CACHE_SERIALIZER_PROPERTY) shouldBe None
+    commentText should include("is not recommended")
+    commentText should include(AutoTuner.IN_MEMORY_TABLE_SCAN_PROPERTY)
   }
 
   /**
@@ -303,7 +342,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
             |- ${getEnforcedPropertyComment("spark.executor.cores")}
             |- ${getEnforcedPropertyComment("spark.executor.instances")}
             |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-            |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+            |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
             |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
             |- 'spark.rapids.memory.pinnedPool.size' was not set.
             |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -405,7 +444,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -551,7 +590,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
           |- 'spark.executor.resource.gpu.discoveryScript' was user-enforced in the target cluster properties.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -834,7 +873,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -857,8 +896,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   }
 
   // This test verifies that Qualification Bootstrap ignores existing
-  // "spark.plugins" property and RAPIDS plugin is added.
-  test("test existing 'spark.plugins' are ignored and RAPIDS plugin is added") {
+  // "spark.plugins" property and cuDF plugin is added.
+  test("test existing 'spark.plugins' are ignored and cuDF plugin is added") {
     // mock the properties loaded from eventLog
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
@@ -905,7 +944,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should include the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should include the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1332,7 +1371,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1462,7 +1501,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
             |- ${getPreservedPropertyComment("spark.executor.memory")}
             |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
             |- ${getExcludedPropertyComment("spark.master")}
-            |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+            |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
             |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
             |- 'spark.rapids.memory.pinnedPool.size' was not set.
             |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1649,7 +1688,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.extraJavaOptions' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
@@ -1729,7 +1768,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         |
         |Comments:
         |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-        |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+        |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
         |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
         |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
         |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
@@ -1834,7 +1873,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.extraJavaOptions' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
@@ -1931,7 +1970,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.extraJavaOptions' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
@@ -2109,7 +2148,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |
          |Comments:
          |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-         |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+         |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
          |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
          |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
          |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
@@ -2234,7 +2273,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
-  // Regression test for https://github.com/NVIDIA/spark-rapids-tools/issues/2040
+  // Regression test for https://github.com/NVIDIA/cudf-spark-tools/issues/2040
   // GPU device type check should be case insensitive. Mixed-case names like "A10G"
   // should resolve correctly through the full AutoTuner pipeline.
   forAll(Table("gpuDevice", "A10G", "a10g", "T4", "t4")) { (gpuName: String) =>
@@ -2267,5 +2306,146 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       assert(properties.nonEmpty,
         s"AutoTuner should produce recommendations for GPU device '$gpuName'")
     }
+  }
+
+  test("Qualification PySpark evidence atomically rebalances executor heap") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(reliableProcessTreeMetricsSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      preserveSparkProperties = List(
+        "spark.executor.memory", "spark.executor.pyspark.memory", "spark.executor.cores"))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(values("spark.executor.memory") == "29g")
+    assert(values("spark.executor.pyspark.memory") == "7g")
+    assert(properties.find(_.name == "spark.executor.pyspark.memory").exists(_.isTuned()))
+    assert(!comments.exists(_.comment.contains("constraint=")), comments.mkString("\n"))
+  }
+
+  forAll(Table("sourcePySparkMemory", None, Some("0"))) { sourcePySparkMemory =>
+    test(s"Qualification PySpark evidence with $sourcePySparkMemory source limit " +
+        "enables opted-in telemetry only") {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      sourcePySparkMemory.foreach(value =>
+        sourceProps.put("spark.executor.pyspark.memory", value))
+      val peakBytes = 6L * 1024L * 1024L * 1024L
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(reliableProcessTreeMetricsSparkVersion),
+        pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+
+      val tuningConfigs = ToolTestUtils.buildTuningConfigs(qualification = List(
+        TuningConfigEntry(
+          name = "PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS", default = "true")))
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes),
+        Some(tuningConfigs))
+      val (properties, comments) =
+        autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+      assert(!properties.exists { property =>
+        property.name == "spark.executor.pyspark.memory" && property.isTuned()
+      })
+      val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+      assert(values("spark.executor.processTreeMetrics.enabled") == "true")
+      assert(values("spark.eventLog.logStageExecutorMetrics") == "true")
+      assert(values("spark.executor.metrics.pollingInterval") == "5000")
+      val guidance = comments.map(_.comment).mkString("\n")
+      assert(guidance.contains("PySpark memory autotuning needs a telemetry-enabled retry"))
+    }
+  }
+
+  test("Qualification PySpark rebalance rejects enforced heap without a partial pair") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(reliableProcessTreeMetricsSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      enforcedSparkProperties = Map("spark.executor.memory" -> "32g"))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(values("spark.executor.memory") == "32g")
+    assert(values.get("spark.executor.pyspark.memory").forall(_ != "7g"))
+    val conflicts = comments.map(_.comment).filter(_.contains("constraint=enforced"))
+    assert(conflicts.size == 1, comments.mkString("\n"))
+  }
+
+  test("non-bootstrap source definition blocks both coordinated PySpark recommendations") {
+    import scala.jdk.CollectionConverters._
+
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "4g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(reliableProcessTreeMetricsSparkVersion),
+      pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+    val nonBootstrapHeap = TuningEntryDefinition(
+      label = "spark.executor.memory",
+      confType = ConfTypeEnum.Byte,
+      defaultUnit = Some("MiB"),
+      level = LevelEnum.Cluster,
+      bootstrapEntry = false)
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      tuningDefinitions = List(nonBootstrapHeap).asJava)
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Kubernetes))
+    val (properties, comments) =
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+
+    assert(!properties.exists(_.name == "spark.executor.memory"))
+    assert(properties.find(_.name == "spark.executor.pyspark.memory")
+      .forall(_.getTuneValue() != "7g"))
+    assert(comments.count(_.comment.contains("constraint=output-eligibility")) == 1)
   }
 }

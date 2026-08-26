@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ class StageModel private(sInfo: StageInfo) {
   /**
    * @param newStageInfo
    * @return a new StageInfo object.
-   * TODO: https://github.com/NVIDIA/spark-rapids-tools/issues/1260
+   * TODO: https://github.com/NVIDIA/cudf-spark-tools/issues/1260
    */
   private def initStageInfo(newStageInfo: StageInfo): StageInfoStub = {
     StageInfoStub.fromStageInfo(newStageInfo)
@@ -55,7 +55,7 @@ class StageModel private(sInfo: StageInfo) {
    * @param newStageInfo Spark's StageInfo loaded from StageSubmitted/StageCompleted events.
    */
   private def updateInfo(newStageInfo: StageInfo): Unit = {
-    // TODO issue: https://github.com/NVIDIA/spark-rapids-tools/issues/1260
+    // TODO issue: https://github.com/NVIDIA/cudf-spark-tools/issues/1260
     stageInfo = initStageInfo(newStageInfo)
     calculateDuration()
   }

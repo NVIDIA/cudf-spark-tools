@@ -36,7 +36,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.rapids.tool.benchmarks.RuntimeInjector
 import org.apache.spark.scheduler.{SparkListenerEvent, StageInfo}
 import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphNode, ToolsPlanGraph}
-import org.apache.spark.sql.rapids.tool.store.{AccumManager, DataSourceRecord, SparkPlanInfoTruncated, SQLPlanModel, SQLPlanModelManager, StageModel, StageModelManager, TaskModelManager, WriteOperationRecord}
+import org.apache.spark.sql.rapids.tool.store.{AccumManager, DataSourceRecord, SparkPlanInfoTruncated, SQLPlanModel, SQLPlanModelManager, StageExecutorMetricsManager, StageModel, StageModelManager, TaskModelManager, WriteOperationRecord}
 import org.apache.spark.sql.rapids.tool.util.{CacheablePropsHandler, EventUtils, RapidsToolsConfUtil, StringUtils, SuccessAppResult, UTF8Source}
 import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanExtensions.SparkPlanInfoOps
 import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanInfo
@@ -122,6 +122,8 @@ abstract class AppBase(
   lazy val accumManager: AccumManager = new AccumManager()
 
   lazy val stageManager: StageModelManager = new StageModelManager()
+  lazy val stageExecutorMetricsManager: StageExecutorMetricsManager =
+    new StageExecutorMetricsManager()
   // Container that manages TaskIno including SparkMetrics.
   // A task is added during a TaskEnd eventLog
   lazy val taskManager: TaskModelManager = new TaskModelManager()
@@ -150,6 +152,8 @@ abstract class AppBase(
   def isConnectMode: Boolean = connectSessions.nonEmpty || connectOperations.nonEmpty
 
   def sqlPlans: immutable.Map[Long, SparkPlanInfo] = sqlManager.getPlanInfos
+
+  def hasSqlCacheEvidence: Boolean = sqlManager.hasSqlCacheEvidence
 
   def getStageIDsFromAccumIds(accumIds: Seq[Long]): Set[Int] = {
     accumIds.flatMap(accumManager.getAccStageIds).toSet
@@ -262,6 +266,7 @@ abstract class AppBase(
   }
 
   def getOrCreateStage(info: StageInfo): StageModel = {
+    sqlManager.collectObservedRDDScopes(info.rddInfos)
     val stage = stageManager.addStageInfo(info)
     stage
   }
@@ -283,6 +288,7 @@ abstract class AppBase(
   def cleanupStages(stageIds: Set[Int]): Unit = {
     // stageIdToInfo can have multiple stage attempts, remove all of them
     stageManager.removeStages(stageIds)
+    stageExecutorMetricsManager.removeStages(stageIds)
   }
 
   def cleanupSQL(sqlID: Long): Unit = {
@@ -465,7 +471,7 @@ abstract class AppBase(
 
       // If the ReadSchema is empty or if it is PhotonScan, then we don't need to
       // add it to the dataSourceInfo
-      // Processing Photon eventlogs issue: https://github.com/NVIDIA/spark-rapids-tools/issues/251
+      // Processing Photon eventlogs issue: https://github.com/NVIDIA/cudf-spark-tools/issues/251
       scanNode.foreach { sNode =>
         scanNodes.remove(sNode)
         results += DataSourceRecord(

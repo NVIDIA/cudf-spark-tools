@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Implementation class representing wrapper around the RAPIDS acceleration Bootstrap tool."""
+"""Implementation class representing wrapper around the cuDF plugin Bootstrap tool."""
 
 from dataclasses import dataclass
 
@@ -75,11 +75,11 @@ class Bootstrap(RapidsTool):
             # write the result to log file
             # Now create the new folder
             FSUtil.make_dirs(self.ctxt.get_csp_output_path(), exist_ok=True)
-            wrapper_out_content_arr = [f'##### BEGIN : RAPIDS bootstrap settings for {exec_cluster.name}']
+            wrapper_out_content_arr = [f'##### BEGIN : cuDF plugin bootstrap settings for {exec_cluster.name}']
             for conf_key, conf_val in tool_result.items():
                 wrapper_out_content_arr.append(f'{conf_key}={conf_val}')
-            wrapper_out_content_arr.append(f'##### END : RAPIDS bootstrap settings for {exec_cluster.name}\n')
-            shuffle_manager_note = 'Note: to turn on the Spark RAPIDS multithreaded shuffle, you will also\n' \
+            wrapper_out_content_arr.append(f'##### END : cuDF plugin bootstrap settings for {exec_cluster.name}\n')
+            shuffle_manager_note = 'Note: to turn on the cuDF plugin multithreaded shuffle, you will also\n' \
                                    'have to enable this setting based on the Spark version of your cluster:\n' \
                                    'spark.shuffle.manager=com.nvidia.spark.rapids.spark3xx.RapidShuffleManager.\n'
             wrapper_out_content_arr.append(shuffle_manager_note)

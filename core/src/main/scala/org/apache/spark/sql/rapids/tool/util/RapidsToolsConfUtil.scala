@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ object RapidsToolsConfUtil extends Logging {
     // spark applies spark configurations on top of the hadoop configs.
     // A use-case is when the runtime is running as a Java command (not spark),
     // then the default spark configurations override the actual hadoop configurations.
-    // For more details, see https://github.com/NVIDIA/spark-rapids-tools/issues/350
+    // For more details, see https://github.com/NVIDIA/cudf-spark-tools/issues/350
     val hadoopConf = SparkSession.getActiveSession match {
       case Some(spark) =>
         // get the hadoop configuration attached to the session

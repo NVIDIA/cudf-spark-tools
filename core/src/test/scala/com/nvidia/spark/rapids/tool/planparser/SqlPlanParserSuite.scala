@@ -668,7 +668,7 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
 
   test("HyperLogLogPlusPlus is supported in aggregations(non databricks support only)") {
     // Currently only supported for non-databricks environments
-    // Being tracked here - https://github.com/NVIDIA/spark-rapids/issues/12388
+    // Being tracked here - https://github.com/NVIDIA/cudf-spark/issues/12388
     // Current test is a generic one for just testing the functionality
     // Can be extended later to support environments based testing
     TrampolineUtil.withTempDir { eventLogDir =>

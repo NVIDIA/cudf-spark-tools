@@ -1,5 +1,5 @@
 <!--
-  Copyright (c) 2023-2025, NVIDIA CORPORATION. All Rights Reserved.
+  Copyright (c) 2023-2026, NVIDIA CORPORATION. All Rights Reserved.
 
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ You can also disable only one rule, by specifying its rule id, as specified in:
 -->
 
 <scalastyle>
-    <name>RAPIDS Plugin for Spark Scalastyle configuration</name>
+    <name>NVIDIA cuDF plugin for Apache Spark Scalastyle configuration</name>
 
     <!-- ================================================================================ -->
     <!--                               rules we enforce                                   -->

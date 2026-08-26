@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import com.nvidia.spark.rapids.tool.tuning.config.TuningRuleConfigEntry
 import org.apache.spark.internal.Logging
 
 /**
- * Abstract base class for implementing tuning rules in the RAPIDS auto-tuning system.
+ * Abstract base class for implementing tuning rules in the cuDF plugin auto-tuning system.
  *
  * This class provides a standard implementation of the TuningRuleTrait interface with
  * common functionality that most tuning rules need:

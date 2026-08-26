@@ -1,6 +1,24 @@
 
 <br/>
 
+## Release [v26.06.3](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.3)
+Generated on 2026-08-26
+### Autotuner
+
+- Recommend the RAPIDS cache serializer for cached SQL plans ([#2117](https://github.com/NVIDIA/cudf-spark-tools/pull/2117))
+
+### User Tools
+
+- Update branding to NVIDIA cuDF plugin for Apache Spark ([#2125](https://github.com/NVIDIA/cudf-spark-tools/pull/2125))
+
+### Core
+
+- Replace AutoTuner Maven lookup with offline plugin staleness detection ([#2127](https://github.com/NVIDIA/cudf-spark-tools/pull/2127))
+- Autotune spark.executor.pyspark.memory from Python OOM telemetry ([#2123](https://github.com/NVIDIA/cudf-spark-tools/pull/2123))
+
+
+<br/>
+
 ## Release [v26.06.2](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.2)
 Generated on 2026-08-04
 - no changes

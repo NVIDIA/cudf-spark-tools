@@ -458,7 +458,7 @@ case class AppInfoProfileResults(
     sparkUser: String,
     startTime: Long,
     endTime: Option[Long],
-    exitCode: Option[Int],
+    exitCode: Option[Int] = None,
     duration: Option[Long],
     durationStr: String,
     sparkRuntime: SparkRuntime.SparkRuntime,

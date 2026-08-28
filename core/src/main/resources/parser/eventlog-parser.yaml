@@ -48,7 +48,7 @@ eventsTable:
   # List of Streaming events
   streamingQueryStart: org.apache.spark.sql.streaming.StreamingQueryListener$QueryStartedEvent
   streamingQueryEnd: org.apache.spark.sql.streaming.StreamingQueryListener$QueryTerminatedEvent
-  # List of RAPIDS events
+  # List of cuDF plugin events
   rapidsBuildInfo: com.nvidia.spark.rapids.SparkRapidsBuildInfoEvent
   # List of Spark Connect events (Spark 3.5+).
   # These events are deserialized by JsonProtocol when the spark-connect jar is on the

@@ -1,4 +1,4 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ from spark_rapids_tools.storagelib.adls.adlspath import AdlsPath
 @dataclass
 class DBAzureLocalRapidsJob(RapidsLocalJob):
     """
-    Implementation of a RAPIDS job that runs local on a local machine.
+    Implementation of a cuDF plugin job that runs local on a local machine.
     """
     job_label = 'DBAzureLocal'
 

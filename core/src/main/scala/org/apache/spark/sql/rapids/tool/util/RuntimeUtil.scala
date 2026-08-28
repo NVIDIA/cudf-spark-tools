@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import org.apache.spark.sql.rapids.tool.ToolUtils
  * property helps understanding and investigating the tools output.
  */
 object RuntimeUtil extends Logging {
-  private val REPORT_LABEL = "RAPIDS Accelerator for Apache Spark's Build/Runtime Information"
+  private val REPORT_LABEL = "NVIDIA cuDF plugin for Apache Spark Build/Runtime Information"
   private val REPORT_FILE_NAME = "runtime.properties"
 
   /**

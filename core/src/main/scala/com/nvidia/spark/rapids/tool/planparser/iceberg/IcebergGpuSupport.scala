@@ -21,7 +21,7 @@ import com.nvidia.spark.rapids.tool.planparser.ops.UnsupportedReasonRef
 import org.apache.spark.sql.rapids.tool.util.StringUtils
 
 /**
- * RAPIDS Iceberg GPU support gates evaluated by Iceberg exec parsers.
+ * cuDF plugin Iceberg GPU support gates evaluated by Iceberg exec parsers.
  *
  * Each parser-facing entry point returns either `None` (gate passes) or
  * `Some(UnsupportedReasonRef)` so callers can plumb the reason via
@@ -31,16 +31,16 @@ import org.apache.spark.sql.rapids.tool.util.StringUtils
  */
 object IcebergGpuSupport {
 
-  // Allowlist of Iceberg catalogs supported by RAPIDS today.
+  // Allowlist of Iceberg catalogs supported by the cuDF plugin today.
   // TODO: broaden to an Iceberg BaseCatalog class-name match (hive/glue/REST/JDBC)
   // and fix EventUtils.SPARK_CATALOG_REGEX so this gate actually fires.
   private val SUPPORTED_CATALOGS = Set("hadoop")
 
-  // Spark profiles where the RAPIDS Iceberg provider is available. The plugin ships
+  // Spark profiles where the cuDF plugin Iceberg provider is available. The plugin ships
   // Iceberg runtimes for Spark 3.5.x and 4.0.x only; other shims use iceberg-stub.
   private val SUPPORTED_SPARK_VERSION_REGEX = """^(?:3\.5|4\.0)\.\d+.*""".r
 
-  // RAPIDS Iceberg toggles. Defaults are true on the plugin side; treated as disabling
+  // cuDF plugin Iceberg toggles. Defaults are true on the plugin side; treated as disabling
   // only when explicitly set to "false".
   val CONF_ICEBERG_ENABLED: String = "spark.rapids.sql.format.iceberg.enabled"
   val CONF_ICEBERG_WRITE_ENABLED: String = "spark.rapids.sql.format.iceberg.write.enabled"
@@ -120,7 +120,7 @@ object IcebergGpuSupport {
    * or `None` when all gates pass.
    *
    * Gate order:
-   *   1. Databricks platform short-circuit. The RAPIDS plugin ships
+   *   1. Databricks platform short-circuit. The cuDF plugin ships
    *      `iceberg-stub` on DBR shims today, so any Databricks Iceberg write is
    *      reported unsupported regardless of other gates. When DBR Iceberg support
    *      is added, this branch should consult a DBR-version predicate instead of

@@ -1097,7 +1097,7 @@ reportDefinitions:
       # SparkRapidsBuildInfo
       - label: coreRawSparkRapidsBuildInfoJson
         description: >-
-          Contains RAPIDS Accelerator build information including version, revision, and dependencies.
+          Contains cuDF plugin build information including version, revision, and dependencies.
           The file contains an array with a single object containing build information for all components.
         fileName: spark_rapids_build_info.json
         fileFormat: JSON
@@ -1106,11 +1106,11 @@ reportDefinitions:
           - name: sparkRapidsBuildInfo
             dataType: Object
             description: >-
-              Build information for RAPIDS Accelerator for Apache Spark
+              Build information for the cuDF plugin
           - name: sparkRapidsJniBuildInfo
             dataType: Object
             description: >-
-              Build information for RAPIDS JNI library
+              Build information for the cuDF plugin JNI library
           - name: cudfBuildInfo
             dataType: Object
             description: >-
@@ -1118,7 +1118,7 @@ reportDefinitions:
           - name: sparkRapidsPrivateBuildInfo
             dataType: Object
             description: >-
-              Build information for RAPIDS private components
+              Build information for private cuDF plugin components
       # DriverLogUnsupportedOperators
       - label: coreRawDriverLogUnsupportedOperatorsCSV
         description: >-
@@ -1539,7 +1539,7 @@ reportDefinitions:
           This file contains a summary of the raw analysis performed by the tool.
           Within the Profiling tool context, it recommend settings for the application assuming that
           the job will be able to use all the cluster resources (CPU and GPU) when it’s running.
-          The Profiling tool optionally provides optimized RAPIDS configurations based on the target
+          The Profiling tool optionally provides optimized cuDF plugin configurations based on the target
           cluster’s information.
         fileName: profile.log
         fileFormat: TXT

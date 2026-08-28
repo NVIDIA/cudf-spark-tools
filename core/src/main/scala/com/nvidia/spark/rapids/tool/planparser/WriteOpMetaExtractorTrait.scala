@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -144,10 +144,10 @@ abstract class InsertIntoHadoopExtract(val nodeDescr: String) extends WriteOpMet
   // Extracts the file format from a class object string, such as
   // "com.nvidia.spark.rapids.GpuParquetFileFormat@9f5022c".
   //
-  // This function is designed to handle cases where the RAPIDS plugin logs raw object names
+  // This function is designed to handle cases where the cuDF plugin logs raw object names
   // instead of a user-friendly file format name. For example, it extracts "Parquet" from
   // "com.nvidia.spark.rapids.GpuParquetFileFormat@9f5022c".
-  // Refer: https://github.com/NVIDIA/spark-rapids-tools/issues/1561
+  // Refer: https://github.com/NVIDIA/cudf-spark-tools/issues/1561
   //
   // If the input string does not match the expected pattern, the function returns the original
   // string as a fallback.
@@ -395,7 +395,7 @@ class InsertIntoHadoopExtractNoCatalog(
       // Otherwise, use the third argument.
       thirdArg
     }
-    // Process the raw format string to avoid a bug in the RAPIDS plugin.
+    // Process the raw format string to avoid a bug in the cuDF plugin.
     processGPUFormat(rawFormat)
   }
 

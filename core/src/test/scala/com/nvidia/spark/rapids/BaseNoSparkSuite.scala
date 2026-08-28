@@ -53,7 +53,7 @@ class BaseNoSparkSuite extends AnyFunSuite with BeforeAndAfterEach with Logging 
   }
 
   protected def checkIcebergGpuSupportForSpark(): (Boolean, String) = {
-    // RAPIDS provides a real Iceberg GPU provider only for Spark 3.5.x and 4.0.x.
+    // The cuDF plugin provides a real Iceberg GPU provider only for Spark 3.5.x and 4.0.x.
     // Reuse IcebergGpuSupport.isSparkVersionSupported so the test guard tracks the
     // runtime gate exactly; using ToolUtils.isSpark350OrLater() here would also
     // enable the tests on Spark 4.1+ where the runtime gate would (correctly) reject

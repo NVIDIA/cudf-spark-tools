@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -152,7 +152,7 @@ class OnPremStorageDriver(StorageDriver):
 @dataclass
 class OnPremLocalRapidsJob(RapidsLocalJob):
     """
-    Implementation of a RAPIDS job that runs on a local machine.
+    Implementation of a cuDF plugin job that runs on a local machine.
     """
     job_label = 'onpremLocal'
 
@@ -161,7 +161,7 @@ class OnPremLocalRapidsJob(RapidsLocalJob):
 @dataclass
 class OnPremDistributedRapidsJob(RapidsDistributedJob):
     """
-    Implementation of a RAPIDS job that runs on a distributed cluster
+    Implementation of a cuDF plugin job that runs on a distributed cluster
     """
     job_label = 'onprem.distributed'
 

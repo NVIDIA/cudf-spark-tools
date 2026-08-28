@@ -6,9 +6,9 @@ tools flow should handle a single Spark application event log.
 The detector is an early routing check. It scans a bounded prefix of an event
 log, stops as soon as it has enough information, and returns one of:
 
-- `PROFILING`: a RAPIDS runtime signal was found.
+- `PROFILING`: a cuDF plugin runtime signal was found.
 - `QUALIFICATION`: startup properties indicate standard OSS Spark with no
-  RAPIDS markers.
+  cuDF plugin markers.
 - `UNKNOWN`: the scan did not reach enough information within the event budget.
 
 ## Detection Flow
@@ -24,11 +24,11 @@ log, stops as soon as it has enough information, and returns one of:
    `SPARK_RAPIDS`.
 5. `detector.py` maps the scan result to `ToolExecution`.
 
-## RAPIDS Detection
+## cuDF plugin detection
 
-RAPIDS logs are detected from either of these signals:
+cuDF plugin logs are detected from either of these signals:
 
-- `SparkRapidsBuildInfoEvent`, emitted by RAPIDS plugin event logs.
+- `SparkRapidsBuildInfoEvent`, emitted by cuDF plugin event logs.
 - Spark properties showing `spark.plugins` contains
   `com.nvidia.spark.SQLPlugin` and `spark.rapids.sql.enabled` is not `false`.
 
@@ -38,13 +38,13 @@ missing or unparseable values default to `true`.
 ## CPU Fast Path
 
 When `SparkListenerEnvironmentUpdate` is reached and startup Spark properties
-contain no RAPIDS-related configuration, the detector can return
+contain no cuDF plugin-related configuration, the detector can return
 `QUALIFICATION` immediately. This applies to both single-file and OSS rolling
 event logs.
 
-If RAPIDS-related configuration is present but not decisive, the scanner keeps
+If cuDF plugin-related configuration is present but not decisive, the scanner keeps
 reading within the configured event budget. This avoids treating a log as CPU
-when later `modifiedConfigs` may make the RAPIDS configuration active.
+when later `modifiedConfigs` may make the cuDF plugin configuration active.
 
 ## Streaming And Memory
 

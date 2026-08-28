@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Implementation class representing wrapper around the RAPIDS acceleration Profiling tool."""
+"""Implementation class representing wrapper around the cuDF plugin Profiling tool."""
 
 import re
 from dataclasses import dataclass

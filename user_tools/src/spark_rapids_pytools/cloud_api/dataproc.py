@@ -633,7 +633,7 @@ class DataprocCluster(ClusterBase):
         supports minimum 1 SSD per worker.
 
         TODO: We should recommend correct number of SSDs instead of a fixed number.
-         See https://github.com/NVIDIA/spark-rapids-tools/issues/657
+         See https://github.com/NVIDIA/cudf-spark-tools/issues/657
         """
         return {
             'ssdInfo': {

@@ -45,9 +45,9 @@ object ConfTypeEnum extends Enumeration {
 
 object CategoryEnum extends Enumeration {
   // Functionality:
-  //   - Required for functionality of Spark RAPIDS
+  //   - Required for functionality of the cuDF plugin
   // Tuning:
-  //   - Required to tune the Spark RAPIDS job
+  //   - Required to tune the Spark cuDF plugin job
   // MultiThreadReadCoreMultiplier:
   //   - Special purpose category for identifying the spark property to use as a core multiplier
   //     when tuning `spark.rapids.sql.multiThreadedRead.numThreads`.
@@ -108,8 +108,8 @@ object ConfType {
  * @param enabled global flag to enable/disable the tuning entry. This is used to turn off a
  *                tuning entry
  * @param level This is used to group the tuning entries (job/cluster)
- * @param category Indicates the purpose of that property for RAPIDS.
- *                 "functionality": required to enable RAPIDS
+ * @param category Indicates the purpose of that property for the cuDF plugin.
+ *                 "functionality": required to enable the cuDF plugin
  *                 "tuning": required to tune the runtime.
  * @param bootstrapEntry When true, the property should be added to the bootstrap configuration.
  *                       Default is true.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -242,7 +242,7 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
             sqlDesc.contains("stats_parsed.numRecords") ||
               sqlPIGEntry.getToolsPlanGraph.allNodes.size == 1
           case s if ReadParser.isScanNode(s) =>
-            // RAPIDS plugin checks that a node is Delta Scan by looking at the type of the exec
+            // cuDF plugin checks that a node is Delta Scan by looking at the type of the exec
             // "RDDScanExec" and checking for some string patterns in the Relation/schema
             // sqlDesc.contains("Delta Table State") ||
             //   sqlDesc.contains("Delta Table Checkpoint") ||

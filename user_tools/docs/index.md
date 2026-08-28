@@ -2,7 +2,7 @@
 
 Installing the Python wrapper ([spark-rapids-user-tools](https://pypi.org/project/spark-rapids-user-tools/))
 on a client machine, provides a runtime environment that simplifies running cost and performance
-analysis using the RAPIDS Accelerator for Apache Spark across multiple cloud service providers.
+analysis using the NVIDIA cuDF plugin for Apache Spark across multiple cloud service providers.
 
 The following diagram shows an overview of the Python package installed on a client machine allowing
 to build analysis reports on Amazon EMR, GCloud Dataproc, and Databricks.
@@ -13,10 +13,10 @@ to build analysis reports on Amazon EMR, GCloud Dataproc, and Databricks.
 
 ### Qualification
 
-Provides a wrapper to simplify the execution of [RAPIDS Qualification tool](https://docs.nvidia.com/spark-rapids/user-guide/latest/qualification/overview.html).
+Provides a wrapper to simplify the execution of [cuDF plugin Qualification tool](https://docs.nvidia.com/spark-rapids/user-guide/latest/qualification/overview.html).
 The latter analyzes Spark events generated from  CPU based Spark applications to help
 quantify the expected acceleration and costs savings of migrating a Spark application or
-query to GPU.  
+query to GPU.
 
 The tool will process each app individually, but will group apps with the same name into the same output row after
 averaging duration metrics accordingly.
@@ -25,14 +25,14 @@ For more details, please visit the
 
 ### Profiling
 
-Provides a wrapper to simplify the execution of [RAPIDS Profiling tool](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/overview.html).
+Provides a wrapper to simplify the execution of [cuDF plugin Profiling tool](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/overview.html).
 The latter analyzes both CPU or GPU generated event logs and generates information which
 can be used for debugging and profiling Apache Spark applications.  The tool also will recommend setting
 for the application assuming that the job will be able to use all the cluster resources (CPU and GPU) when
 it is running.
 
-In addition, the wrapper output provides optimized RAPIDS configurations based on the worker's
-information.  
+In addition, the wrapper output provides optimized cuDF plugin configurations based on the worker's
+information.
 
 For more details, please visit the
 [Profiling Tool guide](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/overview.html).

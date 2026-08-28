@@ -25,7 +25,7 @@ import org.apache.spark.sql.rapids.tool.SourceClusterInfo
 import org.apache.spark.sql.rapids.tool.util.StringUtils
 
 /**
- * Configuration for the recommended cluster to run the application with Spark RAPIDS.
+ * Configuration for the recommended cluster to run the application with the cuDF plugin.
  */
 case class RecommendedClusterConfig(
     numExecutors: Int,

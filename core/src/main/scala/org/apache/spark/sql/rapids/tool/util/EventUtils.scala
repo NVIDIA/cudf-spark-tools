@@ -150,7 +150,7 @@ object EventUtils extends Logging {
    * Legacy spark versions (i.e., 2.3.x) used to have different metric names. We need to call this
    * method before consuming the metric's name to make sure that all names are consistent.
    * Failing to do so may result in listing metrics that cannot be processed by consumer modules
-   * such as Prediction mode (see https://github.com/NVIDIA/spark-rapids-tools/issues/1042).
+   * such as Prediction mode (see https://github.com/NVIDIA/cudf-spark-tools/issues/1042).
    * @param metricName the name of the metric stored in the Spark AccumulableInfo object
    * @return the normalized metric name
    */

@@ -26,7 +26,7 @@ import com.nvidia.spark.rapids.tool.planparser.ops.UnsupportedReasonRef
  *
  * The behaviors locked in here mirror the assumptions documented in the PR:
  *   - Spark version regex restricted to 3.5.x and 4.0.x families.
- *   - Default-on RAPIDS Iceberg toggles fail only when explicitly disabled
+ *   - Default-on cuDF plugin Iceberg toggles fail only when explicitly disabled
  *     (case-insensitive "false").
  *   - Parquet field-ID write toggle treated the same way.
  *   - Catalog allowlist limited to "hadoop" today; missing catalog defaults true.
@@ -69,7 +69,7 @@ class IcebergGpuSupportSuite extends BaseNoSparkSuite {
       "null version should be treated as unknown / allowed")
   }
 
-  // ---------------- Default-on RAPIDS Iceberg toggles ----------------
+  // ---------------- Default-on cuDF plugin Iceberg toggles ----------------
 
   test("isIcebergFormatEnabled defaults to true when the key is absent") {
     assert(IcebergGpuSupport.isIcebergFormatEnabled(Map.empty[String, String]))

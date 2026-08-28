@@ -1550,8 +1550,8 @@ case class RecommendedCommentResult(comment: String) {
  *
  * GPU OOM class names from spark-rapids-jni:
  * - GpuOOM -> GpuRetryOOM, GpuSplitAndRetryOOM
- * See: https://github.com/NVIDIA/spark-rapids-jni/blob/725cd64be2115cd072bf51d7d6c5281d6d08bf4f/src/main/cpp/src/SparkResourceAdaptorJni.cpp#L1313
- * See: https://github.com/NVIDIA/spark-rapids/blob/79922d62a1c5759963e969018322ad8e544629ff/sql-plugin/src/main/scala/com/nvidia/spark/rapids/RmmRapidsRetryIterator.scala
+ * See: https://github.com/NVIDIA/cudf-spark-jni/blob/725cd64be2115cd072bf51d7d6c5281d6d08bf4f/src/main/cpp/src/SparkResourceAdaptorJni.cpp#L1313
+ * See: https://github.com/NVIDIA/cudf-spark/blob/79922d62a1c5759963e969018322ad8e544629ff/sql-plugin/src/main/scala/com/nvidia/spark/rapids/RmmRapidsRetryIterator.scala
  */
 // scalastyle:on line.size.limit
 object SparkRapidsOomExceptions {

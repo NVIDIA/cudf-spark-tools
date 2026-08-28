@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,14 +32,14 @@ class SparkQualificationStats:
 
     This class processes qualification tool output csv files to produce a report that includes
     critical metrics such as the duration and count of each operator, and whether the operator
-    is supported or unsupported on RAPIDS Accelerator. Statistics are aggregated at the
+    is supported or unsupported on the cuDF plugin. Statistics are aggregated at the
     SQL ID level, and it is provided for the operators which has stage ID mapping.
 
     Qualification Stats Report include:
     - Operator-Level Statistics: Detailed stats for each operator used in the Spark application,
       the number of occurrences, the stage task duration of which the operator is part of,
       total SQL task duration of which the operator is part of and whether the operator
-      is supported to run on RAPIDS Accelerator for Spark plugin.
+      is supported to run on the cuDF plugin.
     - Supported vs. Unsupported Operators: The report clearly differentiates between operators
       that can benefit from GPU acceleration and those that cannot, providing insight into
       potential performance bottlenecks.

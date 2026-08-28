@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import org.apache.spark.sql.rapids.tool.AppBase
 import org.apache.spark.sql.rapids.tool.plangraph.SparkPlanGraphNode
 
 // SubQuery is simply a "collect" execution.
-// It points to the actual execution. RAPIDS plugin usually skips that exec. Here we
+// It points to the actual execution. cuDF plugin usually skips that exec. Here we
 // can represent it to be ignored with shouldRemove set to true.
 // The reason we are implementing this as class is for future extensibility and to read the metrics.
 case class SubqueryExecParser(

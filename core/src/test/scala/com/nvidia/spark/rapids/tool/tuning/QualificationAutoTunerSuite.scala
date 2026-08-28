@@ -344,7 +344,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
             |- ${getEnforcedPropertyComment("spark.executor.cores")}
             |- ${getEnforcedPropertyComment("spark.executor.instances")}
             |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-            |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+            |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
             |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
             |- 'spark.rapids.memory.pinnedPool.size' was not set.
             |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -446,7 +446,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -592,7 +592,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
           |- 'spark.executor.resource.gpu.discoveryScript' was user-enforced in the target cluster properties.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -875,7 +875,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -898,8 +898,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   }
 
   // This test verifies that Qualification Bootstrap ignores existing
-  // "spark.plugins" property and RAPIDS plugin is added.
-  test("test existing 'spark.plugins' are ignored and RAPIDS plugin is added") {
+  // "spark.plugins" property and cuDF plugin is added.
+  test("test existing 'spark.plugins' are ignored and cuDF plugin is added") {
     // mock the properties loaded from eventLog
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
@@ -946,7 +946,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should include the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should include the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1373,7 +1373,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |
           |Comments:
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1503,7 +1503,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
             |- ${getPreservedPropertyComment("spark.executor.memory")}
             |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
             |- ${getExcludedPropertyComment("spark.master")}
-            |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+            |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
             |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
             |- 'spark.rapids.memory.pinnedPool.size' was not set.
             |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
@@ -1690,7 +1690,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.extraJavaOptions' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
@@ -1770,7 +1770,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         |
         |Comments:
         |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-        |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+        |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
         |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
         |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
         |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
@@ -1875,7 +1875,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.extraJavaOptions' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
@@ -1972,7 +1972,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.executor.extraJavaOptions' was not set.
           |- 'spark.executor.memoryOverhead' was not set.
           |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-          |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.memory.pinnedPool.size' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.maxBytesInFlight' was not set.
@@ -2150,7 +2150,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |
          |Comments:
          |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
-         |- 'spark.plugins' should be set to the class name required for the RAPIDS Accelerator for Apache Spark.
+         |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
          |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
          |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
          |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
@@ -2275,7 +2275,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
-  // Regression test for https://github.com/NVIDIA/spark-rapids-tools/issues/2040
+  // Regression test for https://github.com/NVIDIA/cudf-spark-tools/issues/2040
   // GPU device type check should be case insensitive. Mixed-case names like "A10G"
   // should resolve correctly through the full AutoTuner pipeline.
   forAll(Table("gpuDevice", "A10G", "a10g", "T4", "t4")) { (gpuName: String) =>

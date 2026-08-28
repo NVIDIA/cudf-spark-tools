@@ -37,7 +37,13 @@ object EventUtils extends Logging {
   // underscores, or dashes, and must not end with a dot.
   val SPARK_CATALOG_REGEX: Regex = """spark\\.sql\\.catalog\\.([A-Za-z][A-Za-z0-9_-]*)$""".r
 
-  /** Reads Spark 4's optional application exit code without depending on Spark 4 classes. */
+  /**
+   * Reads Spark 4's optional application exit code without depending on Spark 4 classes.
+   *
+   * TODO: Remove this JSON fallback and use SparkListenerApplicationEnd.exitCode when all
+   * supported Tools builds use Spark 4 or later.
+   * See https://github.com/NVIDIA/cudf-spark-tools/issues/1927.
+   */
   def readApplicationExitCode(line: String): Option[Int] = {
     Try(parse(line) \ "ExitCode").toOption.collect {
       case JInt(value) if value.isValidInt => value.toInt

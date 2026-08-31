@@ -52,13 +52,15 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val scanStagesWithGpuOomSet: Set[Long],
     val gpuShuffleStagesWithContainerOomSet: Set[Long],
     val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+    val maxFileScanInputOverride: Option[Option[Double]] = None,
     val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
     val hasSqlCache: Boolean = false,
     val shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
       ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured))
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
-  override def getMaxInput: Double = maxInput
+  override def getMaxFileScanInput: Option[Double] =
+    maxFileScanInputOverride.getOrElse(Some(maxInput))
   override def getMeanInput: Double = meanInput
   override def getMeanShuffleRead: Double = meanShuffleRead
   override def getSpilledMetrics: Seq[Long] = spilledMetrics
@@ -147,6 +149,7 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       scanStagesWithGpuOom: Set[Long] = Set(),
       gpuShuffleStagesWithContainerOom: Set[Long] = Set(),
       maxColumnarExchangeDataSizeBytes: Option[Long] = None,
+      maxFileScanInputOverride: Option[Option[Double]] = None,
       pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
       hasSqlCache: Boolean = false,
       shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
@@ -155,8 +158,8 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
-      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes, pySparkMemoryEvidence,
-      hasSqlCache, shuffleStageInputAnalysis)
+      gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes,
+      maxFileScanInputOverride, pySparkMemoryEvidence, hasSqlCache, shuffleStageInputAnalysis)
   }
 
   /**

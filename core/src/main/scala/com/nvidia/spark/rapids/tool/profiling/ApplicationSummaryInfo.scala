@@ -18,10 +18,11 @@ package com.nvidia.spark.rapids.tool.profiling
 
 import com.nvidia.spark.rapids.SparkRapidsBuildInfoEvent
 import com.nvidia.spark.rapids.tool.AppSummaryInfoBaseProvider
-import com.nvidia.spark.rapids.tool.tuning.{SparkMaster, Yarn}
+import com.nvidia.spark.rapids.tool.tuning.{FileScanInputMetrics, SparkMaster, Yarn}
 import com.nvidia.spark.rapids.tool.views.{IoMetrics, WriteOpProfileResult}
 
 import org.apache.spark.ExecutorLostFailure
+import org.apache.spark.sql.rapids.tool.plangraph.ToolsPlanGraph
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
 
 case class ApplicationSummaryInfo(
@@ -82,7 +83,7 @@ trait AppInfoJobStageAggMetricsVisitor {
 }
 
 trait AppInfoSQLTaskInputSizes {
-  def getMaxInput: Double
+  def getMaxFileScanInput: Option[Double]
   def getMeanInput: Double
   def getMeanShuffleRead: Double
 }
@@ -205,12 +206,14 @@ class SingleAppSummaryInfoProvider(
     app.skewInfo.map { row => row.stageId }.toSet
   }
 
-  override def getMaxInput: Double = {
-    if (app.sqlTaskAggMetrics.nonEmpty) {
-      app.sqlTaskAggMetrics.map(_.inputBytesReadMax).max.toDouble
-    } else {
-      0.0
-    }
+  protected[tool] def planGraphForSqlVersion(
+      sqlId: Long, version: Int): Option[ToolsPlanGraph] = {
+    FileScanInputMetrics.latestPlanGraph(appInfo, sqlId, version)
+  }
+
+  override lazy val getMaxFileScanInput: Option[Double] = {
+    FileScanInputMetrics.maxInputBytes(
+      app.dsInfo, app.stageAggMetrics, planGraphForSqlVersion)
   }
 
   override def getRapidsJars: Seq[String] = {

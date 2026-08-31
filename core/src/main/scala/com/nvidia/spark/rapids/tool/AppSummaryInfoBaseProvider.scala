@@ -54,7 +54,7 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
     }
   }
   override def getSparkVersion: Option[String] = None
-  override def getMaxInput: Double = 0.0
+  override def getMaxFileScanInput: Option[Double] = None
   override def getMeanInput: Double = 0.0
   override def getMeanShuffleRead: Double = 0.0
   override def getJvmGCFractions: Seq[Double] = Seq()

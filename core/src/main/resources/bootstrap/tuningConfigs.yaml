@@ -225,7 +225,10 @@ default:
     description: >-
       Enables the final downward-only shuffle partition pass. When disabled, the AutoTuner
       never lowers the shuffle partition recommendation produced by the normal tuning passes.
-      Disabled by default; opt in per run while the wave-based sizing is being evaluated.
+      Disabled by default, so enabling it is a per-run opt-in. What has to be settled before it
+      defaults to true is the target partition size, not a count of validated applications: on a
+      large workload the hand-tuned value, the ColumnarExchange bound and this pass at a 1 GiB
+      target disagree, and this pass asks for the most partitions of the three.
     default: false
     usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
 

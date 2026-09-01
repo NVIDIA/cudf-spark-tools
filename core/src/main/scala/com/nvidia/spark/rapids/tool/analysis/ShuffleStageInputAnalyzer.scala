@@ -68,10 +68,10 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
    * a GPU plan means the GPU metrics do not cover all the shuffled data, which is exactly the
    * situation that makes a downward decision unsafe.
    *
-   * TODO: a CPU exchange inside a GPU run could in principle be sized from its CPU data size, the
-   * way qualification already sizes an all-CPU run. It is not handled today because the input-size
-   * factor that converts CPU bytes to estimated GPU bytes is application-level, so a single run
-   * cannot apply one factor to its CPU exchanges and another to its GPU ones.
+   * TODO(#2133): a CPU exchange inside a GPU run could in principle be sized from its CPU data
+   * size, the way qualification already sizes an all-CPU run. It is not handled today because the
+   * input-size factor that converts CPU bytes to estimated GPU bytes is application-level, so a
+   * single run cannot apply one factor to its CPU exchanges and another to its GPU ones.
    */
   private def isSupportedShuffleExchange(nodeName: String): Boolean = {
     if (app.gpuMode) {
@@ -258,8 +258,8 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
    * the data between them, and overstating can only raise the partition requirement and make a
    * reduction less likely. Understating it is the outcome that would be unsafe.
    *
-   * TODO: the split could be estimated instead of duplicated, for example by apportioning the
-   * exchange size across the split stages by their per-stage shuffle read metrics. That would
+   * TODO(#2133): the split could be estimated instead of duplicated, for example by apportioning
+   * the exchange size across the split stages by their per-stage shuffle read metrics. That would
    * tighten the requirement on skewed joins, where duplication is at its most conservative.
    *
    * @return the consumer stages of this branch, or an empty set when none could be resolved

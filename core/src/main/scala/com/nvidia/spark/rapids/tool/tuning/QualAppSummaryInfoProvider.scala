@@ -21,6 +21,7 @@ import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
 import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, PySparkMemoryEvidence}
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.rapids.tool.plangraph.ToolsPlanGraph
 import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
 
 /**
@@ -99,12 +100,14 @@ class QualAppSummaryInfoProvider(
     rawAggMetrics.taskShuffleSkew.map { row => row.stageId }.toSet
   }
 
-  override def getMaxInput: Double = {
-    if (rawAggMetrics.sqlAggs.nonEmpty) {
-      rawAggMetrics.sqlAggs.map(_.inputBytesReadMax).max.toDouble
-    } else {
-      0.0
-    }
+  protected[tool] def planGraphForSqlVersion(
+      sqlId: Long, version: Int): Option[ToolsPlanGraph] = {
+    FileScanInputMetrics.latestPlanGraph(appInfo, sqlId, version)
+  }
+
+  override lazy val getMaxFileScanInput: Option[Double] = {
+    FileScanInputMetrics.maxInputBytes(
+      dsInfo, rawAggMetrics.stageAggs, planGraphForSqlVersion)
   }
 
   // Rapids Jar will be empty since CPU event logs are used here

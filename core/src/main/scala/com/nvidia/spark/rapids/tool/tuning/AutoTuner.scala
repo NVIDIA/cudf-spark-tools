@@ -1900,10 +1900,8 @@ abstract class AutoTuner(
   }
 
   /**
-   * Calculate max partition bytes using the max task input size and existing setting
-   * for maxPartitionBytes. Note that this won't apply the same on iceberg.
-   * The max bytes here does not distinguish between GPU and CPU reads so we could
-   * improve that in the future.
+   * Calculate max partition bytes using a max input size from a trustworthy file scan stage and
+   * the existing setting for maxPartitionBytes. Note that this won't apply the same on iceberg.
    * Eg,
    * TASK_INPUT_SIZE_THRESHOLD = {min: 128m, max: 256m}
    * (1) Input:  currentMaxPartitionBytes = 512m
@@ -1914,29 +1912,29 @@ abstract class AutoTuner(
    *     Output: recommendedMaxPartitionBytes = 2g / (512m/128m) = 512m
    */
   protected def calculateMaxPartitionBytesInMB(currentMaxPartitionBytes: String): Option[Long] = {
-    // AutoTuner only supports a single app right now, so we get whatever value is here
-    val actualTaskInputSizeMB = appInfoProvider.getMaxInput / 1024 / 1024
-    val currentMaxPartitionBytesMB = StringUtils.convertToMB(
-      currentMaxPartitionBytes, Some(ByteUnit.BYTE))
-    // Get the min and max thresholds for the task input size
-    val taskInputSizeThreshold = configProvider.getEntry("TASK_INPUT_SIZE_THRESHOLD")
-    val minTaskInputSizeThresholdMB = taskInputSizeThreshold.getMinAsMemory(ByteUnit.MiB)
-    val maxTaskInputSizeThresholdMB = taskInputSizeThreshold.getMaxAsMemory(ByteUnit.MiB)
-    // Get the upper bound for the max partition bytes
-    val maxAllowedPartitionBytesMB =
-      configProvider.getEntry("MAX_PARTITION_BYTES").getMaxAsMemory(ByteUnit.MiB)
+    appInfoProvider.getMaxFileScanInput.flatMap { maxFileScanInput =>
+      val actualTaskInputSizeMB = maxFileScanInput / 1024 / 1024
+      val currentMaxPartitionBytesMB = StringUtils.convertToMB(
+        currentMaxPartitionBytes, Some(ByteUnit.BYTE))
+      // Get the min and max thresholds for the task input size
+      val taskInputSizeThreshold = configProvider.getEntry("TASK_INPUT_SIZE_THRESHOLD")
+      val minTaskInputSizeThresholdMB = taskInputSizeThreshold.getMinAsMemory(ByteUnit.MiB)
+      val maxTaskInputSizeThresholdMB = taskInputSizeThreshold.getMaxAsMemory(ByteUnit.MiB)
+      // Get the upper bound for the max partition bytes
+      val maxAllowedPartitionBytesMB =
+        configProvider.getEntry("MAX_PARTITION_BYTES").getMaxAsMemory(ByteUnit.MiB)
 
-    if (actualTaskInputSizeMB == 0.0) {
-      Some(currentMaxPartitionBytesMB)
-    } else {
-      if (actualTaskInputSizeMB > 0 && actualTaskInputSizeMB < minTaskInputSizeThresholdMB) {
+      if (actualTaskInputSizeMB == 0.0) {
+        Some(currentMaxPartitionBytesMB)
+      } else if (actualTaskInputSizeMB > 0 &&
+          actualTaskInputSizeMB < minTaskInputSizeThresholdMB) {
         // If task input too small (< min threshold): increase partition size to get bigger tasks
         val recommendedMaxPartitionBytesMB = Math.min(
           currentMaxPartitionBytesMB * (minTaskInputSizeThresholdMB / actualTaskInputSizeMB),
           maxAllowedPartitionBytesMB)
         Some(recommendedMaxPartitionBytesMB.toLong)
       } else if (actualTaskInputSizeMB > maxTaskInputSizeThresholdMB) {
-        //  If task input too large (> max threshold): decrease partition size to get smaller tasks
+        // If task input too large (> max threshold): decrease partition size to get smaller tasks
         val recommendedMaxPartitionBytesMB = Math.min(
           currentMaxPartitionBytesMB / (actualTaskInputSizeMB / maxTaskInputSizeThresholdMB),
           maxAllowedPartitionBytesMB)
@@ -2552,7 +2550,8 @@ class ProfilingAutoTuner(
     // First, calculate the recommendation based on input sizes
     val calculatedValueFromInputSize = super.calculateMaxPartitionBytesInMB(maxPartitionBytes)
     getPropertyValue("spark.sql.files.maxPartitionBytes") match {
-      case Some(currentValue) if appInfoProvider.scanStagesWithGpuOom.nonEmpty =>
+      case Some(currentValue) if appInfoProvider.getMaxFileScanInput.nonEmpty &&
+          appInfoProvider.scanStagesWithGpuOom.nonEmpty =>
         // GPU OOM detected. We may want to reduce max partition size.
         val halvedValue = StringUtils.convertToMB(currentValue, Some(ByteUnit.BYTE)) / 2
         // Choose the minimum between the calculated value and half of the current value.

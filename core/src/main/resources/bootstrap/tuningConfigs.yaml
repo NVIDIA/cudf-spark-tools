@@ -244,25 +244,6 @@ default:
     default: 1.0
     usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
 
-  - name: DOWNWARD_SHUFFLE_SLOT_BASIS
-    description: >-
-      Unit used to size one execution wave of the recommended cluster. The slot count is the
-      recommended executor count multiplied by this per-executor value, and the downward candidate
-      is always rounded up to a whole multiple of it. 'cores' uses the recommended
-      spark.executor.cores; 'concurrentGpuTasks' uses the recommended
-      spark.rapids.sql.concurrentGpuTasks.
-    default: cores
-    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
-
-  - name: DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR
-    description: >-
-      Minimum ratio between the normal recommendation and the downward candidate required before
-      a reduction is applied. A value of 2.0 means the normal value must be at least twice the
-      candidate. The default of 1.0 imposes no threshold, because wave quantization already
-      prevents trivial reductions on realistic clusters.
-    default: 1.0
-    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
-
   - name: WORKER_GPU_COUNT
     description: >-
       Default number of GPUs per worker node

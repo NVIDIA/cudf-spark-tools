@@ -89,9 +89,7 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
   private val baseConfig = DownwardShufflePolicyConfig(
     enabled = true,
     targetPartitionSizeBytes = GiB,
-    inputSizeFactor = 1.0,
-    slotBasis = DownwardShuffleSlotBasis.Cores,
-    minReductionFactor = 1.0)
+    inputSizeFactor = 1.0)
 
   /** Slot count of the cluster the arithmetic tests recommend for: 125 executors x 16 cores. */
   private val slots = 2000
@@ -134,13 +132,11 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
     assert(config.enabled)
     assert(config.targetPartitionSizeBytes == GiB)
     assert(config.inputSizeFactor == 1.0)
-    assert(config.slotBasis == DownwardShuffleSlotBasis.Cores)
-    // Wave quantization already prevents trivial reductions, so no extra threshold is imposed.
-    assert(config.minReductionFactor == 1.0)
   }
 
-  test("the retired rung entries are gone and their removal does not break config loading") {
-    Seq("DOWNWARD_SHUFFLE_PARTITION_FLOOR", "DOWNWARD_SHUFFLE_RUNG_MULTIPLIER").foreach { key =>
+  test("the retired sizing entries are gone and their removal does not break config loading") {
+    Seq("DOWNWARD_SHUFFLE_PARTITION_FLOOR", "DOWNWARD_SHUFFLE_RUNG_MULTIPLIER",
+      "DOWNWARD_SHUFFLE_SLOT_BASIS", "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR").foreach { key =>
       Seq(profProvider(), qualProvider()).foreach { provider =>
         assert(Try(provider.getEntry(key)).isFailure, s"'$key' should no longer be defined")
       }
@@ -155,17 +151,14 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
     assert(config.inputSizeFactor == 0.8)
     // Everything else still comes from the shared defaults.
     assert(config.targetPartitionSizeBytes == GiB)
-    assert(config.slotBasis == DownwardShuffleSlotBasis.Cores)
   }
 
   test("user overrides are honored in the default and tool sections") {
     val fromDefault = DownwardShufflePolicyConfig.fromProvider(profProvider(
       default = List(
-        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE", default = "512m"),
-        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS", default = "concurrentGpuTasks"))))
+        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE", default = "512m"))))
     assert(fromDefault == Right(baseConfig.copy(
-      targetPartitionSizeBytes = 512L * 1024L * 1024L,
-      slotBasis = DownwardShuffleSlotBasis.ConcurrentGpuTasks)))
+      targetPartitionSizeBytes = 512L * 1024L * 1024L)))
 
     val fromToolSection = DownwardShufflePolicyConfig.fromProvider(qualProvider(
       qualification = List(
@@ -173,27 +166,11 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
     assert(fromToolSection == Right(baseConfig.copy(inputSizeFactor = 0.5)))
   }
 
-  test("the slot basis accepts only a known label, case-insensitively") {
-    Seq("cores" -> DownwardShuffleSlotBasis.Cores,
-      "CORES" -> DownwardShuffleSlotBasis.Cores,
-      " concurrentgputasks " -> DownwardShuffleSlotBasis.ConcurrentGpuTasks
-    ).foreach { case (raw, expected) =>
-      val result = DownwardShufflePolicyConfig.fromProvider(profProvider(
-        default = List(TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS", default = raw))))
-      assert(result.exists(_.slotBasis == expected), s"'$raw' should parse as $expected")
-    }
-    Seq("gpus", "tasks", "1").foreach { raw =>
-      val result = DownwardShufflePolicyConfig.fromProvider(profProvider(
-        default = List(TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS", default = raw))))
-      assert(result.isLeft, s"'$raw' should not parse as a slot basis")
-    }
-  }
-
   test("a disabled feature short-circuits without validating the other entries") {
     val provider = profProvider(default = List(
       TuningConfigEntry(name = "DOWNWARD_SHUFFLE_ENABLED", default = "false"),
       // Deliberately invalid; it must not be read while the feature is off.
-      TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS", default = "not-a-basis")))
+      TuningConfigEntry(name = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE", default = "not-a-size")))
     val configResult = DownwardShufflePolicyConfig.fromProvider(provider)
     assert(configResult == Right(DownwardShufflePolicyConfig.disabled))
     assert(DownwardShufflePartitionsPolicy.decide(configResult, 4000, Some(slots),
@@ -216,9 +193,7 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
   test("every invalid numeric boundary is rejected") {
     val invalidByKey = Seq(
       "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE" -> Seq("0", "-1g", "abc"),
-      "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR" -> Seq("0", "-0.5", "abc"),
-      // A reduction factor below 1.0 would allow raising the recommendation.
-      "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR" -> Seq("0.9", "0", "abc"))
+      "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR" -> Seq("0", "-0.5", "abc"))
 
     invalidByKey.foreach { case (key, values) =>
       values.foreach { value =>
@@ -232,8 +207,7 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
   }
 
   test("NaN and infinite values are rejected") {
-    Seq("DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR",
-      "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR").foreach { key =>
+    Seq("DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR").foreach { key =>
       Seq("NaN", "Infinity", "-Infinity").foreach { value =>
         val result = DownwardShufflePolicyConfig.fromProvider(profProvider(
           default = List(TuningConfigEntry(name = key, default = value))))
@@ -244,8 +218,8 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
 
   test("all configuration errors are reported as one fail-closed decision") {
     val provider = profProvider(default = List(
-      TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS", default = "not-a-basis"),
-      TuningConfigEntry(name = "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR", default = "0.5")))
+      TuningConfigEntry(name = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE", default = "-1g"),
+      TuningConfigEntry(name = "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR", default = "-0.5")))
     val configResult = DownwardShufflePolicyConfig.fromProvider(provider)
     val errors = expectErrors(configResult)
     assert(errors.size == 2)
@@ -434,24 +408,22 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
       DownwardShuffleDecision.Skipped(DownwardShuffleSkipReason.NotDownward(2000, 200)))
   }
 
-  test("the default reduction factor imposes no threshold but an override still blocks") {
-    // A 3000 -> 2000 reduction is not 2x, so v1's default would have blocked it.
+  test("any reduction to a whole wave applies, with no minimum-size threshold") {
+    // A 3000 -> 2000 reduction is only 1.5x. The wave quantum is the only size gate there is.
     decide(3000, Seq(record(totalBytes = 900L * GiB))) match {
       case applied: DownwardShuffleDecision.Applied => assert(applied.selectedValue == 2000)
       case other => fail(s"expected an applied reduction but got $other")
     }
-    val strictConfig = baseConfig.copy(minReductionFactor = 2.0)
-    assert(decide(3000, Seq(record(totalBytes = 900L * GiB)), strictConfig) ==
-      DownwardShuffleDecision.Skipped(
-        DownwardShuffleSkipReason.BelowReductionThreshold(2000, 3000, 2.0)))
-    // Exactly 2x still clears the explicit override.
-    assert(decide(4000, Seq(record(totalBytes = 900L * GiB)), strictConfig)
-      .isInstanceOf[DownwardShuffleDecision.Applied])
+    // One partition above the wave is still a reduction and is still applied.
+    decide(2001, Seq(record(totalBytes = 900L * GiB))) match {
+      case applied: DownwardShuffleDecision.Applied => assert(applied.selectedValue == 2000)
+      case other => fail(s"expected an applied reduction but got $other")
+    }
   }
 
   test("AE7: the candidate is always a whole wave, never above the normal value") {
     val configs = Seq(baseConfig, baseConfig.copy(targetPartitionSizeBytes = 512L * 1024L * 1024L),
-      baseConfig.copy(inputSizeFactor = 0.8, minReductionFactor = 2.0))
+      baseConfig.copy(inputSizeFactor = 0.8))
     val byteSizes = Seq(0L, 1L, GiB, 37L * GiB, 999L * GiB, 100000L * GiB, Long.MaxValue)
     val slotCounts = Seq(1, 3, 16, 375, 2000, 100000)
     val normalValues = Seq(1, 199, 200, 500, 501, 2000, 200000, Int.MaxValue)
@@ -530,8 +502,8 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
     val applied = decide(8000, Seq(stage)).asInstanceOf[DownwardShuffleDecision.Applied]
     assert(applied.selectedValue == 6000 && applied.waveCount == 3)
     val comment = DownwardShufflePartitionsPolicy.appliedComment(
-      Seq("spark.sql.shuffle.partitions",
-        "spark.sql.adaptive.coalescePartitions.initialPartitionNum"), applied)
+      Seq("spark.sql.shuffle.partitions" -> 6000,
+        "spark.sql.adaptive.coalescePartitions.initialPartitionNum" -> 6000), applied)
     Seq("spark.sql.shuffle.partitions",
       "spark.sql.adaptive.coalescePartitions.initialPartitionNum",
       "8000", "6000", "measured", "SQL 2", "stage 7", "attempt 1",
@@ -540,5 +512,21 @@ class DownwardShufflePartitionsSuite extends AnyFunSuite {
       assert(comment.contains(fragment), s"'$fragment' missing from: $comment")
     }
     assert(!comment.contains("rung"), s"the comment should no longer mention rungs: $comment")
+  }
+
+  test("the applied comment names each property when the clamp gives them different values") {
+    val applied = decide(8000, Seq(record(totalBytes = 4500L * GiB)))
+      .asInstanceOf[DownwardShuffleDecision.Applied]
+    // A property already below the candidate keeps its own lower value, so one sentence about
+    // both would misreport it.
+    val comment = DownwardShufflePartitionsPolicy.appliedComment(
+      Seq("spark.sql.shuffle.partitions" -> 6000,
+        "spark.sql.adaptive.coalescePartitions.initialPartitionNum" -> 1000), applied)
+    assert(comment.contains("'spark.sql.shuffle.partitions' lowered to 6000"))
+    assert(comment.contains(
+      "'spark.sql.adaptive.coalescePartitions.initialPartitionNum' lowered to 1000"))
+    assert(comment.contains("from an effective 8000"))
+    // The wave arithmetic still describes the candidate that was computed.
+    assert(comment.contains("3 execution wave(s) of 2000 cluster task slots"))
   }
 }

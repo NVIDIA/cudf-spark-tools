@@ -28,6 +28,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{DataFrame, SparkSession, TrampolineUtil}
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
+import org.apache.spark.sql.rapids.tool.store.TaskModel
 
 /**
  * Tests the consumer-stage shuffle input analysis on real Spark plan graphs.
@@ -240,6 +241,63 @@ class ShuffleStageInputMetricsSuite extends AnyFunSuite with Logging {
     assert(!ShuffleStageInputAnalyzer.isShuffleInputCandidate("GpuBroadcastExchange"))
     assert(ShuffleStageInputAnalyzer.isShuffleInputCandidate("Exchange"))
     assert(ShuffleStageInputAnalyzer.isShuffleInputCandidate("GpuColumnarExchange"))
+  }
+
+  /**
+   * Minimal task carrying only the fields the totals and spill predicates read. Every other field
+   * is zeroed, so a test that starts depending on one will fail loudly rather than silently.
+   */
+  private def task(
+      successful: Boolean = true,
+      speculative: Boolean = false,
+      memoryBytesSpilled: Long = 0L,
+      diskBytesSpilled: Long = 0L): TaskModel = {
+    TaskModel(
+      stageId = 1, stageAttemptId = 0, taskType = "ShuffleMapTask",
+      endReason = if (successful) "Success" else "ExecutorLostFailure",
+      taskId = 1L, attempt = 0, launchTime = 0L, finishTime = 0L, duration = 0L,
+      successful = successful, taskStatus = if (successful) "SUCCESS" else "FAILED",
+      executorId = "1", host = "host1", taskLocality = "PROCESS_LOCAL", speculative = speculative,
+      gettingResultTime = 0L, executorDeserializeTime = 0L, executorDeserializeCPUTime = 0L,
+      executorRunTime = 0L, executorCPUTime = 0L, peakExecutionMemory = 0L, resultSize = 0L,
+      jvmGCTime = 0L, resultSerializationTime = 0L,
+      memoryBytesSpilled = memoryBytesSpilled, diskBytesSpilled = diskBytesSpilled,
+      sr_remoteBlocksFetched = 0L, sr_localBlocksFetched = 0L, sr_fetchWaitTime = 0L,
+      sr_remoteBytesRead = 0L, sr_remoteBytesReadToDisk = 0L, sr_localBytesRead = 0L,
+      sr_totalBytesRead = 0L, sw_bytesWritten = 0L, sw_writeTime = 0L, sw_recordsWritten = 0L,
+      input_bytesRead = 0L, input_recordsRead = 0L, output_bytesWritten = 0L,
+      output_recordsWritten = 0L)
+  }
+
+  test("a failed task's spill still blocks a reduction even though its bytes are not counted") {
+    val failedSpiller = task(successful = false, memoryBytesSpilled = 1L)
+    // The totals must not absorb work that never produced output.
+    assert(!ShuffleStageInputAnalyzer.countsTowardTotals(failedSpiller))
+    // The gate must still see it: a task that spilled and then died is the pressure this pass
+    // exists to avoid reducing into.
+    assert(ShuffleStageInputAnalyzer.countsTowardSpillGate(failedSpiller))
+    assert(ShuffleStageInputAnalyzer.spilled(failedSpiller))
+  }
+
+  test("speculative duplicates are excluded from both the totals and the spill gate") {
+    val speculativeSpiller = task(speculative = true, diskBytesSpilled = 1L)
+    assert(!ShuffleStageInputAnalyzer.countsTowardTotals(speculativeSpiller))
+    assert(!ShuffleStageInputAnalyzer.countsTowardSpillGate(speculativeSpiller))
+    // A speculative task that also failed stays excluded.
+    assert(!ShuffleStageInputAnalyzer.countsTowardSpillGate(
+      task(successful = false, speculative = true)))
+  }
+
+  test("a successful task counts toward both, and spill is either memory or disk") {
+    val clean = task()
+    assert(ShuffleStageInputAnalyzer.countsTowardTotals(clean))
+    assert(ShuffleStageInputAnalyzer.countsTowardSpillGate(clean))
+    assert(!ShuffleStageInputAnalyzer.spilled(clean))
+    assert(ShuffleStageInputAnalyzer.spilled(task(memoryBytesSpilled = 1L)))
+    assert(ShuffleStageInputAnalyzer.spilled(task(diskBytesSpilled = 1L)))
+    // Zero spill on both counters is not spill evidence.
+    assert(!ShuffleStageInputAnalyzer.spilled(
+      task(memoryBytesSpilled = 0L, diskBytesSpilled = 0L)))
   }
 
   test("GPU spill evidence is retained per stage attempt") {

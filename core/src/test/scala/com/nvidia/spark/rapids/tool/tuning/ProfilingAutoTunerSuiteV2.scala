@@ -2855,7 +2855,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
   test("Downward pass warns once and changes nothing when its configuration is invalid") {
     val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
       extraTuningConfigs = List(
-        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS", default = "0")))
+        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE", default = "0")))
     assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
     val warnings = comments.filter(_.contains("tuning configuration is invalid"))
     assert(warnings.size == 1, s"expected exactly one invalid-config comment in: $comments")
@@ -2869,21 +2869,14 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(!comments.exists(c => c.contains("lowered from") || c.contains("downward")))
   }
 
-  test("Downward pass respects a configured minimum reduction factor") {
-    // 1500 partitions rounds up to 4 waves (1600), which is not a 2x reduction from 3000.
+  test("Downward pass applies a reduction smaller than the retired 2x threshold") {
+    // 1500 partitions rounds up to 4 waves (1600), a 1.9x reduction from 3000. The wave quantum
+    // is the only size gate, so this applies where the retired threshold would have blocked it.
     val (properties, comments) = runDownwardPass(
       completeShuffleStageInputs(Seq(4 -> 1500L * GiB)),
-      sourceProps = downwardPassSourceProps(Map(SHUFFLE_PARTITIONS_KEY -> "3000")),
-      extraTuningConfigs = List(
-        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR", default = "2.0")))
-    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "3000"))
-    assert(!comments.exists(_.contains("lowered from")))
-    // The default of 1.0 imposes no threshold, so the same reduction applies without the override.
-    val (defaultProps, defaultComments) = runDownwardPass(
-      completeShuffleStageInputs(Seq(4 -> 1500L * GiB)),
       sourceProps = downwardPassSourceProps(Map(SHUFFLE_PARTITIONS_KEY -> "3000")))
-    assert(recommendedValue(defaultProps, SHUFFLE_PARTITIONS_KEY).contains("1600"))
-    assert(defaultComments.exists(_.contains("lowered from 3000 to 1600")))
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("1600"))
+    assert(comments.exists(_.contains("lowered from 3000 to 1600")))
   }
 
   test("Downward pass never lowers below a single execution wave") {
@@ -2895,20 +2888,16 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(comments.exists(_.contains("1 execution wave(s)")))
   }
 
-  test("Downward pass slot count follows the configured slot basis") {
-    // The GPU-concurrency basis uses the recommended concurrentGpuTasks instead of the cores.
-    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
-      extraTuningConfigs = List(TuningConfigEntry(name = "DOWNWARD_SHUFFLE_SLOT_BASIS",
-        default = "concurrentGpuTasks")))
+  test("Downward pass sizes the wave from cores, not GPU task concurrency") {
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions)
     val concurrentGpuTasks =
       recommendedValue(properties, "spark.rapids.sql.concurrentGpuTasks").map(_.toInt).getOrElse(
         fail("expected a concurrentGpuTasks recommendation"))
     val gpuSlots = DOWNWARD_PASS_WORKERS * concurrentGpuTasks
     assert(gpuSlots != DOWNWARD_PASS_SLOTS,
       "the two bases must differ for this test to prove anything")
-    val expected = math.ceil(900.0 / gpuSlots).toInt * gpuSlots
-    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains(expected.toString))
-    assert(comments.exists(_.contains(s"$gpuSlots cluster task slots")))
+    assert(comments.exists(_.contains(s"$DOWNWARD_PASS_SLOTS cluster task slots")))
+    assert(!comments.exists(_.contains(s"$gpuSlots cluster task slots")))
   }
 
   test("Downward pass changes neither property when one of them is enforced") {

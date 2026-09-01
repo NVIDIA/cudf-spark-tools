@@ -24,7 +24,7 @@ import com.nvidia.spark.rapids.tool.profiling.{ShuffleInputProvenance, ShuffleSt
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.tool.AppBase
 import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphNode, ToolsPlanGraph}
-import org.apache.spark.sql.rapids.tool.store.StageModel
+import org.apache.spark.sql.rapids.tool.store.{StageModel, TaskModel}
 
 /**
  * Builds the raw consumer-stage shuffle input inventory used by the downward shuffle-partition
@@ -48,7 +48,13 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
 
   /** Accumulated bytes and branch count for one (SQL execution, consumer stage). */
   private case class BranchTotals(bytes: Long, branches: Int) {
-    def add(moreBytes: Long): BranchTotals = BranchTotals(bytes + moreBytes, branches + 1)
+    // Saturating rather than wrapping: a total that overflowed to a small positive value would
+    // understate the requirement, which is the one direction this pass must never fail in.
+    def add(moreBytes: Long): BranchTotals = {
+      val sum = bytes + moreBytes
+      val saturated = if (sum < bytes) Long.MaxValue else sum
+      BranchTotals(saturated, branches + 1)
+    }
   }
 
   private val provenance: ShuffleInputProvenance = {
@@ -61,6 +67,11 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
    * A GPU application must expose GPU columnar exchanges; a plain CPU `Exchange` that executed in
    * a GPU plan means the GPU metrics do not cover all the shuffled data, which is exactly the
    * situation that makes a downward decision unsafe.
+   *
+   * TODO: a CPU exchange inside a GPU run could in principle be sized from its CPU data size, the
+   * way qualification already sizes an all-CPU run. It is not handled today because the input-size
+   * factor that converts CPU bytes to estimated GPU bytes is application-level, so a single run
+   * cannot apply one factor to its CPU exchanges and another to its GPU ones.
    */
   private def isSupportedShuffleExchange(nodeName: String): Boolean = {
     if (app.gpuMode) {
@@ -247,6 +258,10 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
    * the data between them, and overstating can only raise the partition requirement and make a
    * reduction less likely. Understating it is the outcome that would be unsafe.
    *
+   * TODO: the split could be estimated instead of duplicated, for example by apportioning the
+   * exchange size across the split stages by their per-stage shuffle read metrics. That would
+   * tighten the requirement on skewed joins, where duplication is at its most conservative.
+   *
    * @return the consumer stages of this branch, or an empty set when none could be resolved
    */
   private def resolveConsumerStages(
@@ -317,11 +332,10 @@ class ShuffleStageInputAnalyzer(app: AppBase) extends Logging {
       stageModel: StageModel,
       totals: BranchTotals): ShuffleStageInputRecord = {
     val attemptId = stageModel.getAttemptId
-    // Speculative and failed task metrics do not describe the work the recommendation governs.
-    val tasks = app.taskManager
-      .getTasks(stageId, attemptId, Some(t => t.successful && !t.speculative))
-      .toSeq
-    val hasTaskSpill = tasks.exists(t => t.memoryBytesSpilled > 0L || t.diskBytesSpilled > 0L)
+    val tasks = app.taskManager.getTasks(stageId, attemptId, Some(countsTowardTotals)).toSeq
+    val spillCandidates =
+      app.taskManager.getTasks(stageId, attemptId, Some(countsTowardSpillGate)).toSeq
+    val hasTaskSpill = spillCandidates.exists(spilled)
     val hasSpill = hasTaskSpill || app.accumManager.hasGpuSpillEvidence(stageId, attemptId)
     ShuffleStageInputRecord(
       sqlId = sqlId,
@@ -365,6 +379,27 @@ object ShuffleStageInputAnalyzer {
   private val MAX_CONSUMER_WALK_DEPTH = 16
   /** Matches AppSparkMetricsAnalyzer.shuffleSkewCheck. */
   private val SKEW_MIN_READ_BYTES = 100L * 1024L * 1024L
+
+  /**
+   * Tasks whose metrics describe the work the recommendation governs. Speculative duplicates and
+   * failed attempts did not produce the stage's output, so their bytes must not inflate the
+   * requirement the candidate is sized from.
+   */
+  private[analysis] def countsTowardTotals(task: TaskModel): Boolean = {
+    task.successful && !task.speculative
+  }
+
+  /**
+   * Tasks whose spill evidence blocks a reduction. Deliberately broader than
+   * [[countsTowardTotals]]: a task that spilled and then failed is exactly the memory pressure
+   * this pass must not reduce into, so excluding it would hide the signal the gate exists to see.
+   * Speculative duplicates are still excluded, since they re-run work already counted elsewhere.
+   */
+  private[analysis] def countsTowardSpillGate(task: TaskModel): Boolean = !task.speculative
+
+  private[analysis] def spilled(task: TaskModel): Boolean = {
+    task.memoryBytesSpilled > 0L || task.diskBytesSpilled > 0L
+  }
 
   /**
    * Any exchange that shuffles data. Broadcast exchanges are excluded because they replicate a

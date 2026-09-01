@@ -25,30 +25,6 @@ import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.rapids.tool.util.StringUtils
 
 /**
- * Basis used to turn the recommended executor count into a cluster task-slot count.
- *
- * A "slot" is one unit of concurrency the recommended cluster actually has, so the number of slots
- * is the number of partitions one execution wave can run. Which unit is right depends on whether
- * the CPU task parallelism or the GPU task concurrency is the binding constraint, so the choice is
- * exposed as a configuration entry rather than hard-coded.
- */
-sealed abstract class DownwardShuffleSlotBasis(val label: String)
-
-object DownwardShuffleSlotBasis {
-  /** Slots per executor are the recommended `spark.executor.cores`. */
-  case object Cores extends DownwardShuffleSlotBasis("cores")
-
-  /** Slots per executor are the recommended `spark.rapids.sql.concurrentGpuTasks`. */
-  case object ConcurrentGpuTasks extends DownwardShuffleSlotBasis("concurrentGpuTasks")
-
-  val values: Seq[DownwardShuffleSlotBasis] = Seq(Cores, ConcurrentGpuTasks)
-
-  def parse(raw: String): Option[DownwardShuffleSlotBasis] = {
-    values.find(_.label.equalsIgnoreCase(raw.trim))
-  }
-}
-
-/**
  * Validated policy inputs of the downward-only shuffle partition pass.
  *
  * Every field is user-overridable through the tuning-config mechanism. The values are validated as
@@ -58,30 +34,22 @@ object DownwardShuffleSlotBasis {
  * @param enabled                  master switch for the downward pass
  * @param targetPartitionSizeBytes estimated GPU input a single partition should process
  * @param inputSizeFactor          factor converting measured shuffle bytes to estimated GPU bytes
- * @param slotBasis                unit used to size one execution wave of the recommended cluster
- * @param minReductionFactor       required ratio of normal value to candidate before applying
  */
 case class DownwardShufflePolicyConfig(
     enabled: Boolean,
     targetPartitionSizeBytes: Long,
-    inputSizeFactor: Double,
-    slotBasis: DownwardShuffleSlotBasis,
-    minReductionFactor: Double)
+    inputSizeFactor: Double)
 
 object DownwardShufflePolicyConfig {
   val ENABLED_KEY = "DOWNWARD_SHUFFLE_ENABLED"
   val TARGET_PARTITION_SIZE_KEY = "DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE"
   val INPUT_SIZE_FACTOR_KEY = "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR"
-  val SLOT_BASIS_KEY = "DOWNWARD_SHUFFLE_SLOT_BASIS"
-  val MIN_REDUCTION_FACTOR_KEY = "DOWNWARD_SHUFFLE_MIN_REDUCTION_FACTOR"
 
   /** Config used when the feature is switched off. The remaining fields are never read. */
   val disabled: DownwardShufflePolicyConfig = DownwardShufflePolicyConfig(
     enabled = false,
     targetPartitionSizeBytes = 0L,
-    inputSizeFactor = 0.0,
-    slotBasis = DownwardShuffleSlotBasis.Cores,
-    minReductionFactor = 0.0)
+    inputSizeFactor = 0.0)
 
   /**
    * Reads and validates every policy entry from the tuning-config provider.
@@ -105,21 +73,16 @@ object DownwardShufflePolicyConfig {
       configProvider: TuningConfigProvider): Either[Seq[String], DownwardShufflePolicyConfig] = {
     val targetSize = parseMemoryBytes(configProvider, TARGET_PARTITION_SIZE_KEY)
     val factor = parseDouble(configProvider, INPUT_SIZE_FACTOR_KEY, min = 0.0, minInclusive = false)
-    val slotBasis = parseSlotBasis(configProvider, SLOT_BASIS_KEY)
-    val minReduction =
-      parseDouble(configProvider, MIN_REDUCTION_FACTOR_KEY, min = 1.0, minInclusive = true)
 
-    val errors = Seq(targetSize, factor, slotBasis, minReduction).collect {
+    val errors = Seq(targetSize, factor).collect {
       case Left(err) => err
     }
-    (targetSize, factor, slotBasis, minReduction) match {
-      case (Right(size), Right(f), Right(b), Right(r)) if errors.isEmpty =>
+    (targetSize, factor) match {
+      case (Right(size), Right(f)) if errors.isEmpty =>
         Right(DownwardShufflePolicyConfig(
           enabled = true,
           targetPartitionSizeBytes = size,
-          inputSizeFactor = f,
-          slotBasis = b,
-          minReductionFactor = r))
+          inputSizeFactor = f))
       case _ => Left(errors)
     }
   }
@@ -146,16 +109,6 @@ object DownwardShufflePolicyConfig {
       Try(StringUtils.convertMemorySizeToBytes(raw, Some(ByteUnit.BYTE))).toOption
         .filter(_ > 0L)
         .toRight(s"'$key' must be a positive memory size but was '$raw'")
-    }
-  }
-
-  private def parseSlotBasis(
-      configProvider: TuningConfigProvider,
-      key: String): Either[String, DownwardShuffleSlotBasis] = {
-    rawValue(configProvider, key).flatMap { raw =>
-      DownwardShuffleSlotBasis.parse(raw).toRight(
-        s"'$key' must be one of ${DownwardShuffleSlotBasis.values.map(_.label).mkString(", ")}" +
-          s" but was '$raw'")
     }
   }
 
@@ -231,11 +184,6 @@ object DownwardShuffleSkipReason {
   case class NotDownward(candidate: Int, normalValue: Int)
     extends DownwardShuffleSkipReason(
       s"candidate $candidate does not lower the current recommendation $normalValue")
-
-  case class BelowReductionThreshold(candidate: Int, normalValue: Int, minFactor: Double)
-    extends DownwardShuffleSkipReason(
-      s"candidate $candidate is not at least ${minFactor}x smaller than the current" +
-        s" recommendation $normalValue")
 
   /**
    * The application failed a stage or hit an OOM anywhere. Sizing a global reduction from a run
@@ -366,11 +314,6 @@ object DownwardShufflePartitionsPolicy {
         // every candidate is at least the slot count.
         DownwardShuffleDecision.Skipped(
           DownwardShuffleSkipReason.NotDownward(candidate, normalValue))
-      case Some(candidate)
-          if normalValue.toDouble < config.minReductionFactor * candidate.toDouble =>
-        DownwardShuffleDecision.Skipped(
-          DownwardShuffleSkipReason.BelowReductionThreshold(
-            candidate, normalValue, config.minReductionFactor))
       case Some(candidate) =>
         DownwardShuffleDecision.Applied(
           normalValue = normalValue,
@@ -472,11 +415,21 @@ object DownwardShufflePartitionsPolicy {
    * decision so the recommendation can be audited without re-running the tool.
    */
   def appliedComment(
-      partitionProperties: Seq[String],
+      partitionUpdates: Seq[(String, Int)],
       decision: DownwardShuffleDecision.Applied): String = {
     val record = decision.determiningRecord
-    s"${partitionProperties.map(p => s"'$p'").mkString(" and ")} lowered from " +
-      s"${decision.normalValue} to ${decision.selectedValue} based on the " +
+    // Normally every property lands on the same value, and the comment reads as one sentence about
+    // both. They can only differ if a property was already below the candidate and got clamped to
+    // its own value, in which case each is named with what it actually became.
+    val appliedValues = partitionUpdates.map(_._2).distinct
+    val lowered = if (appliedValues.size == 1) {
+      s"${partitionUpdates.map(p => s"'${p._1}'").mkString(" and ")} lowered from " +
+        s"${decision.normalValue} to ${appliedValues.head}"
+    } else {
+      partitionUpdates.map { case (property, value) => s"'$property' lowered to $value" }
+        .mkString(" and ") + s", from an effective ${decision.normalValue}"
+    }
+    lowered + s" based on the " +
       s"${decision.provenance.label} shuffle input of the worst consumer stage " +
       s"(SQL ${record.sqlId}, stage ${record.stageId}, attempt ${record.stageAttemptId}): " +
       s"${record.totalShuffleInputBytes} bytes across ${record.numShuffleBranches} shuffle " +

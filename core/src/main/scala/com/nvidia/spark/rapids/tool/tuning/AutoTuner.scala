@@ -2077,13 +2077,17 @@ abstract class AutoTuner(
    */
   private def recommendDownwardShufflePartitions(): Unit = {
     val configResult = DownwardShufflePolicyConfig.fromProvider(configProvider)
-    val slotCount = configResult.toOption.filter(_.enabled)
-      .flatMap(config => downwardShuffleSlotCount(config.slotBasis))
+    val enabled = configResult.exists(_.enabled)
+    // Building the analysis walks every SQL plan, so it is only worth doing once the pass is
+    // known to be enabled. The pass ships off, which makes this the common path.
+    val slotCount = if (enabled) downwardShuffleSlotCount else None
+    val analysis =
+      if (enabled) appInfoProvider.getShuffleStageInputAnalysis else emptyShuffleStageInputAnalysis
     val decision = DownwardShufflePartitionsPolicy.decide(
       configResult,
       shufflePartitionValue,
       slotCount,
-      appInfoProvider.getShuffleStageInputAnalysis)
+      analysis)
     decision match {
       case DownwardShuffleDecision.InvalidConfig(errors) =>
         // Fail closed as one decision: no property is touched when any policy input is invalid.
@@ -2110,20 +2114,18 @@ abstract class AutoTuner(
    * @return the slot count, or None when the recommended cluster shape or the per-executor
    *         multiplier cannot be resolved
    */
-  private def downwardShuffleSlotCount(basis: DownwardShuffleSlotBasis): Option[Int] = {
+  private def downwardShuffleSlotCount: Option[Int] = {
     platform.recommendedClusterInfo.flatMap { clusterInfo =>
       val executors =
         recommendedIntValue("spark.executor.instances").getOrElse(clusterInfo.numExecutors)
-      val slotsPerExecutor = basis match {
-        case DownwardShuffleSlotBasis.Cores => Some(clusterInfo.coresPerExecutor)
-        // Concurrent GPU tasks is a recommendation rather than a field on the cluster record, and
-        // it is suppressed entirely on platforms whose plugin auto-tunes it.
-        case DownwardShuffleSlotBasis.ConcurrentGpuTasks =>
-          recommendedIntValue("spark.rapids.sql.concurrentGpuTasks")
-      }
-      slotsPerExecutor.filter(_ > 0).filter(_ => executors > 0).flatMap { perExecutor =>
-        val slots = executors.toLong * perExecutor.toLong
+      // Cores, not GPU task concurrency: concurrency is auto-tuned by recent plugin versions, and
+      // sizing against it would badly under-use a cluster running mixed CPU and GPU stages.
+      val coresPerExecutor = clusterInfo.coresPerExecutor
+      if (executors > 0 && coresPerExecutor > 0) {
+        val slots = executors.toLong * coresPerExecutor.toLong
         if (slots > Int.MaxValue.toLong) None else Some(slots.toInt)
+      } else {
+        None
       }
     }
   }
@@ -2135,6 +2137,14 @@ abstract class AutoTuner(
   }
 
   /**
+   * Stand-in used when the pass is off or misconfigured, so no analysis has to be built. The
+   * policy short-circuits on the config before it reads any of this.
+   */
+  private def emptyShuffleStageInputAnalysis: ShuffleStageInputAnalysis = {
+    ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)
+  }
+
+  /**
    * Runs the AutoTuner-owned gates that the pure policy cannot see, then updates every required
    * partition property or none of them.
    */
@@ -2143,10 +2153,17 @@ abstract class AutoTuner(
     downwardShuffleBlockingReason(applied) match {
       case Some(reason) => reportDownwardShuffleSkip(reason)
       case None =>
-        val partitionProperties = requiredPartitionProperties
-        partitionProperties.foreach(appendRecommendation(_, applied.selectedValue))
+        // Clamp each property against its own current value rather than against the single
+        // effective value the decision was made from, which is the maximum across them. Today the
+        // AQE pass has already levelled the two, so this is an invariant guard rather than a live
+        // difference: it keeps the pass downward-only per property if that ordering ever changes.
+        val updates = requiredPartitionProperties.map { property =>
+          val current = getPropertyValue(property).flatMap(v => Try(v.trim.toInt).toOption)
+          property -> current.map(_ min applied.selectedValue).getOrElse(applied.selectedValue)
+        }
+        updates.foreach { case (property, value) => appendRecommendation(property, value) }
         appendComment(
-          DownwardShufflePartitionsPolicy.appliedComment(partitionProperties, applied))
+          DownwardShufflePartitionsPolicy.appliedComment(updates, applied))
     }
   }
 

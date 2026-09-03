@@ -296,6 +296,10 @@ abstract class AutoTuner(
       .exists(_.trim.equalsIgnoreCase("true"))
   }
 
+  private lazy val useHostOffHeapLimitSizing: Boolean = {
+    !platform.isPlatformCSP && isOffHeapLimitUserEnabled
+  }
+
   private lazy val sparkMaster: Option[SparkMaster] = {
     SparkMaster(appInfoProvider.getProperty("spark.master"))
   }
@@ -1064,7 +1068,7 @@ abstract class AutoTuner(
     val pySparkMemMB = pySparkMemoryAdjustment.map(_.layoutCurrentMB)
       .getOrElse(platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L))
     // Calculate executor memory overhead using new formula if OffHeapLimit.enabled=true
-    val executorMemOverhead = if (isOffHeapLimitUserEnabled) {
+    val executorMemOverhead = if (useHostOffHeapLimitSizing) {
       calculateExecutorMemoryOverhead(
         totalMemMinusReserved, executorHeapMB, sparkOffHeapMemMB)
     } else {
@@ -1075,7 +1079,7 @@ abstract class AutoTuner(
     val defaultPinnedMem = configProvider.getEntry("PINNED_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val defaultSpillMem = configProvider.getEntry("SPILL_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val minOverhead: Long = baselineMemorySettings.executorMemOverhead.getOrElse {
-      if (isOffHeapLimitUserEnabled) {
+      if (useHostOffHeapLimitSizing) {
         executorMemOverhead
       } else {
         executorMemOverhead + defaultPinnedMem + defaultSpillMem
@@ -1089,8 +1093,7 @@ abstract class AutoTuner(
       // memory to core ratio
       // Calculate host off-heap limit size for pinned memory calculation
       // (only for onPrem when offHeapLimit is enabled)
-      val hostOffHeapLimitSizeMB = if (!platform.isPlatformCSP &&
-        isOffHeapLimitUserEnabled) {
+      val hostOffHeapLimitSizeMB = if (useHostOffHeapLimitSizing) {
         val userOffHeapLimitOpt =
           getBaselineSparkProperty("spark.rapids.memory.host.offHeapLimit.size")
         if (userOffHeapLimitOpt.isDefined) {
@@ -1106,7 +1109,7 @@ abstract class AutoTuner(
 
       // Pinned memory calculation - use new formula for onPrem, original logic for CSP
       var pinnedMem = baselineMemorySettings.pinnedMem.getOrElse {
-        if (!platform.isPlatformCSP && hostOffHeapLimitSizeMB > 0) {
+        if (useHostOffHeapLimitSizing && hostOffHeapLimitSizeMB > 0) {
           // Use new formula for onPrem platform
           calculatePinnedMemorySize(numExecutorCores, hostOffHeapLimitSizeMB)
         } else {
@@ -1120,7 +1123,7 @@ abstract class AutoTuner(
       // all off heap memory.
       var spillMem = baselineMemorySettings.spillMem.getOrElse(pinnedMem)
       var finalExecutorMemOverhead = baselineMemorySettings.executorMemOverhead.getOrElse {
-        if (isOffHeapLimitUserEnabled) {
+        if (useHostOffHeapLimitSizing) {
           executorMemOverhead
         } else {
           // Budget-aware: claim the full available memory (execMemLeft) as overhead
@@ -1144,13 +1147,13 @@ abstract class AutoTuner(
         // Else update pinned and spill memory to use default values
         pinnedMem = defaultPinnedMem
         spillMem = defaultSpillMem
-        finalExecutorMemOverhead = if (isOffHeapLimitUserEnabled) {
+        finalExecutorMemOverhead = if (useHostOffHeapLimitSizing) {
           executorMemOverhead
         } else {
           executorMemOverhead + defaultPinnedMem + defaultSpillMem
         }
       }
-      val protectedOverheadFloorMB = if (isOffHeapLimitUserEnabled) {
+      val protectedOverheadFloorMB = if (useHostOffHeapLimitSizing) {
         executorMemOverhead
       } else {
         executorMemOverhead + pinnedMem + spillMem
@@ -1518,7 +1521,7 @@ abstract class AutoTuner(
 
               // Calculate host off-heap limit size for onPrem platform only when
               // offHeapLimit is enabled
-              if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+              if (useHostOffHeapLimitSizing) {
                 val hostOffHeapLimitSizeMB = recomMemorySettings.executorMemOverhead.get +
                   offHeapSizeMB - nonExecutorMemory
                 if (hostOffHeapLimitSizeMB > 0) {
@@ -1541,8 +1544,8 @@ abstract class AutoTuner(
               appendCommentForNotEnoughMem("spark.executor.memoryOverhead")
             }
             appendCommentForNotEnoughMem("spark.executor.memory")
-            // Skip off-heap related comments when offHeapLimit is enabled
-            if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+            // Add off-heap sizing comments only when that sizing path is active.
+            if (useHostOffHeapLimitSizing) {
               appendCommentForNotEnoughMem("spark.memory.offHeap.size")
               appendCommentForNotEnoughMem("spark.rapids.memory.host.offHeapLimit.size")
             }
@@ -2398,7 +2401,7 @@ abstract class AutoTuner(
   private def calculatePinnedMemorySize(numExecutorCores: Int,
                                         hostOffHeapLimitSizeMB: Long): Long = {
     // Use new formula only for onPrem platform
-    if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+    if (useHostOffHeapLimitSizing) {
       // Calculate pinned pool-offHeap ratio * host.offHeapLimit.Size
       val ratioPinnedPoolSize = hostOffHeapLimitSizeMB *
         configProvider.getEntry("PINNED_MEM_OFFHEAP_RATIO").getDefault.toDouble
@@ -2428,7 +2431,7 @@ abstract class AutoTuner(
     offHeapMB: Long): Long = {
 
     // Use new formula only for onPrem platform when offHeapLimit is enabled
-    if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+    if (useHostOffHeapLimitSizing) {
       val calculatedOverhead = totalMemMinusReserved - executorHeapMB - offHeapMB
 
       // Ensure the overhead is not negative and has a minimum value

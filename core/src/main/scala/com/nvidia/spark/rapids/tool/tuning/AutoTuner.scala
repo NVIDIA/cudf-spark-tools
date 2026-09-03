@@ -303,6 +303,7 @@ abstract class AutoTuner(
   /** Factory method to create the config provider - must be implemented by subclasses */
   protected def createConfigProvider(config: Option[TuningConfiguration]): ConfigProviderType
 
+  /** Copy a shared definition because enabling it mutates the entry. */
   private def detachedTuningDefinition(key: String): TuningEntryDefinition = {
     TuningEntryDefinition.getEntryDefinition(key).map { definition =>
       new TuningEntryDefinition(
@@ -406,8 +407,6 @@ abstract class AutoTuner(
       tuningDefn.markAsEnable()
     }
 
-    // Keep detached definitions available without resolving sparkMaster during initialization.
-    // Only the selected cluster manager's entry is enabled after effective properties are ready.
     Seq(PySparkMemoryTuningPolicy.YARN_IS_PYTHON_KEY,
       PySparkMemoryTuningPolicy.KUBERNETES_RESOURCE_TYPE_KEY).foreach { key =>
       baseMap.getOrElseUpdate(key, detachedTuningDefinition(key))
@@ -815,6 +814,10 @@ abstract class AutoTuner(
       configProvider.getEntry(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL).getDefault)
   }
 
+  /**
+   * Return the setting that makes the cluster manager include PySpark memory in the executor
+   * resource request.
+   */
   private def pySparkResourceAccountingRecommendation: Option[(String, String)] = {
     sparkMaster.collect {
       case Yarn => PySparkMemoryTuningPolicy.YARN_IS_PYTHON_KEY -> "true"

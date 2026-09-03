@@ -34,7 +34,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.deploy.history.{EventLogFileReader, EventLogFileWriter}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rapids.tool.benchmarks.RuntimeInjector
-import org.apache.spark.scheduler.{SparkListenerEvent, StageInfo}
+import org.apache.spark.scheduler.{SparkListenerApplicationEnd, SparkListenerEvent, StageInfo}
 import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphNode, ToolsPlanGraph}
 import org.apache.spark.sql.rapids.tool.store.{AccumManager, DataSourceRecord, SparkPlanInfoTruncated, SQLPlanModel, SQLPlanModelManager, StageExecutorMetricsManager, StageModel, StageModelManager, TaskModelManager, WriteOperationRecord}
 import org.apache.spark.sql.rapids.tool.util.{CacheablePropsHandler, EventUtils, RapidsToolsConfUtil, StringUtils, SuccessAppResult, UTF8Source}
@@ -169,6 +169,14 @@ abstract class AppBase(
   // This is called while handling ApplicationEnd event
   def updateEndTime(newEndTime: Long): Unit = {
     appMetaData.foreach(_.setEndTime(newEndTime))
+  }
+
+  def updateExitCode(exitCode: Int): Unit = {
+    appMetaData.foreach(_.setExitCode(exitCode))
+  }
+
+  def getAppExitCode: Option[Int] = {
+    appMetaData.flatMap(_.exitCode)
   }
 
   // Returns a boolean flag to indicate whether the endTime was estimated.
@@ -366,7 +374,16 @@ abstract class AppBase(
                 // Do NOT use a while loop as it is much much slower.
                 totalNumEvents += 1
                 runtimeGetFromJsonMethod.apply(line) match {
-                  case Some(e) => processEvent(e)
+                  case Some(e) =>
+                    val stopProcessing = processEvent(e)
+                    // Spark 4 adds ExitCode to SparkListenerApplicationEnd. Read it from the raw
+                    // JSON so Spark 3 runtimes can also retain it when parsing Spark 4 event logs.
+                    e match {
+                      case _: SparkListenerApplicationEnd =>
+                        EventUtils.readApplicationExitCode(line).foreach(updateExitCode)
+                      case _ =>
+                    }
+                    stopProcessing
                   case None => false
                 }
               }

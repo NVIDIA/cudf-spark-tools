@@ -296,12 +296,45 @@ abstract class AutoTuner(
       .exists(_.trim.equalsIgnoreCase("true"))
   }
 
+  /**
+   * Whether AutoTuner can use the specialized host off-heap sizing path.
+   *
+   * CSPs do not support that sizing formula, so they must retain the normal budget-aware overhead
+   * path even when the host off-heap limit property is enabled.
+   */
+  private lazy val useHostOffHeapLimitSizing: Boolean = {
+    !platform.isPlatformCSP && isOffHeapLimitUserEnabled
+  }
+
   private lazy val sparkMaster: Option[SparkMaster] = {
     SparkMaster(appInfoProvider.getProperty("spark.master"))
   }
 
   /** Factory method to create the config provider - must be implemented by subclasses */
   protected def createConfigProvider(config: Option[TuningConfiguration]): ConfigProviderType
+
+  /**
+   * Return a private copy of a disabled PySpark memory-reservation definition, such as
+   * `spark.yarn.isPython` or `spark.kubernetes.resource.type`. Definitions loaded from the tuning
+   * table are shared, so enabling one in place would also enable it for later AutoTuner instances
+   * in the same JVM.
+   */
+  private def detachedTuningDefinition(key: String): TuningEntryDefinition = {
+    TuningEntryDefinition.getEntryDefinition(key).map { definition =>
+      new TuningEntryDefinition(
+        definition.label,
+        definition.description,
+        definition.enabled,
+        definition.level,
+        definition.category,
+        definition.bootstrapEntry,
+        definition.defaultSpark,
+        definition.modifiedBy,
+        definition.confType,
+        definition.specialValues,
+        definition.comments)
+    }.getOrElse(TuningEntryDefinition(key, enabled = false))
+  }
 
   private def createPluginManager(sortAcrossPlugins: Boolean): TuningPluginManager = {
     TuningPluginManager.builder
@@ -387,6 +420,11 @@ abstract class AutoTuner(
       val tuningDefn = baseMap.getOrElseUpdate(key,
         TuningEntryDefinition.getEntryDefinition(key).getOrElse(TuningEntryDefinition(key)))
       tuningDefn.markAsEnable()
+    }
+
+    Seq(PySparkMemoryTuningPolicy.YARN_IS_PYTHON_KEY,
+      PySparkMemoryTuningPolicy.KUBERNETES_RESOURCE_TYPE_KEY).foreach { key =>
+      baseMap.getOrElseUpdate(key, detachedTuningDefinition(key))
     }
 
     // Exclude properties specified in the skip list (Tool specific or
@@ -722,18 +760,6 @@ abstract class AutoTuner(
   }
 
   /**
-   * Recommendation for maxBytesInFlight.
-   *
-   * TODO: To be removed in the future https://github.com/NVIDIA/cudf-spark-tools/issues/1710
-   */
-  private lazy val recommendedMaxBytesInFlightMB: Long = {
-    val valueStr =
-      platform.getUserEnforcedSparkProperty("spark.rapids.shuffle.multiThreaded.maxBytesInFlight")
-      .getOrElse(configProvider.getEntry("MAX_BYTES_IN_FLIGHT").getDefault)
-    StringUtils.convertToMB(valueStr, Some(ByteUnit.BYTE))
-  }
-
-  /**
    * Spark property value to use as an input baseline for recommendation calculations.
    * User-enforced values take precedence over preserved source values.
    */
@@ -801,6 +827,59 @@ abstract class AutoTuner(
     appendRecommendation(PySparkMemoryTuningPolicy.STAGE_EXECUTOR_METRICS_KEY, "true")
     appendRecommendation(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL_KEY,
       configProvider.getEntry(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL).getDefault)
+  }
+
+  /**
+   * Return the setting that makes the cluster manager include PySpark memory in the executor
+   * resource request.
+   */
+  private def pySparkMemoryReservationConfig: Option[(String, String)] = {
+    sparkMaster.collect {
+      case Yarn => PySparkMemoryTuningPolicy.YARN_IS_PYTHON_KEY -> "true"
+      case Kubernetes => PySparkMemoryTuningPolicy.KUBERNETES_RESOURCE_TYPE_KEY -> "python"
+    }
+  }
+
+  private def hasPositivePySparkMemory: Boolean = {
+    platform.getPySparkMemoryMB(getPropertyValue).exists(_ > 0L)
+  }
+
+  private def enablePySparkMemoryReservationConfig(): Unit = {
+    if (hasPositivePySparkMemory) {
+      pySparkMemoryReservationConfig.foreach { case (key, _) =>
+        finalTuningTable.get(key).foreach(_.markAsEnable())
+      }
+    }
+  }
+
+  /**
+   * Return whether the required reservation value is already effective or can be emitted.
+   * Rebalancing must not move memory into PySpark unless the cluster manager will reserve it.
+   */
+  private def isPySparkMemoryReservationConfigOutputEligible: Boolean = {
+    pySparkMemoryReservationConfig.forall { case (key, value) =>
+      if (skippedRecommendations.contains(key)) {
+        false
+      } else if (ignoreRecommendation(key)) {
+        getPropertyValue(key).contains(value)
+      } else {
+        getPropertyValue(key).contains(value) || finalTuningTable.get(key).exists { definition =>
+          val prospectiveEntry = TuningEntry.build(
+            key, getPropertyValue(key), None, Some(definition))
+          prospectiveEntry.setRecommendedValue(value)
+          shouldIncludeInFinalRecommendations(prospectiveEntry)
+        }
+      }
+    }
+  }
+
+  private def recommendPySparkMemoryReservationConfig(): Unit = {
+    if (hasPositivePySparkMemory) {
+      pySparkMemoryReservationConfig.foreach { case (key, value) =>
+        finalTuningTable.get(key).foreach(_.markAsEnable())
+        appendRecommendation(key, value)
+      }
+    }
   }
 
   private def ceilToGiBInMB(value: BigDecimal): Option[Long] = {
@@ -918,6 +997,10 @@ abstract class AutoTuner(
               " Increase the selected source capacity or choose a larger executor layout."
             case "source-capability" =>
               " executor overhead is supported only for YARN and Kubernetes targets."
+            case "memory-reservation" =>
+              pySparkMemoryReservationConfig.map { case (key, value) =>
+                s" Allow $key=$value so the cluster manager reserves PySpark memory."
+              }.getOrElse("")
             case "output-eligibility" =>
               " Remove the selected source and PySpark memory from exclusion or limited-logic " +
                 "lists to allow a full transfer."
@@ -948,6 +1031,8 @@ abstract class AutoTuner(
             PySparkMemoryRebalanceSource.Overhead &&
             !sparkMaster.contains(Yarn) && !sparkMaster.contains(Kubernetes)) {
           conflict("source-capability")
+        } else if (!isPySparkMemoryReservationConfigOutputEligible) {
+          conflict("memory-reservation")
         } else if (delta > availableDelta) {
           conflict("capacity")
         } else {
@@ -1037,14 +1122,13 @@ abstract class AutoTuner(
    *           - pinned memory size (MB)
    *           - executor memory overhead size (MB)
    *           - executor heap size (MB)
-   *           - boolean indicating if "maxBytesInFlight" should be set
    */
    // scalastyle:on line.size.limit
   private def calcOverallMemory(
       execHeapCalculator: () => Long,
       numExecutorCores: Int,
       totalMemForExecExpr: () => Double):
-      Either[String, (MemorySettings, Boolean, Option[String])] = {
+      Either[String, (MemorySettings, Option[String])] = {
 
     // Set executor heap using a baseline value, if present, otherwise max of
     // calculator result and 2GB/core.
@@ -1076,8 +1160,9 @@ abstract class AutoTuner(
     )
     val pySparkMemMB = pySparkMemoryAdjustment.map(_.layoutCurrentMB)
       .getOrElse(platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L))
-    // Calculate executor memory overhead using new formula if OffHeapLimit.enabled=true
-    var executorMemOverhead = if (isOffHeapLimitUserEnabled) {
+    // Keep this calculation and final overhead selection on the same sizing path. Otherwise a CSP
+    // could skip the specialized calculation here but still bypass budget-aware overhead below.
+    val executorMemOverhead = if (useHostOffHeapLimitSizing) {
       calculateExecutorMemoryOverhead(
         totalMemMinusReserved, executorHeapMB, sparkOffHeapMemMB)
     } else {
@@ -1085,11 +1170,10 @@ abstract class AutoTuner(
       executorHeapMB * configProvider.getEntry("HEAP_OVERHEAD_FRACTION").getDefault.toDouble
     }.toLong
     val execMemLeft = totalMemMinusReserved - executorHeapMB - sparkOffHeapMemMB - pySparkMemMB
-    var setMaxBytesInFlight = false
     val defaultPinnedMem = configProvider.getEntry("PINNED_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val defaultSpillMem = configProvider.getEntry("SPILL_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val minOverhead: Long = baselineMemorySettings.executorMemOverhead.getOrElse {
-      if (isOffHeapLimitUserEnabled) {
+      if (useHostOffHeapLimitSizing) {
         executorMemOverhead
       } else {
         executorMemOverhead + defaultPinnedMem + defaultSpillMem
@@ -1101,18 +1185,9 @@ abstract class AutoTuner(
     if (execMemLeft >= minOverhead) {
       // this is hopefully path in the majority of cases because CSPs generally have a good
       // memory to core ratio
-      // Account for the setting of `maxBytesInFlight`
-      if (numExecutorCores >= 16 && platform.isPlatformCSP &&
-        execMemLeft >
-          executorMemOverhead + recommendedMaxBytesInFlightMB +
-            defaultPinnedMem + defaultSpillMem) {
-        executorMemOverhead += recommendedMaxBytesInFlightMB
-        setMaxBytesInFlight = true
-      }
       // Calculate host off-heap limit size for pinned memory calculation
       // (only for onPrem when offHeapLimit is enabled)
-      val hostOffHeapLimitSizeMB = if (!platform.isPlatformCSP &&
-        isOffHeapLimitUserEnabled) {
+      val hostOffHeapLimitSizeMB = if (useHostOffHeapLimitSizing) {
         val userOffHeapLimitOpt =
           getBaselineSparkProperty("spark.rapids.memory.host.offHeapLimit.size")
         if (userOffHeapLimitOpt.isDefined) {
@@ -1128,7 +1203,7 @@ abstract class AutoTuner(
 
       // Pinned memory calculation - use new formula for onPrem, original logic for CSP
       var pinnedMem = baselineMemorySettings.pinnedMem.getOrElse {
-        if (!platform.isPlatformCSP && hostOffHeapLimitSizeMB > 0) {
+        if (useHostOffHeapLimitSizing && hostOffHeapLimitSizeMB > 0) {
           // Use new formula for onPrem platform
           calculatePinnedMemorySize(numExecutorCores, hostOffHeapLimitSizeMB)
         } else {
@@ -1142,7 +1217,7 @@ abstract class AutoTuner(
       // all off heap memory.
       var spillMem = baselineMemorySettings.spillMem.getOrElse(pinnedMem)
       var finalExecutorMemOverhead = baselineMemorySettings.executorMemOverhead.getOrElse {
-        if (isOffHeapLimitUserEnabled) {
+        if (useHostOffHeapLimitSizing) {
           executorMemOverhead
         } else {
           // Budget-aware: claim the full available memory (execMemLeft) as overhead
@@ -1166,13 +1241,15 @@ abstract class AutoTuner(
         // Else update pinned and spill memory to use default values
         pinnedMem = defaultPinnedMem
         spillMem = defaultSpillMem
-        finalExecutorMemOverhead = if (isOffHeapLimitUserEnabled) {
+        finalExecutorMemOverhead = if (useHostOffHeapLimitSizing) {
           executorMemOverhead
         } else {
           executorMemOverhead + defaultPinnedMem + defaultSpillMem
         }
       }
-      val protectedOverheadFloorMB = if (isOffHeapLimitUserEnabled) {
+      // Normal sizing includes pinned and spill pools in container overhead. Specialized sizing
+      // budgets those pools under the host off-heap limit, so only JVM overhead is protected here.
+      val protectedOverheadFloorMB = if (useHostOffHeapLimitSizing) {
         executorMemOverhead
       } else {
         executorMemOverhead + pinnedMem + spillMem
@@ -1182,7 +1259,7 @@ abstract class AutoTuner(
       val (revisedSettings, rebalanceComment) = applyPySparkMemoryAdjustment(
         baseSettings, protectedHeapFloorMB, protectedOverheadFloorMB)
       // Return the complete layout so the caller can append an atomic recommendation set.
-      Right((revisedSettings, setMaxBytesInFlight, rebalanceComment))
+      Right((revisedSettings, rebalanceComment))
     } else {
       // Add a warning comment indicating that the current setup is not optimal
       // and no memory-related tunings are recommended.
@@ -1213,8 +1290,7 @@ abstract class AutoTuner(
 
   // Currently only applies many configs for CSPs where we have an idea what network/disk
   // configuration is like. On prem we don't know so don't set these for now.
-  private def configureMultiThreadedReaders(numExecutorCores: Int,
-      setMaxBytesInFlight: Boolean): Unit = {
+  private def configureMultiThreadedReaders(numExecutorCores: Int): Unit = {
 
     // Helper function to get the bounded number of threads
     def getBoundedNumThreads(coreMultiplier: Double): Int = {
@@ -1249,10 +1325,6 @@ abstract class AutoTuner(
     } else if (numExecutorCores >= 16 && numExecutorCores < 20 && platform.isPlatformCSP) {
       appendRecommendation("spark.rapids.sql.multiThreadedRead.numThreads",
         Math.max(80, numExecutorCores))
-      if (setMaxBytesInFlight) {
-        appendRecommendationForMemoryMB("spark.rapids.shuffle.multiThreaded.maxBytesInFlight",
-          recommendedMaxBytesInFlightMB.toString)
-      }
       appendRecommendation("spark.rapids.sql.reader.multithreaded.combine.sizeBytes",
         configProvider.getEntry("READER_MULTITHREADED_COMBINE_THRESHOLD").getDefault)
       appendRecommendation("spark.rapids.sql.format.parquet.multithreaded.combine.waitTime",
@@ -1265,10 +1337,6 @@ abstract class AutoTuner(
       appendRecommendation("spark.rapids.sql.multiThreadedRead.numThreads",
         getBoundedNumThreads(coreMultiplier))
       if (platform.isPlatformCSP) {
-        if (setMaxBytesInFlight) {
-          appendRecommendationForMemoryMB("spark.rapids.shuffle.multiThreaded.maxBytesInFlight",
-            recommendedMaxBytesInFlightMB.toString)
-        }
         appendRecommendation("spark.rapids.sql.reader.multithreaded.combine.sizeBytes",
           configProvider.getEntry("READER_MULTITHREADED_COMBINE_THRESHOLD").getDefault)
         appendRecommendation("spark.rapids.sql.format.parquet.multithreaded.combine.waitTime",
@@ -1474,6 +1542,7 @@ abstract class AutoTuner(
   }
 
   def calculateClusterLevelRecommendations(): Unit = {
+    enablePySparkMemoryReservationConfig()
     pySparkMemoryAdjustment.filter(adjustment =>
       adjustment.needsTelemetryRetry && pySparkMemoryTuningPolicy.recommendTelemetryConfigs)
       .foreach(_ => recommendPySparkTelemetrySettings())
@@ -1502,13 +1571,12 @@ abstract class AutoTuner(
       val execCores = platform.recommendedClusterInfo.map(_.coresPerExecutor).getOrElse(1)
       val availableMemPerExec =
         platform.recommendedWorkerNode.map(_.getMemoryPerExec).getOrElse(0.0)
-      val shouldSetMaxBytesInFlight = if (availableMemPerExec > 0.0) {
+      if (availableMemPerExec > 0.0) {
         val availableMemPerExecExpr = () => availableMemPerExec
         val executorHeapInMB = calcInitialExecutorHeapInMB(availableMemPerExecExpr, execCores)
         val executorHeapExpr = () => executorHeapInMB
         calcOverallMemory(executorHeapExpr, execCores, availableMemPerExecExpr) match {
-          case Right((recomMemorySettings: MemorySettings, setMaxBytesInFlight,
-              rebalanceComment)) =>
+          case Right((recomMemorySettings: MemorySettings, rebalanceComment)) =>
             // Sufficient memory available, proceed with recommendations
             rebalanceComment.foreach(appendComment)
             appendRecommendationForMemoryMB("spark.rapids.memory.pinnedPool.size",
@@ -1550,7 +1618,7 @@ abstract class AutoTuner(
 
               // Calculate host off-heap limit size for onPrem platform only when
               // offHeapLimit is enabled
-              if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+              if (useHostOffHeapLimitSizing) {
                 val hostOffHeapLimitSizeMB = recomMemorySettings.executorMemOverhead.get +
                   offHeapSizeMB - nonExecutorMemory
                 if (hostOffHeapLimitSizeMB > 0) {
@@ -1559,7 +1627,6 @@ abstract class AutoTuner(
                 }
               }
             }
-            setMaxBytesInFlight
           case Left(notEnoughMemComment) =>
             // Not enough memory available, add warning comments
             appendComment(notEnoughMemComment)
@@ -1574,20 +1641,18 @@ abstract class AutoTuner(
               appendCommentForNotEnoughMem("spark.executor.memoryOverhead")
             }
             appendCommentForNotEnoughMem("spark.executor.memory")
-            // Skip off-heap related comments when offHeapLimit is enabled
-            if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+            // Add off-heap sizing comments only when that sizing path is active.
+            if (useHostOffHeapLimitSizing) {
               appendCommentForNotEnoughMem("spark.memory.offHeap.size")
               appendCommentForNotEnoughMem("spark.rapids.memory.host.offHeapLimit.size")
             }
-            false
         }
       } else {
         logInfo("Available memory per exec is not specified")
         addMissingMemoryComments()
-        false
       }
       configureShuffleReaderWriterNumThreads(execCores)
-      configureMultiThreadedReaders(execCores, shouldSetMaxBytesInFlight)
+      configureMultiThreadedReaders(execCores)
       recommendDynamicAllocationConfigs(execCores)
       // TODO: Should we recommend AQE even if cluster properties are not enabled?
       recommendAQEProperties()
@@ -1598,6 +1663,7 @@ abstract class AutoTuner(
       configProvider.getEntry("BATCH_SIZE_BYTES").getDefault)
     appendRecommendation("spark.locality.wait",
       configProvider.getEntry("LOCALITY_WAIT").getDefault)
+    recommendPySparkMemoryReservationConfig()
   }
 
   def calculateJobLevelRecommendations(): Unit = {
@@ -2433,7 +2499,7 @@ abstract class AutoTuner(
   private def calculatePinnedMemorySize(numExecutorCores: Int,
                                         hostOffHeapLimitSizeMB: Long): Long = {
     // Use new formula only for onPrem platform
-    if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+    if (useHostOffHeapLimitSizing) {
       // Calculate pinned pool-offHeap ratio * host.offHeapLimit.Size
       val ratioPinnedPoolSize = hostOffHeapLimitSizeMB *
         configProvider.getEntry("PINNED_MEM_OFFHEAP_RATIO").getDefault.toDouble
@@ -2463,7 +2529,7 @@ abstract class AutoTuner(
     offHeapMB: Long): Long = {
 
     // Use new formula only for onPrem platform when offHeapLimit is enabled
-    if (!platform.isPlatformCSP && isOffHeapLimitUserEnabled) {
+    if (useHostOffHeapLimitSizing) {
       val calculatedOverhead = totalMemMinusReserved - executorHeapMB - offHeapMB
 
       // Ensure the overhead is not negative and has a minimum value

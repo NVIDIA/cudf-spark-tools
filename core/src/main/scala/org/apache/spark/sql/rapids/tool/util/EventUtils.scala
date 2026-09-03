@@ -23,6 +23,7 @@ import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
+import org.json4s.JInt
 import org.json4s.jackson.JsonMethods.parse
 
 import org.apache.spark.internal.Logging
@@ -35,6 +36,19 @@ object EventUtils extends Logging {
   // A valid Spark catalog name must start with a letter, can contain letters, digits,
   // underscores, or dashes, and must not end with a dot.
   val SPARK_CATALOG_REGEX: Regex = """spark\\.sql\\.catalog\\.([A-Za-z][A-Za-z0-9_-]*)$""".r
+
+  /**
+   * Reads Spark 4's optional application exit code without depending on Spark 4 classes.
+   *
+   * TODO: Remove this JSON fallback and use SparkListenerApplicationEnd.exitCode when all
+   * supported Tools builds use Spark 4 or later.
+   * See https://github.com/NVIDIA/cudf-spark-tools/issues/1927.
+   */
+  def readApplicationExitCode(line: String): Option[Int] = {
+    Try(parse(line) \ "ExitCode").toOption.collect {
+      case JInt(value) if value.isValidInt => value.toInt
+    }
+  }
 
   // Set to keep track of missing classes
   private val missingEventClasses = mutable.HashSet[String]()

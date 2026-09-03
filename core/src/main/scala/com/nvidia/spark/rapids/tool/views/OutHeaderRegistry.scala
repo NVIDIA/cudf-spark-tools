@@ -68,8 +68,9 @@ object OutHeaderRegistry {
     "UnsupportedOpsProfileResult" ->
       Array("sqlID", "nodeID", "nodeName", "nodeDescription", "reason"),
     "AppInfoProfileResults" ->
-      Array("appName", "appId", "attemptId", "sparkUser", "startTime", "endTime", "duration",
-        "durationStr", "sparkRuntime", "sparkVersion", "pluginEnabled", "totalCoreSeconds"),
+      Array("appName", "appId", "attemptId", "sparkUser", "startTime", "endTime", "exitCode",
+        "duration", "durationStr", "sparkRuntime", "sparkVersion", "pluginEnabled",
+        "totalCoreSeconds"),
     "AppLevelRecommendationSignalsProfileResult" ->
       Array("appId", "numScanStagesWithGpuOom", "numGpuShuffleStagesWithContainerOom"),
     "AppLogPathProfileResults" ->

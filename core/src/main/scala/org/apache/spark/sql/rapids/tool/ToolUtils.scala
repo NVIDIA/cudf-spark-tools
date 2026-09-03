@@ -27,7 +27,6 @@ import com.nvidia.spark.rapids.tool.qualification.QualOutputWriter
 import org.apache.maven.artifact.versioning.ComparableVersion
 
 import org.apache.spark.internal.{config, Logging}
-import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.rapids.tool.plangraph.SparkPlanGraphNode
 import org.apache.spark.sql.rapids.tool.util.SparkRuntime
 
@@ -125,10 +124,6 @@ object ToolUtils extends Logging {
       properties.getOrElse("spark.rapids.sql.enabled", "true").toBoolean
     }.getOrElse(true) // Default to true if parsing fails, matching the default value
     hasPlugin && isEnabled
-  }
-
-  def showString(df: DataFrame, numRows: Int) = {
-    df.showString(numRows, 0)
   }
 
   /**

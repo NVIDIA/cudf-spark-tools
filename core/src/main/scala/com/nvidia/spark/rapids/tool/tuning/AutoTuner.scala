@@ -296,6 +296,12 @@ abstract class AutoTuner(
       .exists(_.trim.equalsIgnoreCase("true"))
   }
 
+  /**
+   * Whether AutoTuner can use the specialized host off-heap sizing path.
+   *
+   * CSPs do not support that sizing formula, so they must retain the normal budget-aware overhead
+   * path even when the host off-heap limit property is enabled.
+   */
   private lazy val useHostOffHeapLimitSizing: Boolean = {
     !platform.isPlatformCSP && isOffHeapLimitUserEnabled
   }
@@ -1067,7 +1073,8 @@ abstract class AutoTuner(
     )
     val pySparkMemMB = pySparkMemoryAdjustment.map(_.layoutCurrentMB)
       .getOrElse(platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L))
-    // Calculate executor memory overhead using new formula if OffHeapLimit.enabled=true
+    // Keep this calculation and final overhead selection on the same sizing path. Otherwise a CSP
+    // could skip the specialized calculation here but still bypass budget-aware overhead below.
     val executorMemOverhead = if (useHostOffHeapLimitSizing) {
       calculateExecutorMemoryOverhead(
         totalMemMinusReserved, executorHeapMB, sparkOffHeapMemMB)
@@ -1153,6 +1160,8 @@ abstract class AutoTuner(
           executorMemOverhead + defaultPinnedMem + defaultSpillMem
         }
       }
+      // Normal sizing includes pinned and spill pools in container overhead. Specialized sizing
+      // budgets those pools under the host off-heap limit, so only JVM overhead is protected here.
       val protectedOverheadFloorMB = if (useHostOffHeapLimitSizing) {
         executorMemOverhead
       } else {

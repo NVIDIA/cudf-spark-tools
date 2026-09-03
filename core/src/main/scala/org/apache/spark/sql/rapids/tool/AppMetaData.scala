@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import org.apache.spark.ui.UIUtils
  * @param startTime startTime of a Spark application
  * @param endTime endTime of the spark Application
  * @param attemptId attemptId of the application
+ * @param exitCode application exit code, when recorded in the event log
  */
 class AppMetaData(
     val eventLogPath: Option[String],
@@ -40,7 +41,8 @@ class AppMetaData(
     val sparkUser: String,
     val startTime: Long,
     var endTime: Option[Long] = None,
-    var attemptId: Int = 1) extends Identifiable[String] {
+    var attemptId: Int = 1,
+    var exitCode: Option[Int] = None) extends Identifiable[String] {
 
   // A private field to store the default identifier for the application.
   // This is derived from the event log path.
@@ -103,6 +105,10 @@ class AppMetaData(
 
   def setAttemptId(attemptId: Int): Unit = {
     this.attemptId = attemptId
+  }
+
+  def setExitCode(exitCode: Int): Unit = {
+    this.exitCode = Some(exitCode)
   }
 
   // Initialization code:

@@ -1362,4 +1362,45 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
         "spark.sql.autoBroadcastJoinThreshold", "") == "10485760")
     }
   }
+
+  test("application exit code is parsed when present") {
+    Seq(0, 13).foreach { exitCode =>
+      TrampolineUtil.withTempDir { tempDir =>
+        val eventLogFilePath = Paths.get(tempDir.getAbsolutePath, "test_eventlog")
+        // scalastyle:off line.size.limit
+        val eventLogContent =
+          s"""{"Event":"SparkListenerLogStart","Spark Version":"4.0.2"}
+            |{"Event":"SparkListenerApplicationStart","App Name":"ExitCode_Test","App ID":"local-exit-code-test","Timestamp":123456,"User":"testUser"}
+            |{"Event":"SparkListenerApplicationEnd","Timestamp":123460,"ExitCode":$exitCode}"""
+            .stripMargin
+        // scalastyle:on line.size.limit
+        Files.write(eventLogFilePath, eventLogContent.getBytes(StandardCharsets.UTF_8))
+
+        val app = new ApplicationInfo(hadoopConf,
+          EventLogPathProcessor.getEventLogInfo(
+            eventLogFilePath.toString, hadoopConf).head._1)
+
+        assert(app.getAppExitCode.contains(exitCode))
+      }
+    }
+  }
+
+  test("application exit code is unknown when absent") {
+    TrampolineUtil.withTempDir { tempDir =>
+      val eventLogFilePath = Paths.get(tempDir.getAbsolutePath, "test_eventlog")
+      // scalastyle:off line.size.limit
+      val eventLogContent =
+        """{"Event":"SparkListenerLogStart","Spark Version":"3.5.7"}
+          |{"Event":"SparkListenerApplicationStart","App Name":"Legacy_Test","App ID":"local-legacy-test","Timestamp":123456,"User":"testUser"}
+          |{"Event":"SparkListenerApplicationEnd","Timestamp":123460}""".stripMargin
+      // scalastyle:on line.size.limit
+      Files.write(eventLogFilePath, eventLogContent.getBytes(StandardCharsets.UTF_8))
+
+      val app = new ApplicationInfo(hadoopConf,
+        EventLogPathProcessor.getEventLogInfo(
+          eventLogFilePath.toString, hadoopConf).head._1)
+
+      assert(app.getAppExitCode.isEmpty)
+    }
+  }
 }

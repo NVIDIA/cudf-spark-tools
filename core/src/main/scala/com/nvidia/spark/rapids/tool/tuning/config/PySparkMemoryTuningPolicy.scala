@@ -51,6 +51,8 @@ object PySparkMemoryTuningPolicy {
   val RECOMMEND_TELEMETRY_CONFIGS = "PYSPARK_MEMORY_RECOMMEND_TELEMETRY_CONFIGS"
   val REBALANCE_SOURCE = "PYSPARK_MEMORY_REBALANCE_SOURCE"
   val PYSPARK_MEMORY_KEY = "spark.executor.pyspark.memory"
+  val YARN_IS_PYTHON_KEY = "spark.yarn.isPython"
+  val KUBERNETES_RESOURCE_TYPE_KEY = "spark.kubernetes.resource.type"
   val PROCESS_TREE_METRICS_KEY = "spark.executor.processTreeMetrics.enabled"
   val STAGE_EXECUTOR_METRICS_KEY = "spark.eventLog.logStageExecutorMetrics"
   val METRICS_POLLING_INTERVAL_KEY = "spark.executor.metrics.pollingInterval"

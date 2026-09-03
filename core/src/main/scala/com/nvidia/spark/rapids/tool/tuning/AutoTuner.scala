@@ -313,6 +313,29 @@ abstract class AutoTuner(
   /** Factory method to create the config provider - must be implemented by subclasses */
   protected def createConfigProvider(config: Option[TuningConfiguration]): ConfigProviderType
 
+  /**
+   * Return a private copy of a disabled PySpark memory-reservation definition, such as
+   * `spark.yarn.isPython` or `spark.kubernetes.resource.type`. Definitions loaded from the tuning
+   * table are shared, so enabling one in place would also enable it for later AutoTuner instances
+   * in the same JVM.
+   */
+  private def detachedTuningDefinition(key: String): TuningEntryDefinition = {
+    TuningEntryDefinition.getEntryDefinition(key).map { definition =>
+      new TuningEntryDefinition(
+        definition.label,
+        definition.description,
+        definition.enabled,
+        definition.level,
+        definition.category,
+        definition.bootstrapEntry,
+        definition.defaultSpark,
+        definition.modifiedBy,
+        definition.confType,
+        definition.specialValues,
+        definition.comments)
+    }.getOrElse(TuningEntryDefinition(key, enabled = false))
+  }
+
   private def createPluginManager(sortAcrossPlugins: Boolean): TuningPluginManager = {
     TuningPluginManager.builder
       .withTunerInst(this)
@@ -397,6 +420,11 @@ abstract class AutoTuner(
       val tuningDefn = baseMap.getOrElseUpdate(key,
         TuningEntryDefinition.getEntryDefinition(key).getOrElse(TuningEntryDefinition(key)))
       tuningDefn.markAsEnable()
+    }
+
+    Seq(PySparkMemoryTuningPolicy.YARN_IS_PYTHON_KEY,
+      PySparkMemoryTuningPolicy.KUBERNETES_RESOURCE_TYPE_KEY).foreach { key =>
+      baseMap.getOrElseUpdate(key, detachedTuningDefinition(key))
     }
 
     // Exclude properties specified in the skip list (Tool specific or
@@ -801,6 +829,59 @@ abstract class AutoTuner(
       configProvider.getEntry(PySparkMemoryTuningPolicy.METRICS_POLLING_INTERVAL).getDefault)
   }
 
+  /**
+   * Return the setting that makes the cluster manager include PySpark memory in the executor
+   * resource request.
+   */
+  private def pySparkMemoryReservationConfig: Option[(String, String)] = {
+    sparkMaster.collect {
+      case Yarn => PySparkMemoryTuningPolicy.YARN_IS_PYTHON_KEY -> "true"
+      case Kubernetes => PySparkMemoryTuningPolicy.KUBERNETES_RESOURCE_TYPE_KEY -> "python"
+    }
+  }
+
+  private def hasPositivePySparkMemory: Boolean = {
+    platform.getPySparkMemoryMB(getPropertyValue).exists(_ > 0L)
+  }
+
+  private def enablePySparkMemoryReservationConfig(): Unit = {
+    if (hasPositivePySparkMemory) {
+      pySparkMemoryReservationConfig.foreach { case (key, _) =>
+        finalTuningTable.get(key).foreach(_.markAsEnable())
+      }
+    }
+  }
+
+  /**
+   * Return whether the required reservation value is already effective or can be emitted.
+   * Rebalancing must not move memory into PySpark unless the cluster manager will reserve it.
+   */
+  private def isPySparkMemoryReservationConfigOutputEligible: Boolean = {
+    pySparkMemoryReservationConfig.forall { case (key, value) =>
+      if (skippedRecommendations.contains(key)) {
+        false
+      } else if (ignoreRecommendation(key)) {
+        getPropertyValue(key).contains(value)
+      } else {
+        getPropertyValue(key).contains(value) || finalTuningTable.get(key).exists { definition =>
+          val prospectiveEntry = TuningEntry.build(
+            key, getPropertyValue(key), None, Some(definition))
+          prospectiveEntry.setRecommendedValue(value)
+          shouldIncludeInFinalRecommendations(prospectiveEntry)
+        }
+      }
+    }
+  }
+
+  private def recommendPySparkMemoryReservationConfig(): Unit = {
+    if (hasPositivePySparkMemory) {
+      pySparkMemoryReservationConfig.foreach { case (key, value) =>
+        finalTuningTable.get(key).foreach(_.markAsEnable())
+        appendRecommendation(key, value)
+      }
+    }
+  }
+
   private def ceilToGiBInMB(value: BigDecimal): Option[Long] = {
     val gibibytes = (value / BigDecimal(1024)).setScale(0, BigDecimal.RoundingMode.CEILING)
     if (gibibytes.isValidLong) {
@@ -916,6 +997,10 @@ abstract class AutoTuner(
               " Increase the selected source capacity or choose a larger executor layout."
             case "source-capability" =>
               " executor overhead is supported only for YARN and Kubernetes targets."
+            case "memory-reservation" =>
+              pySparkMemoryReservationConfig.map { case (key, value) =>
+                s" Allow $key=$value so the cluster manager reserves PySpark memory."
+              }.getOrElse("")
             case "output-eligibility" =>
               " Remove the selected source and PySpark memory from exclusion or limited-logic " +
                 "lists to allow a full transfer."
@@ -946,6 +1031,8 @@ abstract class AutoTuner(
             PySparkMemoryRebalanceSource.Overhead &&
             !sparkMaster.contains(Yarn) && !sparkMaster.contains(Kubernetes)) {
           conflict("source-capability")
+        } else if (!isPySparkMemoryReservationConfigOutputEligible) {
+          conflict("memory-reservation")
         } else if (delta > availableDelta) {
           conflict("capacity")
         } else {
@@ -1455,6 +1542,7 @@ abstract class AutoTuner(
   }
 
   def calculateClusterLevelRecommendations(): Unit = {
+    enablePySparkMemoryReservationConfig()
     pySparkMemoryAdjustment.filter(adjustment =>
       adjustment.needsTelemetryRetry && pySparkMemoryTuningPolicy.recommendTelemetryConfigs)
       .foreach(_ => recommendPySparkTelemetrySettings())
@@ -1575,6 +1663,7 @@ abstract class AutoTuner(
       configProvider.getEntry("BATCH_SIZE_BYTES").getDefault)
     appendRecommendation("spark.locality.wait",
       configProvider.getEntry("LOCALITY_WAIT").getDefault)
+    recommendPySparkMemoryReservationConfig()
   }
 
   def calculateJobLevelRecommendations(): Unit = {

@@ -2693,8 +2693,121 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(!values.contains("spark.executor.processTreeMetrics.enabled"))
     assert(!values.contains("spark.eventLog.logStageExecutorMetrics"))
     assert(!values.contains("spark.executor.metrics.pollingInterval"))
+    assert(!values.contains("spark.yarn.isPython"))
+    assert(!values.contains("spark.kubernetes.resource.type"))
     val guidance = comments.mkString("\n")
     assert(!guidance.contains("PySpark memory autotuning needs a telemetry-enabled retry"))
+  }
+
+  forAll(Table(
+    ("sparkMaster", "reservationKey", "reservationValue", "otherKey", "otherValue"),
+    (Yarn, "spark.yarn.isPython", "true", "spark.kubernetes.resource.type", "python"),
+    (Kubernetes, "spark.kubernetes.resource.type", "python", "spark.yarn.isPython", "true")
+  )) { (sparkMaster, reservationKey, reservationValue, otherKey, otherValue) =>
+    test(s"positive PySpark memory recommends $reservationKey") {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin",
+        otherKey -> otherValue)
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(reliableProcessTreeMetricsSparkVersion))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(sparkMaster))
+      val (properties, _) =
+        autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+      assert(values("spark.executor.pyspark.memory") == "4g")
+      assert(values(reservationKey) == reservationValue)
+      assert(!values.contains(otherKey))
+    }
+  }
+
+  forAll(Table(
+    ("masterName", "sparkMaster"),
+    ("Standalone", Some(Standalone)),
+    ("Local", Some(Local)),
+    ("unspecified", None)
+  )) { (masterName, sparkMaster) =>
+    test(s"positive PySpark memory emits no cluster-manager marker for $masterName") {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(reliableProcessTreeMetricsSparkVersion))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, sparkMaster)
+      val (properties, _) =
+        autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+      assert(values("spark.executor.pyspark.memory") == "4g")
+      assert(!values.contains("spark.yarn.isPython"))
+      assert(!values.contains("spark.kubernetes.resource.type"))
+    }
+  }
+
+  test("target-enforced positive PySpark memory enables YARN memory reservation") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(reliableProcessTreeMetricsSparkVersion))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map("spark.executor.pyspark.memory" -> "4g"))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Yarn))
+    val (properties, _) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(values("spark.executor.pyspark.memory") == "4g")
+    assert(values("spark.yarn.isPython") == "true")
+    assert(!values.contains("spark.kubernetes.resource.type"))
+  }
+
+  test("non-positive PySpark memory does not surface memory-reservation properties") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.pyspark.memory" -> "0",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin",
+      "spark.yarn.isPython" -> "true",
+      "spark.kubernetes.resource.type" -> "python")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(reliableProcessTreeMetricsSparkVersion))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(Yarn))
+    val (properties, _) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+    assert(!values.contains("spark.yarn.isPython"))
+    assert(!values.contains("spark.kubernetes.resource.type"))
   }
 
   test("OVERHEAD PySpark rebalance on standalone emits no partial recommendation") {
@@ -2839,6 +2952,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
     assert(values("spark.executor.memory") == "29g")
     assert(values("spark.executor.pyspark.memory") == "7g")
+    assert(values("spark.kubernetes.resource.type") == "python")
+    assert(!values.contains("spark.yarn.isPython"))
     val coordinatedTotalMB = Seq("spark.executor.memory", "spark.executor.pyspark.memory")
       .map(key => StringUtils.convertToMB(values(key), Some(ByteUnit.BYTE))).sum
     assert(coordinatedTotalMB == 36L * 1024L)
@@ -2876,6 +2991,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
     assert(values("spark.executor.memory") == "29g")
     assert(values("spark.executor.pyspark.memory") == "7g")
+    assert(values("spark.yarn.isPython") == "true")
+    assert(!values.contains("spark.kubernetes.resource.type"))
     val coordinatedTotalMB = Seq("spark.executor.memory", "spark.executor.pyspark.memory")
       .map(key => StringUtils.convertToMB(values(key), Some(ByteUnit.BYTE))).sum
     assert(coordinatedTotalMB == 36L * 1024L)
@@ -2948,6 +3065,88 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(retryValues("spark.executor.metrics.pollingInterval") == "5000")
     assert(retryComments.count(_.contains("constraint=enforced")) == 1)
     assert(retryComments.exists(_.contains("telemetry-enabled retry")))
+  }
+
+  forAll(Table(
+    ("sparkMaster", "reservationKey", "enforcedValue", "isCompatible"),
+    (Yarn, "spark.yarn.isPython", "false", false),
+    (Yarn, "spark.yarn.isPython", "true", true),
+    (Kubernetes, "spark.kubernetes.resource.type", "java", false),
+    (Kubernetes, "spark.kubernetes.resource.type", "python", true)
+  )) { (sparkMaster, reservationKey, enforcedValue, isCompatible) =>
+    test(s"PySpark rebalance handles enforced $reservationKey=$enforcedValue") {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(reliableProcessTreeMetricsSparkVersion),
+        pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+        cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4.toString),
+        enforcedSparkProperties = Map(reservationKey -> enforcedValue),
+        preserveSparkProperties = List("spark.executor.memory"))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+        Some(targetClusterInfo))
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(sparkMaster))
+      val (properties, comments) =
+        autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+      assert(values("spark.executor.memory") == (if (isCompatible) "29g" else "32g"))
+      assert(values("spark.executor.pyspark.memory") == (if (isCompatible) "7g" else "4g"))
+      assert(values(reservationKey) == enforcedValue)
+      assert(comments.exists(_.comment.contains("constraint=memory-reservation")) ==
+        !isCompatible, comments.mkString("\n"))
+    }
+  }
+
+  forAll(Table(
+    ("sparkMaster", "reservationKey"),
+    (Yarn, "spark.yarn.isPython"),
+    (Kubernetes, "spark.kubernetes.resource.type")
+  )) { (sparkMaster, reservationKey) =>
+    test(s"excluded $reservationKey blocks a partial PySpark rebalance") {
+      val sourceProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.instances" -> "2",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.pyspark.memory" -> "4g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin")
+      val peakBytes = (BigDecimal("5.5") * BigDecimal(1024L * 1024L * 1024L)).toLong
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+        Some(reliableProcessTreeMetricsSparkVersion),
+        pySparkMemoryEvidence = Seq(PySparkMemoryEvidence(1, 0, Seq(peakBytes))))
+      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+        cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
+        gpuDevice = Some(GpuTypes.L4.toString),
+        preserveSparkProperties = List("spark.executor.memory"),
+        excludeSparkProperties = List(reservationKey))
+      val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+        Some(targetClusterInfo))
+      configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+        sparkProperties = sourceProps.toMap)
+
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform, Some(sparkMaster))
+      val (properties, comments) =
+        autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+      val values = properties.map(property => property.name -> property.getTuneValue()).toMap
+
+      assert(values("spark.executor.memory") == "32g")
+      assert(values("spark.executor.pyspark.memory") == "4g")
+      assert(!values.contains(reservationKey))
+      assert(comments.count(_.comment.contains("constraint=memory-reservation")) == 1,
+        comments.mkString("\n"))
+    }
   }
 
   test("PySpark conflict comments identify capacity and source capability") {
@@ -3207,6 +3406,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(values("spark.executor.metrics.pollingInterval") == "5000")
     assert(comments.exists(_.comment.contains("telemetry-enabled retry")))
     assert(values("spark.executor.pyspark.memory") == "4g")
+    assert(values("spark.kubernetes.resource.type") == "python")
+    assert(!values.contains("spark.yarn.isPython"))
   }
 
 }

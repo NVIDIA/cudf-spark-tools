@@ -2425,6 +2425,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
 
     assert(values("spark.executor.memory") == "29g")
     assert(values("spark.executor.pyspark.memory") == "7g")
+    assert(values("spark.kubernetes.resource.type") == "python")
+    assert(!values.contains("spark.yarn.isPython"))
     assert(properties.find(_.name == "spark.executor.pyspark.memory").exists(_.isTuned()))
     assert(!comments.exists(_.comment.contains("constraint=")), comments.mkString("\n"))
   }

@@ -562,12 +562,13 @@ class RapidsJarTool(RapidsTool, Generic[ToolResultHandlerT]):
     def _process_jar_arg(self):
         # TODO: use the StorageLib to download the jar file
         tools_jar_url = self.wrapper_options.get('toolsJar')
+        explicit_tools_jar = tools_jar_url is not None
         try:
             if tools_jar_url is None:
                 tools_jar_url = self.ctxt.get_rapids_jar_url()
 
             # Check if this is a local JAR from resources (to avoid race condition)
-            if self.ctxt.use_local_tools_jar():
+            if not explicit_tools_jar and self.ctxt.use_local_tools_jar():
                 # Use JAR directly from resources - no need to copy to work directory
                 jar_path = tools_jar_url
                 self.logger.info('Using tools jar directly from resources %s', jar_path)

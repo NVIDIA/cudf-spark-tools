@@ -103,6 +103,18 @@ trait AppInfoColumnarExchangeMetrics {
 }
 
 /**
+ * Exposes the raw consumer-stage shuffle input inventory to the AutoTuner.
+ *
+ * Both tools report the same record shape; only the provenance differs. The default fails closed
+ * so a provider that cannot produce an analysis can never enable a downward recommendation.
+ */
+trait AppInfoShuffleStageInputMetrics {
+  def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = {
+    ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Estimated)
+  }
+}
+
+/**
  * Base class for Profiling App Summary Info Provider.
  */
 class BaseProfilingAppSummaryInfoProvider
@@ -255,6 +267,11 @@ class SingleAppSummaryInfoProvider(
 
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = {
     SingleAppSummaryInfoProvider.computeMaxColumnarExchangeDataSizeBytes(app.sqlMetrics)
+  }
+
+  // Reuses the plan analysis the profiler already built rather than traversing the plans again.
+  override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = {
+    appInfo.planMetricProcessor.shuffleStageInputAnalysis
   }
 
   override def getClassPathEntries: Map[String, String] = {

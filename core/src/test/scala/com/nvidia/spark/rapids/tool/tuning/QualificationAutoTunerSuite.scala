@@ -20,9 +20,10 @@ import java.nio.file.Paths
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, PlatformFactory, PlatformNames, ToolTestUtils}
-import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence}
-import com.nvidia.spark.rapids.tool.qualification.{QualificationArgs, QualificationMain}
+import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
+import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence, ShuffleInputProvenance, ShuffleStageInputAnalysis}
+import com.nvidia.spark.rapids.tool.qualification.{PluginTypeChecker, QualificationArgs, QualificationMain}
 import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ConfTypeEnum, LevelEnum, TuningConfigEntry, TuningEntryDefinition}
 import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
@@ -33,7 +34,8 @@ import org.scalatest.prop.TableFor3
 
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{MatchingInstanceTypeNotFoundException, RecommendedClusterInfo}
-import org.apache.spark.sql.rapids.tool.util.FSUtils
+import org.apache.spark.sql.rapids.tool.qualification.QualificationAppInfo
+import org.apache.spark.sql.rapids.tool.util.{FSUtils, RapidsToolsConfUtil}
 
 /**
  * Suite to test the Qualification Tool's AutoTuner
@@ -2395,6 +2397,123 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       assert(properties.nonEmpty,
         s"AutoTuner should produce recommendations for GPU device '$gpuName'")
     }
+  }
+
+  //
+  // Downward shuffle partition pass on CPU event logs
+  //
+
+  private val QUAL_GiB = 1024L * 1024L * 1024L
+
+  /**
+   * Builds a Qualification AutoTuner over a CPU application whose normal recommendation is 8000
+   * shuffle partitions and whose worst consumer stage carries the given uncompressed input.
+   *
+   * The downward pass ships disabled, so every test here opts in explicitly. Extra entries the
+   * caller supplies are merged on top of that opt-in.
+   */
+  private def buildDownwardPassAutoTuner(
+      shuffleStageInputAnalysis: ShuffleStageInputAnalysis,
+      extraDefaultConfigs: List[TuningConfigEntry] = List.empty,
+      extraQualificationConfigs: List[TuningConfigEntry] = List.empty): AutoTuner = {
+    val userProvidedTuningConfigs = Some(ToolTestUtils.buildTuningConfigs(
+      default = TuningConfigEntry(name = "DOWNWARD_SHUFFLE_ENABLED", default = "true") ::
+        extraDefaultConfigs,
+      qualification = extraQualificationConfigs))
+    val sparkProps = defaultSparkProps ++ mutable.Map(
+      "spark.executor.memory" -> "212992MiB",
+      "spark.sql.adaptive.enabled" -> "true",
+      "spark.sql.shuffle.partitions" -> "8000")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sparkProps,
+      Some(testSparkVersion), shuffleStageInputAnalysis = shuffleStageInputAnalysis)
+    val platform = PlatformFactory.createInstance(PlatformNames.EMR)
+    platform.configureClusterInfoFromEventLog(
+      coresPerExecutor = 32, execsPerNode = 4, numExecs = 20, numExecutorNodes = 5,
+      sparkProperties = sparkProps.toMap, systemProperties = Map.empty)
+    buildAutoTunerForTests(infoProvider, platform, None, userProvidedTuningConfigs)
+  }
+
+  private def cpuStageInput(bytes: Long): ShuffleStageInputAnalysis = {
+    completeShuffleStageInputs(Seq(4 -> bytes), provenance = ShuffleInputProvenance.Estimated)
+  }
+
+  /** Task slots of the cluster this fixture recommends: one executor of 32 cores. */
+  private val QUAL_SLOTS = 32
+
+  test("test AutoTuner for Qualification lowers shuffle partitions using the CPU input factor") {
+    // 1000 GiB of CPU exchange data at the qualification factor of 0.8 estimates 800 GiB of GPU
+    // input, which needs 800 partitions: exactly 25 whole waves of 32 slots.
+    val autoTuner = buildDownwardPassAutoTuner(cpuStageInput(1000L * QUAL_GiB))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
+      QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+    val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
+    assertExpectedLinesExist(
+      Seq("--conf spark.sql.shuffle.partitions=800",
+        "--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=800"),
+      autoTunerOutput)
+    // The comment must say the input was estimated, not measured, for a CPU event log, and it must
+    // name the wave arithmetic so the recommendation can be audited without re-running the tool.
+    val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 800"))
+    assert(applied.size == 1,
+      s"expected exactly one applied comment in: ${comments.map(_.comment)}")
+    assert(applied.head.contains("estimated"))
+    assert(applied.head.contains("input size factor 0.8"))
+    assert(applied.head.contains(s"25 execution wave(s) of $QUAL_SLOTS cluster task slots"))
+  }
+
+  test("test AutoTuner for Qualification honours a custom input size factor") {
+    // A factor of 0.4 estimates 400 GiB, which needs 400 partitions and rounds up to 13 waves.
+    val autoTuner = buildDownwardPassAutoTuner(cpuStageInput(1000L * QUAL_GiB),
+      extraQualificationConfigs = List(
+        TuningConfigEntry(name = "DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR", default = "0.4")))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
+      QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+    val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
+    assertExpectedLinesExist(Seq("--conf spark.sql.shuffle.partitions=416"), autoTunerOutput)
+    val applied = comments.map(_.comment).filter(_.contains("lowered from 8000 to 416"))
+    assert(applied.size == 1,
+      s"expected exactly one applied comment in: ${comments.map(_.comment)}")
+    assert(applied.head.contains("input size factor 0.4"))
+    assert(applied.head.contains("raw requirement 400 partitions"))
+    assert(applied.head.contains(s"13 execution wave(s) of $QUAL_SLOTS cluster task slots"))
+  }
+
+  test("test AutoTuner for Qualification keeps the recommendation when evidence is incomplete") {
+    val autoTuner = buildDownwardPassAutoTuner(
+      incompleteShuffleStageInputs(ShuffleInputProvenance.Estimated))
+    val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
+      QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+    val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
+    assertExpectedLinesExist(Seq("--conf spark.sql.shuffle.partitions=8000"), autoTunerOutput)
+    assert(comments.map(_.comment).count(_.contains("could not be measured")) == 1)
+  }
+
+  test("test AutoTuner for Qualification provider reuses the existing SQL plan analyzer") {
+    val hadoopConf = RapidsToolsConfUtil.newHadoopConf()
+    val (_, allEventLogs) = EventLogPathProcessor.processAllPaths(
+      None, None, List(s"$qualLogDir/nds_q86_test"), hadoopConf)
+    val app = QualificationAppInfo.createApp(allEventLogs.head, hadoopConf,
+      new PluginTypeChecker(), reportSqlLevel = false, mlOpsEnabled = false,
+      penalizeTransitions = true, PlatformFactory.createInstance()) match {
+      case Right(a) => a
+      case Left(_) => fail("could not build the qualification application")
+    }
+    val sqlAnalyzer = AppSQLPlanAnalyzer(app)
+    val rawAggMetrics = QualSparkMetricsAggregator.getAggRawMetrics(app, 1, Some(sqlAnalyzer))
+
+    val withAnalyzer =
+      new QualAppSummaryInfoProvider(app, None, rawAggMetrics, Seq.empty, Some(sqlAnalyzer))
+    val analysis = withAnalyzer.getShuffleStageInputAnalysis
+    // The provider must hand back the analyzer's own cached analysis, not a fresh traversal.
+    assert(analysis eq sqlAnalyzer.shuffleStageInputAnalysis)
+    assert(analysis.isComplete)
+    assert(analysis.provenance == ShuffleInputProvenance.Estimated)
+    assert(analysis.records.nonEmpty)
+
+    // Without an analyzer there is no evidence at all, which must fail closed.
+    val withoutAnalyzer =
+      new QualAppSummaryInfoProvider(app, None, rawAggMetrics, Seq.empty, None)
+    assert(!withoutAnalyzer.getShuffleStageInputAnalysis.analyzed)
   }
 
   test("Qualification PySpark evidence atomically rebalances executor heap") {

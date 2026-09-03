@@ -54,7 +54,9 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val maxColumnarExchangeDataSizeBytes: Option[Long] = None,
     val maxFileScanInputOverride: Option[Option[Double]] = None,
     val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
-    val hasSqlCache: Boolean = false)
+    val hasSqlCache: Boolean = false,
+    val shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
+      ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured))
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
   override def getMaxFileScanInput: Option[Double] =
@@ -78,6 +80,7 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = maxColumnarExchangeDataSizeBytes
   override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = pySparkMemoryEvidence
   override def hasSqlCacheEvidence: Boolean = hasSqlCache
+  override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = shuffleStageInputAnalysis
 
   /**
    * Sets the spark master property in the properties map.
@@ -148,12 +151,45 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       maxColumnarExchangeDataSizeBytes: Option[Long] = None,
       maxFileScanInputOverride: Option[Option[Double]] = None,
       pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
-      hasSqlCache: Boolean = false): AppInfoProviderMockTest = {
+      hasSqlCache: Boolean = false,
+      shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
+        ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)
+  ): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
       gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes,
-      maxFileScanInputOverride, pySparkMemoryEvidence, hasSqlCache)
+      maxFileScanInputOverride, pySparkMemoryEvidence, hasSqlCache, shuffleStageInputAnalysis)
+  }
+
+  /**
+   * Builds a complete shuffle-stage input analysis with one record per (stage, bytes) pair.
+   * Used to drive the downward shuffle-partition pass from AutoTuner tests.
+   */
+  protected def completeShuffleStageInputs(
+      stageInputs: Seq[(Int, Long)],
+      provenance: ShuffleInputProvenance = ShuffleInputProvenance.Measured,
+      numBranches: Int = 1,
+      hasPositiveSpill: Boolean = false,
+      hasSkew: Boolean = false,
+      appHasFailedStage: Boolean = false): ShuffleStageInputAnalysis = {
+    val records = stageInputs.map { case (stageId, bytes) =>
+      ShuffleStageInputRecord(sqlId = 0L, stageId = stageId, stageAttemptId = 0,
+        totalShuffleInputBytes = bytes, numShuffleBranches = numBranches, numTasks = 200,
+        hasPositiveSpill = hasPositiveSpill, hasSkew = hasSkew)
+    }
+    ShuffleStageInputAnalysis(records, Seq.empty, provenance,
+      appHasFailedStage = appHasFailedStage)
+  }
+
+  /** Builds an analysis that ran but found a gap, which must keep the normal recommendation. */
+  protected def incompleteShuffleStageInputs(
+      provenance: ShuffleInputProvenance = ShuffleInputProvenance.Measured
+  ): ShuffleStageInputAnalysis = {
+    ShuffleStageInputAnalysis(
+      Seq.empty,
+      Seq(ShuffleStageInputIncompleteReason.MissingExchangeMetric(0L, 3L, "Exchange")),
+      provenance)
   }
 
   /**

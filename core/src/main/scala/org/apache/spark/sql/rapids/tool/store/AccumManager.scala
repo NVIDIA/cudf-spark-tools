@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import scala.collection.{mutable, Map}
 import com.nvidia.spark.rapids.tool.analysis.StatisticsMetrics
 
 import org.apache.spark.scheduler.AccumulableInfo
+import org.apache.spark.sql.rapids.tool.util.EventUtils
 
 /**
  * A class that manages task/stage accumulables -
@@ -31,6 +32,9 @@ class AccumManager {
     new mutable.HashMap[Long, AccumInfo]()
   }
 
+  // Stage attempts that reported positive GPU spill. See [[hasGpuSpillEvidence]].
+  private val gpuSpillStageAttempts: mutable.HashSet[(Int, Int)] = mutable.HashSet.empty
+
   private def getOrCreateAccumInfo(id: Long, name: Option[String]): AccumInfo = {
     accumInfoMap.getOrElseUpdate(id, AccumInfo(AccumMetaRef(id, name)))
   }
@@ -40,9 +44,48 @@ class AccumManager {
     accumInfoRef.addAccumToStage(stageId, accumulableInfo)
   }
 
-  def addAccToTask(stageId: Int, accumulableInfo: AccumulableInfo): Unit = {
+  /**
+   * Records a task-level accumulable.
+   *
+   * The per-accumulator statistics are intentionally keyed by stage only (see [[AccumInfo]]).
+   * The stage attempt is additionally retained for the GPU spill metrics, because a downward
+   * tuning decision must be able to tell spill in a failed attempt apart from spill in the
+   * later successful attempt it selected.
+   */
+  def addAccToTask(stageId: Int, stageAttemptId: Int, accumulableInfo: AccumulableInfo): Unit = {
     val accumInfoRef = getOrCreateAccumInfo(accumulableInfo.id, accumulableInfo.name)
     accumInfoRef.addAccumToTask(stageId, accumulableInfo)
+    recordGpuSpillAttempt(stageId, stageAttemptId, accumulableInfo)
+  }
+
+  /**
+   * Notes the stage attempt when a GPU spill accumulable reports a positive update.
+   *
+   * Only the spill metric names are tracked, so this adds a bounded amount of state rather than
+   * duplicating every accumulator per attempt.
+   */
+  private def recordGpuSpillAttempt(
+      stageId: Int, stageAttemptId: Int, accumulableInfo: AccumulableInfo): Unit = {
+    val isSpillMetric =
+      accumulableInfo.name.exists(AccumManager.GPU_SPILL_METRIC_NAMES.contains)
+    if (isSpillMetric) {
+      val positiveUpdate = accumulableInfo.update
+        .flatMap(EventUtils.parseAccumFieldToLong)
+        .exists(_ > 0L)
+      if (positiveUpdate) {
+        gpuSpillStageAttempts += ((stageId, stageAttemptId))
+      }
+    }
+  }
+
+  /**
+   * True when the given stage attempt reported any positive GPU spill activity.
+   *
+   * GPU host and disk spill are not visible in Spark's task metrics, so this is the only
+   * attempt-scoped spill evidence available for GPU event logs.
+   */
+  def hasGpuSpillEvidence(stageId: Int, stageAttemptId: Int): Boolean = {
+    gpuSpillStageAttempts.contains((stageId, stageAttemptId))
   }
 
   def getAccStageIds(id: Long): Set[Int] = {
@@ -73,4 +116,16 @@ class AccumManager {
   def applyToAccumInfoMap(f: AccumInfo => Unit): Unit = {
     accumInfoMap.values.foreach(f)
   }
+}
+
+object AccumManager {
+  /**
+   * RAPIDS accumulator names that indicate the GPU spilled. These are reported as durations, so
+   * only their positive/zero state is meaningful here, not their magnitude.
+   */
+  val GPU_SPILL_METRIC_NAMES: Set[String] = Set(
+    "gpuSpillToHostTime",
+    "gpuSpillToDiskTime",
+    "gpuReadSpillFromHostTime",
+    "gpuReadSpillFromDiskTime")
 }

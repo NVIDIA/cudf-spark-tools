@@ -17,10 +17,12 @@
 package com.nvidia.spark.rapids.tool
 
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
+import com.nvidia.spark.rapids.tool.analysis.AppSQLPlanAnalyzer
 import com.nvidia.spark.rapids.tool.profiling.{AppInfoColumnarExchangeMetrics,
   AppInfoJobStageAggMetricsVisitor, AppInfoPropertyGetter, AppInfoReadMetrics,
-  AppInfoSqlTaskAggMetricsVisitor, AppInfoSQLTaskInputSizes, BaseProfilingAppSummaryInfoProvider,
-  DataSourceProfileResult, ProfilerResult, PySparkMemoryEvidence, SingleAppSummaryInfoProvider}
+  AppInfoShuffleStageInputMetrics, AppInfoSqlTaskAggMetricsVisitor, AppInfoSQLTaskInputSizes,
+  BaseProfilingAppSummaryInfoProvider, DataSourceProfileResult, ProfilerResult,
+  PySparkMemoryEvidence, SingleAppSummaryInfoProvider}
 import com.nvidia.spark.rapids.tool.tuning.QualAppSummaryInfoProvider
 
 import org.apache.spark.sql.rapids.tool.ToolUtils
@@ -35,7 +37,8 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
   with AppInfoSqlTaskAggMetricsVisitor
   with AppInfoSQLTaskInputSizes
   with AppInfoReadMetrics
-  with AppInfoColumnarExchangeMetrics {
+  with AppInfoColumnarExchangeMetrics
+  with AppInfoShuffleStageInputMetrics {
   def isAppInfoAvailable = false
   override def getAllProperties: Map[String, String] = Map[String, String]()
   override def getSparkProperty(propKey: String): Option[String] = None
@@ -89,12 +92,15 @@ object AppSummaryInfoBaseProvider {
    * tool.
    * @param appInfo
    * @param appAggStats optional aggregate of application stats
+   * @param sqlAnalyzer the SQL plan analyzer already built for this application, reused so the
+   *                    plans are not traversed a second time
    * @return object that can be used by the AutoTuner to calculate the recommendations
    */
   def fromQualAppInfo(appInfo: QualificationAppInfo,
       appAggStats: Option[QualificationSummaryInfo] = None,
       rawAggMetrics: AggRawMetricsResult,
-      dsInfo: Seq[DataSourceProfileResult]): AppSummaryInfoBaseProvider = {
-    new QualAppSummaryInfoProvider(appInfo, appAggStats, rawAggMetrics, dsInfo)
+      dsInfo: Seq[DataSourceProfileResult],
+      sqlAnalyzer: Option[AppSQLPlanAnalyzer] = None): AppSummaryInfoBaseProvider = {
+    new QualAppSummaryInfoProvider(appInfo, appAggStats, rawAggMetrics, dsInfo, sqlAnalyzer)
   }
 }

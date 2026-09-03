@@ -22,8 +22,8 @@ import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathPro
   PlatformFactory, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
 import com.nvidia.spark.rapids.tool.profiling.{ApplicationSummaryInfo, CollectInformation,
-  DataSourceProfileResult, ProfileArgs, PySparkMemoryEvidence, SingleAppSummaryInfoProvider,
-  StageAggTaskMetricsProfileResult}
+  DataSourceProfileResult, ProfileArgs, PySparkMemoryEvidence, ShuffleInputProvenance,
+  ShuffleStageInputAnalysis, SingleAppSummaryInfoProvider, StageAggTaskMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 
 import org.apache.spark.sql.rapids.tool.AccumToStageRetriever
@@ -188,6 +188,9 @@ class FileScanInputMetricsSuite extends ProfilingAutoTunerSuiteBase {
     override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
     override def scanStagesWithGpuOom: Set[Long] = Set.empty
     override def getClassPathEntries: Map[String, String] = Map.empty
+    // This stub carries no ApplicationInfo, so the plan analysis it would come from is absent.
+    override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis =
+      ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)
   }
 
   private def maxPartitionRecommendation(

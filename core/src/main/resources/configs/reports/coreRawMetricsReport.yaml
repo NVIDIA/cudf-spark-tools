@@ -875,8 +875,10 @@ reportDefinitions:
       - label: coreRawGpuStageLevelAggregatedTaskMetricsCSV
         description: >-
           GPU task metric aggregations at stage level. Long-format: one row per
-          (stageId, metricName). Auto-discovered from accumulator names starting
-          with gpu, perfio.s3., or equal to multithreadReaderMaxParallelism.
+          (stageId, metricName). Discovered from configs/metrics/metricCatalog.yaml, plus the
+          legacy name prefixes gpu and perfio. and the literal
+          multithreadReaderMaxParallelism, so a metric added after a tools release is still
+          reported.
         fileName: gpu_stage_level_aggregated_task_metrics.csv
         scope: per-app
         columns:
@@ -895,19 +897,24 @@ reportDefinitions:
           - name: unit
             dataType: String
             description: >-
-              ms for time/wait metrics, bytes for byte metrics, count otherwise.
+              bytes, ms or count. Declared per metric in configs/metrics/metricCatalog.yaml;
+              a metric absent from that catalog falls back to a name-based heuristic for the
+              label only, and no value is scaled by it.
           - name: sum
             dataType: Long
             description: >-
               Total across tasks in the stage. Empty for max-aggregated metrics.
           - name: max
-            dataType: Long
+            dataType: Double
             description: >-
               Peak per-task value in the stage.
           - name: avg
-            dataType: Long
+            dataType: Double
             description: >-
-              Rolling per-task average. Empty for max-aggregated metrics.
+              Rolling per-task average. For a max-aggregated metric this is the mean across
+              tasks of each task's own peak, which is a different quantity from sum and is
+              populated. sum stays empty for those metrics, because adding per-task peaks is
+              meaningless when the peaks never coexist.
       - label: coreRawGpuSqlLevelAggregatedTaskMetricsCSV
         description: >-
           GPU task metric aggregations at SQL level. Rolls up stage-level GPU
@@ -928,20 +935,24 @@ reportDefinitions:
           - name: unit
             dataType: String
             description: >-
-              ms / bytes / count.
+              bytes, ms or count. Declared per metric in configs/metrics/metricCatalog.yaml;
+              a metric absent from that catalog falls back to a name-based heuristic for the
+              label only, and no value is scaled by it.
           - name: sum
             dataType: Long
             description: >-
               Sum of stage sums. Empty for max-aggregated metrics.
           - name: max
-            dataType: Long
+            dataType: Double
             description: >-
               Max of stage maxes.
           - name: avg
-            dataType: Long
+            dataType: Double
             description: >-
-              Task-weighted average across stages. Empty for max-aggregated
-              metrics.
+              Task-weighted average across the stages in the SQL. Populated for
+              max-aggregated metrics too, where it is the mean across tasks of each task's
+              own peak -- a different quantity from sum, which stays empty for those
+              metrics because per-task peaks never coexist.
       - label: coreRawGpuAppLevelAggregatedTaskMetricsCSV
         description: >-
           GPU task metric aggregations at application level. One row per
@@ -961,21 +972,25 @@ reportDefinitions:
           - name: unit
             dataType: String
             description: >-
-              ms / bytes / count.
+              bytes, ms or count. Declared per metric in configs/metrics/metricCatalog.yaml;
+              a metric absent from that catalog falls back to a name-based heuristic for the
+              label only, and no value is scaled by it.
           - name: sum
             dataType: Long
             description: >-
               Sum across all stages in the app. Empty for max-aggregated
               metrics.
           - name: max
-            dataType: Long
+            dataType: Double
             description: >-
               Overall peak reading any task produced during the run.
           - name: avg
-            dataType: Long
+            dataType: Double
             description: >-
-              Task-weighted average across all stages. Empty for
-              max-aggregated metrics.
+              Task-weighted average across all stages in the app. Populated for
+              max-aggregated metrics too, where it is the mean across tasks of each task's
+              own peak -- a different quantity from sum, which stays empty for those
+              metrics because per-task peaks never coexist.
       # AccumProfileResults
       - label: coreRawStageLevelAllMetricsCSV
         description: >-
@@ -996,19 +1011,19 @@ reportDefinitions:
             description: >-
               TBD
           - name: min
-            dataType: Long
+            dataType: Double
             description: >-
               TBD
           - name: median
-            dataType: Long
+            dataType: Double
             description: >-
               TBD
           - name: max
-            dataType: Long
+            dataType: Double
             description: >-
               TBD
           - name: total
-            dataType: Long
+            dataType: Double
             description: >-
               TBD
       # RapidsPropertyProfileResult

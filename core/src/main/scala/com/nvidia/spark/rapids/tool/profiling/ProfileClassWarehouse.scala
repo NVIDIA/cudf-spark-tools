@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.profiling
 
 import scala.collection.Map
 
-import com.nvidia.spark.rapids.tool.analysis.StatisticsMetrics
+import com.nvidia.spark.rapids.tool.analysis.{MetricCatalog, StatisticsMetrics}
 import com.nvidia.spark.rapids.tool.views.OutHeaderRegistry
 
 import org.apache.spark.resource.{ExecutorResourceRequest, TaskResourceRequest}
@@ -377,24 +377,32 @@ case class AccumProfileResults(
     OutHeaderRegistry.outputHeaders("AccumProfileResults")
   }
 
+  /**
+   * Values are stored as integers, so a metric the catalog declares as decimal is held in
+   * fixed-point units and must be divided before display. A no-op for every other metric.
+   */
+  private def render(value: Long): String = {
+    MetricCatalog.formatStoredValue(value, accMetaRef.storageScale)
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(stageId.toString,
       accMetaRef.id.toString,
       accMetaRef.getName(),
-      min.toString,
-      median.toString,
-      max.toString,
-      total.toString)
+      render(min),
+      render(median),
+      render(max),
+      render(total))
   }
 
   override def convertToCSVSeq(): Array[String] = {
     Array(stageId.toString,
       accMetaRef.id.toString,
       accMetaRef.name.csvValue,
-      min.toString,
-      median.toString,
-      max.toString,
-      total.toString)
+      render(min),
+      render(median),
+      render(max),
+      render(total))
   }
 }
 
@@ -1599,15 +1607,20 @@ case class StageAggGpuMetricsProfileResult(
     OutHeaderRegistry.outputHeaders("StageAggGpuMetricsProfileResult")
   }
 
+  /** Divides out the fixed-point scale of a decimal metric; a no-op for every other metric. */
+  private def render(value: Option[Long]): String = {
+    value.map(MetricCatalog.DEFAULT.formatValue(metricName, _)).getOrElse("")
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(
       stageId.toString,
       numTasks.toString,
       metricName,
       unit,
-      sum.map(_.toString).getOrElse(""),
-      max.map(_.toString).getOrElse(""),
-      avg.map(_.toString).getOrElse(""))
+      render(sum),
+      render(max),
+      render(avg))
   }
 
   override def convertToCSVSeq(): Array[String] = convertToSeq()
@@ -1632,14 +1645,19 @@ case class SQLAggGpuMetricsProfileResult(
     OutHeaderRegistry.outputHeaders("SQLAggGpuMetricsProfileResult")
   }
 
+  /** Divides out the fixed-point scale of a decimal metric; a no-op for every other metric. */
+  private def render(value: Option[Long]): String = {
+    value.map(MetricCatalog.DEFAULT.formatValue(metricName, _)).getOrElse("")
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(
       sqlId.toString,
       metricName,
       unit,
-      sum.map(_.toString).getOrElse(""),
-      max.map(_.toString).getOrElse(""),
-      avg.map(_.toString).getOrElse(""))
+      render(sum),
+      render(max),
+      render(avg))
   }
 
   override def convertToCSVSeq(): Array[String] = convertToSeq()
@@ -1662,14 +1680,19 @@ case class AppAggGpuMetricsProfileResult(
     OutHeaderRegistry.outputHeaders("AppAggGpuMetricsProfileResult")
   }
 
+  /** Divides out the fixed-point scale of a decimal metric; a no-op for every other metric. */
+  private def render(value: Option[Long]): String = {
+    value.map(MetricCatalog.DEFAULT.formatValue(metricName, _)).getOrElse("")
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(
       appId,
       metricName,
       unit,
-      sum.map(_.toString).getOrElse(""),
-      max.map(_.toString).getOrElse(""),
-      avg.map(_.toString).getOrElse(""))
+      render(sum),
+      render(max),
+      render(avg))
   }
 
   override def convertToCSVSeq(): Array[String] = convertToSeq()

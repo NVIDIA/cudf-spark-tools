@@ -410,30 +410,18 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
   // GPU task metric aggregations (Stage / SQL / App)
   // ---------------------------------------------------------------------------
   //
-  // Discovery convention: an accumulator is a GPU task metric if its name
-  //   - starts with "gpu",  OR
-  //   - starts with "perfio.s3.", OR
-  //   - equals "multithreadReaderMaxParallelism".
-  // Unit convention (from name): contains Time|Wait → ms (raw ns / 1e6);
-  // contains Bytes → bytes; otherwise → count.
-  // Max-aggregated metrics are discriminated via AccumMetaRef.isAggregateByMax;
-  // for those, sum and avg are empty and only max is meaningful.
+  // Discovery lives in MetricCatalog.isGpuReportedMetric and is cached per accumulator id on
+  // AccumMetaRef, so the rule is stated once rather than reconstructed at each call site.
+  //
+  // Unit comes from the catalog, which declares it per metric. An undeclared metric falls back
+  // to the legacy name heuristic, which is label-only: nothing is scaled by it.
+  //
+  // There is deliberately no value conversion here. EventUtils.parseAccumFieldToLong already
+  // normalizes every serialized form to a canonical unit -- a plain integer stays raw,
+  // "00:00:01.773" becomes 1773 milliseconds, "3.28GB (3526702303 bytes)" becomes bytes -- so
+  // converting again is what silently deleted every timing metric from this report.
 
-  private def isGpuMetric(name: String): Boolean = {
-    name.startsWith("gpu") ||
-      name.startsWith("perfio.s3.") ||
-      name == "multithreadReaderMaxParallelism"
-  }
-
-  private def unitForMetric(name: String): String = {
-    if (name.contains("Time") || name.contains("Wait")) "ms"
-    else if (name.contains("Bytes")) "bytes"
-    else "count"
-  }
-
-  private def convertValue(name: String, raw: Long): Long = {
-    if (name.contains("Time") || name.contains("Wait")) raw / 1000000L else raw
-  }
+  private def unitForMetric(name: String): String = MetricCatalog.DEFAULT.unitFor(name)
 
   /**
    * Aggregate GPU task accumulators by stage. Emits one row per (stageId,
@@ -442,7 +430,7 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
    */
   def aggregateGpuMetricsByStage(index: Int): Seq[StageAggGpuMetricsProfileResult] = {
     val gpuAccums = app.accumManager.accumInfoMap.values.filter { ai =>
-      isGpuMetric(ai.infoRef.getName())
+      ai.infoRef.isGpuReportedMetric
     }.toSeq
     if (gpuAccums.isEmpty) {
       return Seq.empty
@@ -467,14 +455,20 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
               s"This will be excluded from task-weighted averages at SQL/app level.")
             0
           }
-          val (sum, max, avg) = if (isMax) {
-            (None: Option[Long],
-              Some(convertValue(name, stats.max)),
-              None: Option[Long])
+          // The arithmetic mean, from the raw sum and count rather than from `med`. `med` is a
+          // rolling mean recomputed with integer division on every update, so it ratchets toward
+          // the floor: on a real log it reports 1 for a metric whose true mean is 5.89, and 5 for
+          // one whose true mean is 12.03. Dividing once is correct to within truncation.
+          val avg = ai.getRawStatsForStage(stageId).flatMap { raw =>
+            if (raw.count > 0L) Some(raw.total / raw.count) else None
+          }
+          // sum stays empty for a max-aggregated metric: adding up per-task peaks is meaningless
+          // because those peaks never coexist. avg does not -- it is the mean across tasks of
+          // each task's own peak, which is a genuinely different quantity.
+          val (sum, max) = if (isMax) {
+            (None: Option[Long], Some(stats.max))
           } else {
-            (Some(convertValue(name, stats.total)),
-              Some(convertValue(name, stats.max)),
-              Some(convertValue(name, stats.med)))
+            (Some(stats.total), Some(stats.max))
           }
           // Skip rows carrying no signal (both sum and max zero/absent).
           val zeroSum = sum.forall(_ == 0L)

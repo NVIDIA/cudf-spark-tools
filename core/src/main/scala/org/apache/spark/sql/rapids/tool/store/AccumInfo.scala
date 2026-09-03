@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ import scala.collection.mutable
 import com.nvidia.spark.rapids.tool.analysis.StatisticsMetrics
 
 import org.apache.spark.scheduler.AccumulableInfo
+import org.apache.spark.sql.rapids.tool.util.EventUtils
 import org.apache.spark.sql.rapids.tool.util.EventUtils.parseAccumFieldToLong
+
 
 /**
  * Maintains the accumulator information for a single accumulator.
@@ -57,7 +59,7 @@ class AccumInfo(val infoRef: AccumMetaRef) {
   def addAccumToStage(stageId: Int,
       accumulableInfo: AccumulableInfo,
       update: Option[Long] = None): Unit = {
-    val parsedValue = accumulableInfo.value.flatMap(parseAccumFieldToLong)
+    val parsedValue = accumulableInfo.value.flatMap(parseValue)
     // in case there is an out of order event, the value showing up later could be
     // lower-than the previous value. In that case we should take the maximum.
     val existingEntry = stagesStatMap.getOrElse(stageId,
@@ -97,7 +99,7 @@ class AccumInfo(val infoRef: AccumMetaRef) {
     // 5. Increase total by adding the incoming update for a task
     // 6. Create final object and update map
     // TODO: update nomenclature from med to rolling average
-    val parsedUpdateValue = accumulableInfo.update.flatMap(parseAccumFieldToLong)
+    val parsedUpdateValue = accumulableInfo.update.flatMap(parseValue)
     // we need to update the stageMap if the stageId does not exist in the map
     parsedUpdateValue.foreach { value =>
       val stats = stagesStatMap.getOrElse(stageId,
@@ -111,6 +113,20 @@ class AccumInfo(val infoRef: AccumMetaRef) {
       )
       stagesStatMap.put(stageId, newStats)
     }
+  }
+
+  /**
+   * Parses a raw accumulable value, applying the fixed-point storage scale the metric catalog
+   * declares for this metric. A value no branch can read is dropped and reported once per
+   * process -- this used to be silent, which is how a Double-valued accumulator went unnoticed
+   * while its metric published zeros.
+   */
+  private def parseValue(rawValue: Any): Option[Long] = {
+    val parsed = parseAccumFieldToLong(rawValue, infoRef.storageScale)
+    if (parsed.isEmpty) {
+      EventUtils.reportUnparseableAccum(infoRef.getName(), rawValue)
+    }
+    parsed
   }
 
   // Getters for stage-specific metrics
@@ -190,6 +206,15 @@ class AccumInfo(val infoRef: AccumMetaRef) {
     }
     readjustTotalStats(reduced_val)
   }
+
+  /**
+   * The unadjusted record for a stage, before `readjustTotalStats` masks `total`.
+   *
+   * Needed to compute a real arithmetic mean: `med` is a rolling mean recomputed with integer
+   * division on every update, so it ratchets toward the floor and is badly wrong for
+   * small-valued metrics. `total / count` truncates once instead of once per task.
+   */
+  def getRawStatsForStage(stageId: Int): Option[StatisticsMetrics] = stagesStatMap.get(stageId)
 
   /**
    * Retrieves statistical metrics for a specific stage

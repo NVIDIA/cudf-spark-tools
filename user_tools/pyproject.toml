@@ -69,7 +69,7 @@ dependencies = [
     "pylint-pydantic==0.3.5",
     # used for common API to access remote filesystems like local/s3/gcs/hdfs
     # pin to 20.0.0 which supports python [3.9, 3.13]
-    "pyarrow==20.0.0",
+    "pyarrow==23.0.1",
     # used for ADLS filesystem implementation
     # Python [3.9, 3.12]
     "azure-storage-blob==12.25.1",

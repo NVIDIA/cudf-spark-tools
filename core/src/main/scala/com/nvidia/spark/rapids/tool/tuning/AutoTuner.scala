@@ -303,7 +303,11 @@ abstract class AutoTuner(
   /** Factory method to create the config provider - must be implemented by subclasses */
   protected def createConfigProvider(config: Option[TuningConfiguration]): ConfigProviderType
 
-  /** Copy a shared definition because enabling it mutates the entry. */
+  /**
+   * Return a per-tuner copy of a shared disabled definition. Resource-accounting entries are
+   * enabled only after the effective Spark master and properties are known; mutating the shared
+   * definition would leak that state into other AutoTuner instances.
+   */
   private def detachedTuningDefinition(key: String): TuningEntryDefinition = {
     TuningEntryDefinition.getEntryDefinition(key).map { definition =>
       new TuningEntryDefinition(
@@ -837,6 +841,10 @@ abstract class AutoTuner(
     }
   }
 
+  /**
+   * Return whether the required accounting value is already effective or can be emitted.
+   * Rebalancing must not move memory into PySpark unless the cluster manager will reserve it.
+   */
   private def isPySparkResourceAccountingOutputEligible: Boolean = {
     pySparkResourceAccountingRecommendation.forall { case (key, value) =>
       if (skippedRecommendations.contains(key)) {

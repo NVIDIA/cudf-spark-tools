@@ -2671,11 +2671,11 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
   }
 
   forAll(Table(
-    ("sparkMaster", "accountingKey", "accountingValue", "otherKey", "otherValue"),
+    ("sparkMaster", "reservationKey", "reservationValue", "otherKey", "otherValue"),
     (Yarn, "spark.yarn.isPython", "true", "spark.kubernetes.resource.type", "python"),
     (Kubernetes, "spark.kubernetes.resource.type", "python", "spark.yarn.isPython", "true")
-  )) { (sparkMaster, accountingKey, accountingValue, otherKey, otherValue) =>
-    test(s"positive PySpark memory recommends $accountingKey without Connect detection") {
+  )) { (sparkMaster, reservationKey, reservationValue, otherKey, otherValue) =>
+    test(s"positive PySpark memory recommends $reservationKey") {
       val sourceProps = mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
         "spark.executor.instances" -> "2",
@@ -2696,7 +2696,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       val values = properties.map(property => property.name -> property.getTuneValue()).toMap
 
       assert(values("spark.executor.pyspark.memory") == "4g")
-      assert(values(accountingKey) == accountingValue)
+      assert(values(reservationKey) == reservationValue)
       assert(!values.contains(otherKey))
     }
   }
@@ -2732,7 +2732,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     }
   }
 
-  test("target-enforced positive PySpark memory enables YARN resource accounting") {
+  test("target-enforced positive PySpark memory enables YARN memory reservation") {
     val sourceProps = mutable.LinkedHashMap[String, String](
       "spark.executor.cores" -> "8",
       "spark.executor.instances" -> "2",
@@ -2757,7 +2757,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(!values.contains("spark.kubernetes.resource.type"))
   }
 
-  test("non-positive PySpark memory does not surface resource accounting properties") {
+  test("non-positive PySpark memory does not surface memory-reservation properties") {
     val sourceProps = mutable.LinkedHashMap[String, String](
       "spark.executor.cores" -> "8",
       "spark.executor.instances" -> "2",
@@ -3039,13 +3039,13 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
   }
 
   forAll(Table(
-    ("sparkMaster", "accountingKey", "enforcedValue", "isCompatible"),
+    ("sparkMaster", "reservationKey", "enforcedValue", "isCompatible"),
     (Yarn, "spark.yarn.isPython", "false", false),
     (Yarn, "spark.yarn.isPython", "true", true),
     (Kubernetes, "spark.kubernetes.resource.type", "java", false),
     (Kubernetes, "spark.kubernetes.resource.type", "python", true)
-  )) { (sparkMaster, accountingKey, enforcedValue, isCompatible) =>
-    test(s"PySpark rebalance handles enforced $accountingKey=$enforcedValue") {
+  )) { (sparkMaster, reservationKey, enforcedValue, isCompatible) =>
+    test(s"PySpark rebalance handles enforced $reservationKey=$enforcedValue") {
       val sourceProps = mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
         "spark.executor.instances" -> "2",
@@ -3060,7 +3060,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
         cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
         gpuDevice = Some(GpuTypes.L4.toString),
-        enforcedSparkProperties = Map(accountingKey -> enforcedValue),
+        enforcedSparkProperties = Map(reservationKey -> enforcedValue),
         preserveSparkProperties = List("spark.executor.memory"))
       val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
         Some(targetClusterInfo))
@@ -3074,18 +3074,18 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
       assert(values("spark.executor.memory") == (if (isCompatible) "29g" else "32g"))
       assert(values("spark.executor.pyspark.memory") == (if (isCompatible) "7g" else "4g"))
-      assert(values(accountingKey) == enforcedValue)
-      assert(comments.exists(_.comment.contains("constraint=resource-accounting")) ==
+      assert(values(reservationKey) == enforcedValue)
+      assert(comments.exists(_.comment.contains("constraint=memory-reservation")) ==
         !isCompatible, comments.mkString("\n"))
     }
   }
 
   forAll(Table(
-    ("sparkMaster", "accountingKey"),
+    ("sparkMaster", "reservationKey"),
     (Yarn, "spark.yarn.isPython"),
     (Kubernetes, "spark.kubernetes.resource.type")
-  )) { (sparkMaster, accountingKey) =>
-    test(s"excluded $accountingKey blocks a partial PySpark rebalance") {
+  )) { (sparkMaster, reservationKey) =>
+    test(s"excluded $reservationKey blocks a partial PySpark rebalance") {
       val sourceProps = mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
         "spark.executor.instances" -> "2",
@@ -3101,7 +3101,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         cpuCores = Some(8), memoryGB = Some(128), gpuCount = Some(1),
         gpuDevice = Some(GpuTypes.L4.toString),
         preserveSparkProperties = List("spark.executor.memory"),
-        excludeSparkProperties = List(accountingKey))
+        excludeSparkProperties = List(reservationKey))
       val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
         Some(targetClusterInfo))
       configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
@@ -3114,8 +3114,8 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
       assert(values("spark.executor.memory") == "32g")
       assert(values("spark.executor.pyspark.memory") == "4g")
-      assert(!values.contains(accountingKey))
-      assert(comments.count(_.comment.contains("constraint=resource-accounting")) == 1,
+      assert(!values.contains(reservationKey))
+      assert(comments.count(_.comment.contains("constraint=memory-reservation")) == 1,
         comments.mkString("\n"))
     }
   }

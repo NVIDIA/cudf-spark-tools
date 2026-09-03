@@ -2509,6 +2509,35 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         s"memoryOverhead with preserve=$overheadWith vs without=$overheadWithout")
   }
 
+  // CSPs must use budget-aware overhead even when host off-heap limit is enabled.
+  forAll(Table(
+      ("platform", "offHeapLimitEnabled", "pySparkMemory", "expectedOverhead", "expectedPinned"),
+      (PlatformNames.EMR, false, Some("4g"), "12g", "4506m"),
+      (PlatformNames.EMR, true, Some("4g"), "12g", "4506m"),
+      (PlatformNames.ONPREM, false, None, "16g", "6554m"),
+      (PlatformNames.ONPREM, true, None, "16g", "8g"))) {
+    (platform: String, offHeapLimitEnabled: Boolean, pySparkMemory: Option[String],
+        expectedOverhead: String, expectedPinned: String) =>
+      test(s"Profiling uses the correct memory sizing path on $platform when " +
+          s"host off-heap limit enabled is $offHeapLimitEnabled") {
+        val recommendations = getHostOffHeapLimitMemoryRecommendations(
+          platform, offHeapLimitEnabled, pySparkMemory)
+
+        assert(recommendations.get("spark.executor.memoryOverhead").contains(expectedOverhead))
+        assert(recommendations.get("spark.rapids.memory.pinnedPool.size").contains(expectedPinned))
+      }
+  }
+
+  test("Profiling preserves explicit CSP executor overhead with host off-heap limit enabled") {
+    val recommendations = getHostOffHeapLimitMemoryRecommendations(
+      PlatformNames.EMR,
+      offHeapLimitEnabled = true,
+      pySparkMemory = Some("4g"),
+      explicitExecutorOverhead = Some("6g"))
+
+    assert(recommendations.get("spark.executor.memoryOverhead").contains("6g"))
+  }
+
   // Issue #2053: host off-heap limit settings affect pinned-memory sizing on on-prem
   // clusters, so preserved source values must be used as calculation baselines.
   test("preserved host off-heap limit settings are used as memory sizing baselines") {

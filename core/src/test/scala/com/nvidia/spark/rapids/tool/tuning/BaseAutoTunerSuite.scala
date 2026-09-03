@@ -20,9 +20,9 @@ import java.io.File
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, Platform, PlatformFactory, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, Platform, PlatformFactory, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.profiling._
-import com.nvidia.spark.rapids.tool.tuning.config.TuningConfiguration
+import com.nvidia.spark.rapids.tool.tuning.config.{TuningConfigEntry, TuningConfiguration}
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.exceptions.TestFailedException
 import org.scalatest.funsuite.AnyFunSuite
@@ -236,6 +236,55 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
     // Build and return the AutoTuner
     autoTunerHelper.buildAutoTunerFromProps(mockInfoProvider, platform,
       userProvidedTuningConfigs = userProvidedTuningConfigs)
+  }
+
+  /**
+   * Runs the common executor-memory sizing scenario used to verify host off-heap limit behavior.
+   */
+  protected def getHostOffHeapLimitMemoryRecommendations(
+      platformName: String,
+      offHeapLimitEnabled: Boolean,
+      pySparkMemory: Option[String] = None,
+      explicitExecutorOverhead: Option[String] = None): Map[String, String] = {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "16",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "32g",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin",
+      "spark.rapids.sql.enabled" -> "true")
+    pySparkMemory.foreach(sourceProps.put("spark.executor.pyspark.memory", _))
+
+    val enforcedProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "16",
+      "spark.executor.memory" -> "32g")
+    if (offHeapLimitEnabled) {
+      enforcedProps.put("spark.rapids.memory.host.offHeapLimit.enabled", "true")
+    }
+    explicitExecutorOverhead.foreach(
+      enforcedProps.put("spark.executor.memoryOverhead", _))
+
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(16),
+      memoryGB = Some(64L),
+      gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4.toString),
+      enforcedSparkProperties = enforcedProps.toMap)
+    val infoProvider = getMockInfoProvider(
+      0, Seq(0), Seq(0.0), sourceProps, Some(testSparkVersion))
+    val platform = PlatformFactory.createInstance(platformName, Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(
+      platform,
+      numCores = 16,
+      numWorkers = 2,
+      sparkProperties = sourceProps.toMap)
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(default = List(
+      TuningConfigEntry(name = "NON_EXECUTOR_MEM_FRACTION", default = "0.25")))
+
+    val autoTuner = buildAutoTunerForTests(
+      infoProvider, platform, Some(Yarn), Some(tuningConfigs))
+    autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)._1
+      .map(property => property.name -> property.getTuneValue()).toMap
   }
 
   /**

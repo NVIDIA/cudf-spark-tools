@@ -1,6 +1,26 @@
 
 <br/>
 
+## Release [v26.06.4](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.4)
+Generated on 2026-09-03
+### Autotuner
+
+- Account for PySpark memory in cluster resource requests ([#2137](https://github.com/NVIDIA/cudf-spark-tools/pull/2137))
+- Fix CSP executor overhead sizing with host off-heap limit ([#2138](https://github.com/NVIDIA/cudf-spark-tools/pull/2138))
+- Fix cache-derived maxPartitionBytes recommendations ([#2124](https://github.com/NVIDIA/cudf-spark-tools/pull/2124))
+
+### Build and CI/CD
+
+- Bump pyarrow from 20.0.0 to 23.0.1 in /user_tools ([#2100](https://github.com/NVIDIA/cudf-spark-tools/pull/2100))
+
+### Core
+
+- Surface Spark application exit codes ([#2130](https://github.com/NVIDIA/cudf-spark-tools/pull/2130))
+- fix(core): stop recommending maxBytesInFlight ([#2107](https://github.com/NVIDIA/cudf-spark-tools/pull/2107))
+
+
+<br/>
+
 ## Release [v26.06.3](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.3)
 Generated on 2026-08-26
 ### Autotuner

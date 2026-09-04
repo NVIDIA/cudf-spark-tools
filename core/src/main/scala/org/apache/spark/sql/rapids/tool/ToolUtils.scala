@@ -173,8 +173,16 @@ object ToolUtils extends Logging {
     bigValNum.setScale(places, BigDecimal.RoundingMode.HALF_UP).toDouble
   }
 
-  def formatDoublePrecision(valNum: Double): String = {
-    truncateDoubleToTwoDecimal(valNum).toString
+  /**
+   * Renders a double for a CSV cell, rounded to `places` and without scientific notation.
+   * Double.toString would emit 1.41160673E9 for a byte-scale value. Trailing zeros are stripped
+   * so a whole value keeps its integer form.
+   */
+  def formatDoublePrecision(valNum: Double, places: Int = 2): String = {
+    java.math.BigDecimal.valueOf(valNum)
+      .setScale(places, java.math.RoundingMode.HALF_UP)
+      .stripTrailingZeros
+      .toPlainString
   }
 
   def truncateDoubleToTwoDecimal(valNum: Double): Double = {

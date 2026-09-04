@@ -35,58 +35,49 @@ import org.apache.spark.sql.rapids.tool.util.EventUtils.parseAccumFieldToLong
 class AccumInfo(val infoRef: AccumMetaRef) {
   /**
    * Maps stageId to StatisticsMetrics which contains:
-   * - min: Minimum value across tasks in the stage
-   * - med: Median value across tasks in the stage
-   * - max: Maximum value across tasks in the stage
-   * - count: Number of tasks in the stage
-   * - total: Total accumulated value for the stage
+   * - min: Smallest value across the reporting task attempts
+   * - med: Median value across the reporting task attempts
+   * - max: Largest value across the reporting task attempts
+   * - count: Number of task attempts in the stage that reported the metric
+   * - total: Published total, which a stage completion event may raise
+   * - sampleTotal: Sum of the task updates alone, the numerator behind the mean
+   * - welfordSumSqDev: Sum of squared deviations over the same task updates
    */
   protected val stagesStatMap: mutable.HashMap[Int, StatisticsMetrics] =
     new mutable.HashMap[Int, StatisticsMetrics]()
 
   /**
    * Adds or updates accumulator information for a stage.
-   * Called during StageCompleted or TaskEnd events processing.
-   * Here we don't need to maintain mapping of attempt to stage
-   * because failed stage attempts don't have accumulable updates
-   * or values associated with them. Hence they have no Stats at
-   * accumulable level
+   * Called from StageCompleted event processing, without filtering on the stage attempt or on
+   * whether the attempt succeeded. The map is keyed by stage id, so every attempt of a stage
+   * shares one record.
    *
    * @param stageId The ID of the stage
    * @param accumulableInfo Accumulator information from the event
-   * @param update Optional task update value for TaskEnd events
+   * @param update Fallback when the event carries no parseable value; unused by callers
    */
   def addAccumToStage(stageId: Int,
       accumulableInfo: AccumulableInfo,
       update: Option[Long] = None): Unit = {
     val parsedValue = accumulableInfo.value.flatMap(parseValue)
-    // in case there is an out of order event, the value showing up later could be
-    // lower-than the previous value. In that case we should take the maximum.
     val existingEntry = stagesStatMap.getOrElse(stageId,
       StatisticsMetrics.ZERO_RECORD)
     val incomingValue = parsedValue match {
       case Some(v) => v
       case _ => update.getOrElse(0L)
     }
-    // We should not use the maximum of the existingEntry.total and the incomingValue because this
-    // will lead to incorrect values for metrics that are calculated by the Max/Min. For example,
-    // maxInputSize or, PeakMemory for a stage in that case will be the total of all the tasks.
-    val newValue = Math.max(existingEntry.total, incomingValue)
-    stagesStatMap.put(stageId, StatisticsMetrics(
-      min = existingEntry.min,
-      med = existingEntry.med,
-      max = existingEntry.max,
-      count = existingEntry.count,
-      total = newValue
-    ))
+    // Out of order or duplicated stage events can carry a value lower than one already seen, so
+    // keep the maximum. Only the published total moves: min, max, count, sampleTotal and
+    // welfordSumSqDev describe the task updates and must keep describing the same population.
+    stagesStatMap.put(stageId, existingEntry.copy(
+      total = Math.max(existingEntry.total, incomingValue)))
   }
 
   /**
    * Processes task-level accumulator updates and updates stage-level statistics.
-   * Called during TaskEnd event processing.
-   * Here we don't need to maintain stage attempt for tasks as failed task
-   * updates don't come with accumulable information. So maintaining
-   * attempt information with give no Stats at accumulable level
+   * Called once per accumulable carried by a TaskEnd event, without filtering on the task
+   * attempt or on whether it succeeded. Failed and retried attempts do carry accumulables, so
+   * they contribute samples; the sampled population is task attempts rather than tasks.
    *
    * @param stageId The ID of the stage containing the task
    * @param accumulableInfo Accumulator information from the TaskEnd event
@@ -96,20 +87,32 @@ class AccumInfo(val infoRef: AccumMetaRef) {
     // 2. Then allocate a new Statistic metric object with min,max as incoming update
     // 3. Use count to calculate rolling average
     // 4. Increment count by 1
-    // 5. Increase total by adding the incoming update for a task
+    // 5. Add the update to both the published total and the sample total
     // 6. Create final object and update map
-    // TODO: update nomenclature from med to rolling average
+    // TODO: rename med, which holds a rolling average rather than a median. See issue 2140.
     val parsedUpdateValue = accumulableInfo.update.flatMap(parseValue)
     // we need to update the stageMap if the stageId does not exist in the map
     parsedUpdateValue.foreach { value =>
       val stats = stagesStatMap.getOrElse(stageId,
         StatisticsMetrics(value, 0L, value, 0, 0L))
+      val newCount = stats.count + 1
+      val newTotal = stats.total + value
+      val newSampleTotal = stats.sampleTotal + value
+      // Welford, with the mean derived from the sample total and count the record holds.
+      val meanBefore = if (stats.count == 0L) 0.0 else stats.sampleTotal.toDouble / stats.count
+      val meanAfter = newSampleTotal.toDouble / newCount
+      val sqDev = (value.toDouble - meanBefore) * (value.toDouble - meanAfter)
+      // A record a stage event created carries no samples, so the first task update sets min
+      // and max instead of folding them against the placeholder zeros that record holds.
+      val firstSample = stats.count == 0L
       val newStats = StatisticsMetrics(
-        Math.min(stats.min, value),
+        if (firstSample) value else Math.min(stats.min, value),
         (stats.med * stats.count + value) / ( stats.count + 1),
-        Math.max(stats.max, value),
-        stats.count + 1,
-        stats.total + value
+        if (firstSample) value else Math.max(stats.max, value),
+        newCount,
+        newTotal,
+        stats.welfordSumSqDev + sqDev,
+        newSampleTotal
       )
       stagesStatMap.put(stageId, newStats)
     }
@@ -196,12 +199,16 @@ class AccumInfo(val infoRef: AccumMetaRef) {
       } else {
         (a.med * a.count + b.med * b.count) / totalCount
       }
+      val mergedSumSqDev = StatisticsMetrics.mergeSumSqDev(
+        a.count, a.sampleTotal, a.welfordSumSqDev, b.count, b.sampleTotal, b.welfordSumSqDev)
       StatisticsMetrics(
         Math.min(a.min, b.min),
         medianValue,
         Math.max(a.max, b.max),
         totalCount,
-        a.total + b.total
+        a.total + b.total,
+        mergedSumSqDev,
+        a.sampleTotal + b.sampleTotal
       )
     }
     readjustTotalStats(reduced_val)
@@ -212,7 +219,8 @@ class AccumInfo(val infoRef: AccumMetaRef) {
    *
    * Needed to compute a real arithmetic mean: `med` is a rolling mean recomputed with integer
    * division on every update, so it ratchets toward the floor and is badly wrong for
-   * small-valued metrics. `total / count` truncates once instead of once per task.
+   * small-valued metrics. `sampleTotal / count` is one Double division, rounded once at
+   * render rather than truncated on every update.
    */
   def getRawStatsForStage(stageId: Int): Option[StatisticsMetrics] = stagesStatMap.get(stageId)
 
@@ -250,7 +258,7 @@ class AccumInfo(val infoRef: AccumMetaRef) {
 class AccumInfoWithMaxAgg(override val infoRef: AccumMetaRef) extends AccumInfo(infoRef) {
   // The aggregate by max should not return the total field. instead, it enforces the max field.
   override protected def readjustTotalStats(statsRec: StatisticsMetrics): StatisticsMetrics = {
-    StatisticsMetrics(statsRec.min, statsRec.med, statsRec.max, statsRec.count, statsRec.max)
+    statsRec.copy(total = statsRec.max)
   }
   /**
    * Get max total across stages. for that type of aggregates, the total should not be used.

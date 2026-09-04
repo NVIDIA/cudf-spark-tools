@@ -100,6 +100,14 @@ object StringUtils extends Logging {
    * @param str the string to be processed.
    * @return return the str surrounded with double quotes.
    */
+  /**
+   * Renders an optional value with `formatter`, or `ifEmpty` when there is nothing to render.
+   * The empty marker is a parameter because a CSV cell wants "" while a report may want "N/A".
+   */
+  def optionToString[T](in: Option[T], formatter: T => String, ifEmpty: String = ""): String = {
+    in.map(formatter).getOrElse(ifEmpty)
+  }
+
   def quoteCSVString(str: String): String = {
     "\"" + str + "\""
   }

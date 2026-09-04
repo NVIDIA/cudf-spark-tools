@@ -33,13 +33,6 @@ object ProfileUtils {
         .getOrCreate()
   }
 
-  // Convert Option[Long] to String
-  def optionLongToString(in: Option[Long]): String = try {
-    in.get.toString
-  } catch {
-    case _: NoSuchElementException => ""
-  }
-
   // Check if the job/stage is GPU mode is on
   def isPluginEnabled(properties: collection.Map[String, String]): Boolean = {
     ToolUtils.isPluginEnabled(properties.toMap)

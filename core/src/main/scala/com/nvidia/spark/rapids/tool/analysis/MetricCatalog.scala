@@ -199,6 +199,26 @@ class MetricCatalog(
   }
 
   /**
+   * Mean of a stored total over the attempts that reported the metric, with the fixed-point scale
+   * divided out. A mean is the one aggregate whose arithmetic creates a fraction, so it is a
+   * Double where sum and max stay integral. Rounding is left to the CSV renderer.
+   */
+  // TODO: the CSV renderer rounds every mean to a flat 2 decimals. Consider deriving the places
+  // from storageScale (log10 of it, which is what formatStoredValue already does) so a scaled
+  // metric publishes its mean at the precision its own sum and max columns already show.
+  def meanOf(name: String, total: Long, count: Long): Option[Double] = {
+    if (count <= 0L) None else Some(total.toDouble / storageScaleFor(name) / count)
+  }
+
+  /**
+   * Sample standard deviation from Welford's accumulated sum of squared deviations, with the
+   * fixed-point scale divided out. None below two samples, where dispersion is undefined.
+   */
+  def stddevOf(name: String, welfordSumSqDev: Double, count: Long): Option[Double] = {
+    StatisticsMetrics.sampleStddev(welfordSumSqDev, count).map(_ / storageScaleFor(name))
+  }
+
+  /**
    * Renders a stored value for output, undoing the fixed-point scale of a decimal metric.
    *
    * Values are stored as integers, so a metric declared with `storageScale: 1000` is held in

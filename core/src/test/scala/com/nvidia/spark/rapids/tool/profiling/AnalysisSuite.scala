@@ -25,6 +25,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.scheduler.AccumulableInfo
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.rapids.tool.ToolUtils
 import org.apache.spark.sql.rapids.tool.store.{AccumInfo, AccumInfoWithMaxAgg, AccumMetaRef}
 import org.apache.spark.sql.types._
 
@@ -107,6 +108,28 @@ case class TestIODiagnosticResult(
     gpuDecodeTimeSum: Long)
 
 class AnalysisSuite extends AnyFunSuite {
+
+  /**
+   * Tolerance for an oracle that recomputes an emitted value. Wide enough to absorb the last
+   * bits two evaluation orders disagree in, and under half a rendered cell. It bounds the
+   * error; values astride an x.xx5 boundary still render differently within it.
+   */
+  private def tolerance(expected: Double): Double = {
+    Math.min(0.004, Math.max(1e-6, Math.abs(expected) * 1e-12))
+  }
+
+  /**
+   * An emitted value matches its oracle when it is numerically close and renders to the same
+   * cell. The numeric bound alone admits a bias smaller than the tolerance but large enough
+   * to move the two-decimal output, which is what a reader of the report sees.
+   */
+  private def matchesOracle(actual: Option[Double], expected: Double, what: String): Unit = {
+    assert(actual.exists(v => Math.abs(v - expected) < tolerance(expected)),
+      s"$what: $actual is not within tolerance of $expected")
+    val rendered = actual.map(v => ToolUtils.formatDoublePrecision(v))
+    assert(rendered.contains(ToolUtils.formatDoublePrecision(expected)),
+      s"$what: renders $rendered, oracle renders ${ToolUtils.formatDoublePrecision(expected)}")
+  }
 
   private def createTestStageDiagnosticResult(diagnosticsResults: Seq[StageDiagnosticResult]):
       Seq[TestStageDiagnosticResult] = {
@@ -448,7 +471,7 @@ class AnalysisSuite extends AnyFunSuite {
       s"GPU accumulables with non-zero values but missing from the report: " +
         s"${expectedNames.diff(emittedNames)}")
 
-    // Rollup math: SQL.sum == Σ stage.sum across the SQL's stages, per metric.
+    // Rollup math: SQL.sum is the sum of the stage sums across the SQL's stages, per metric.
     val stageRowsByMetric = agg.gpuStageAggs.groupBy(_.metricName)
     val sqlRowsByMetric = agg.gpuSqlAggs.groupBy(_.metricName)
     sqlRowsByMetric.foreach { case (metric, sqlRows) =>
@@ -541,9 +564,10 @@ class AnalysisSuite extends AnyFunSuite {
     agg.gpuStageAggs.foreach { row =>
       val raw = rawByNameAndStage.get((row.metricName, row.stageId))
       assert(raw.isDefined, s"no raw stats for ${row.metricName} stage ${row.stageId}")
-      val expected = if (raw.get.count > 0L) Some(raw.get.total / raw.get.count) else None
-      assert(row.avg == expected,
-        s"${row.metricName} stage ${row.stageId}: avg ${row.avg} != sum/count $expected")
+      // Computed here in floating point, so the oracle does not reuse the rounding under test.
+      val scale = MetricCatalog.DEFAULT.storageScaleFor(row.metricName)
+      val expected = raw.get.sampleTotal.toDouble / scale / raw.get.count
+      matchesOracle(row.avg, expected, s"${row.metricName} stage ${row.stageId} avg")
       checked += 1
     }
     // every emitted row is checked, not an arbitrary subset
@@ -586,7 +610,7 @@ class AnalysisSuite extends AnyFunSuite {
     val pooled = agg.gpuStageAggs.groupBy(_.metricName).map { case (name, group) =>
       val stats = group.flatMap(r => rawByNameAndStage.get((name, r.stageId)))
         .filter(_.count > 0L)
-      val pooledTotal = stats.map(_.total).sum
+      val pooledTotal = stats.map(_.sampleTotal).sum
       val pooledCount = stats.map(_.count).sum
       name -> ((pooledTotal, pooledCount))
     }
@@ -594,8 +618,8 @@ class AnalysisSuite extends AnyFunSuite {
     agg.gpuAppAggs.foreach { row =>
       val (total, count) = pooled(row.metricName)
       assert(count > 0L, s"no reporting tasks for ${row.metricName}")
-      assert(row.avg.contains(total / count),
-        s"${row.metricName}: avg ${row.avg} != pooled $total/$count")
+      val expected = total.toDouble / MetricCatalog.DEFAULT.storageScaleFor(row.metricName) / count
+      matchesOracle(row.avg, expected, s"${row.metricName} app avg")
     }
     // SQL rows pool over that SQL's own stage set, derived here rather than reusing the
     // app-level pooling above.
@@ -609,8 +633,9 @@ class AnalysisSuite extends AnyFunSuite {
         .filter(_.count > 0L)
       val sqlCount = stats.map(_.count).sum
       assert(sqlCount > 0L, s"no reporting tasks for ${row.metricName} in SQL ${row.sqlId}")
-      assert(row.avg.contains(stats.map(_.total).sum / sqlCount),
-        s"SQL ${row.sqlId} ${row.metricName}: avg ${row.avg} is not the pooled mean")
+      val scale = MetricCatalog.DEFAULT.storageScaleFor(row.metricName)
+      val expected = stats.map(_.sampleTotal).sum.toDouble / scale / sqlCount
+      matchesOracle(row.avg, expected, s"SQL ${row.sqlId} ${row.metricName} avg")
     }
 
     // Regression guard: on this fixture the two formulas genuinely disagree for at least one
@@ -624,37 +649,203 @@ class AnalysisSuite extends AnyFunSuite {
       "fixture no longer distinguishes the two rollup formulas; the guard is now vacuous")
   }
 
+  test("dispersion columns are consistent with the row they sit in") {
+    val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
+    val apps = ToolTestUtils.processProfileApps(logs, sparkSession)
+    val agg = RawMetricProfilerView.getAggMetrics(apps.toSeq)
+    assert(agg.gpuStageAggs.nonEmpty)
+    val rawByNameAndStage = apps.head.accumManager.accumInfoMap.values
+      .filter(_.infoRef.isGpuReportedMetric)
+      .flatMap(ai => ai.getStageIds.flatMap(sId =>
+        ai.getRawStatsForStage(sId).map(raw => (ai.infoRef.getName(), sId) -> raw)))
+      .toMap
+    var checkedCv = 0
+    var checkedMin = 0
+    agg.gpuStageAggs.foreach { r =>
+      assert(r.count <= r.numTasks, s"sampleCount above numTasks: $r")
+      // The store guarantees min <= max, so pin the value against the record it came from.
+      val raw = rawByNameAndStage((r.metricName, r.stageId))
+      val expectedMin = if (raw.count > 0L) Some(raw.min) else None
+      assert(r.min == expectedMin, s"min ${r.min} != stored ${expectedMin}: $r")
+      r.min.foreach { _ => checkedMin += 1 }
+      if (r.count < 2L) {
+        assert(r.stddev.isEmpty, s"stddev defined below two samples: $r")
+      }
+      for (cv <- r.cv; sd <- r.stddev; av <- r.avg) {
+        assert(Math.abs(cv - sd / av) < 1e-9, s"cv is not stddev/avg: $r")
+        checkedCv += 1
+      }
+      for (mom <- r.maxOverMean; av <- r.avg) {
+        assert(mom >= 1.0 - 1e-9, s"max cannot be below the mean: $r")
+      }
+    }
+    assert(checkedCv > 0, "expected at least one row with a defined cv")
+    assert(checkedMin > 0, "expected at least one row with a defined min")
+  }
+
+  test("the emitted stddev divides the metric scale out of the stored deviation sum") {
+    val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
+    val apps = ToolTestUtils.processProfileApps(logs, sparkSession)
+    val agg = RawMetricProfilerView.getAggMetrics(apps.toSeq)
+    val rawByNameAndStage = apps.head.accumManager.accumInfoMap.values
+      .filter(_.infoRef.isGpuReportedMetric)
+      .flatMap(ai => ai.getStageIds.flatMap(sId =>
+        ai.getRawStatsForStage(sId).map(raw => (ai.infoRef.getName(), sId) -> raw)))
+      .toMap
+    var checked = 0
+    agg.gpuStageAggs.filter(_.count >= 2L).foreach { r =>
+      val raw = rawByNameAndStage((r.metricName, r.stageId))
+      val scale = MetricCatalog.DEFAULT.storageScaleFor(r.metricName)
+      val expected = Math.sqrt(raw.welfordSumSqDev / (raw.count - 1L)) / scale
+      matchesOracle(r.stddev, expected, s"${r.metricName} stage ${r.stageId} stddev")
+      checked += 1
+    }
+    assert(checked > 0, "expected rows with at least two samples")
+    // No fixture row carries a scaled metric, so the division above cancels on both sides.
+    // Pin it on a constructed row, where the stored deviation sum is in thousandths.
+    val scaled = StageAggGpuMetricsProfileResult(
+      stageId = 1, numTasks = 4, metricName = "gpuOnGpuTasksWaitingGPUAvgCount",
+      unit = "count", total = Some(9000L), max = Some(4000L), count = 4L, min = Some(1000L),
+      welfordSumSqDev = 3000000.0, sampleTotal = Some(9000L))
+    assert(MetricCatalog.DEFAULT.storageScaleFor(scaled.metricName) == 1000L,
+      "test depends on this metric staying decimal-valued in the catalog")
+    // sqrt(3000000 / 3) = 1000 stored thousandths, which is 1.0 once the scale is removed.
+    assert(scaled.stddev.exists(v => Math.abs(v - 1.0) < 1e-9), s"scaled stddev ${scaled.stddev}")
+    assert(scaled.convertToCSVSeq().toSeq(9) == "1", "scaled stddev cell must divide the scale")
+  }
+
+  test("sql and app stddev pool the stages rather than reporting one of them") {
+    // The rollup runs its own Chan fold, separate from the store merge. A regression confined to
+    // it would leave stage rows correct while flattening the SQL and app spread. The two levels
+    // copy the pooled result independently, so each needs its own check.
+    val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
+    val apps = ToolTestUtils.processProfileApps(logs, sparkSession)
+    val app = apps.head
+    val agg = RawMetricProfilerView.getAggMetrics(apps.toSeq)
+    // Per-stage sampled aggregates read from the store, keyed by metric and stage.
+    val byMetricAndStage = app.accumManager.accumInfoMap.values
+      .filter(_.infoRef.isGpuReportedMetric)
+      .flatMap(ai => ai.getStageIds.flatMap(sId =>
+        ai.getRawStatsForStage(sId).filter(_.count > 0L).map { raw =>
+          val part = (raw.count, raw.sampleTotal, raw.welfordSumSqDev, raw.min)
+          (ai.infoRef.getName(), sId) -> part
+        }))
+      .toMap
+    // Squared deviations about the grand mean, as within-stage plus between-stage variation.
+    // One pass over the stages, so it shares no code with the pairwise merge the rollup runs.
+    def pool(parts: Seq[(Long, Long, Double, Long)]): (Long, Double) = {
+      val pooledCount = parts.map(_._1).sum
+      val grandMean = parts.map(_._2).sum.toDouble / pooledCount
+      val dev = parts.map { case (n, total, sumSqDev, _) =>
+        val delta = total.toDouble / n - grandMean
+        sumSqDev + n * delta * delta
+      }.sum
+      (pooledCount, dev)
+    }
+    def check(row: String, metricName: String, stages: Seq[Int], count: Long,
+        stddev: Option[Double], min: Option[Long]): Unit = {
+      val parts = stages.flatMap(s => byMetricAndStage.get((metricName, s)))
+      val (pooledCount, dev) = pool(parts)
+      assert(pooledCount == count, s"$row $metricName: sampleCount $count != pooled $pooledCount")
+      // The rolled up min is the smallest stage min, not the largest and not one stage's.
+      assert(min.contains(parts.map(_._4).min), s"$row $metricName: min $min not the smallest")
+      val scale = MetricCatalog.DEFAULT.storageScaleFor(metricName)
+      val expected = Math.sqrt(dev / (pooledCount - 1L)) / scale
+      matchesOracle(stddev, expected, s"$row $metricName pooled stddev")
+    }
+    val allStages = byMetricAndStage.keys.map(_._2).toSeq.distinct
+    var appRows = 0
+    agg.gpuAppAggs.filter(_.count >= 2L).foreach { row =>
+      check("app", row.metricName, allStages, row.count, row.stddev, row.min)
+      appRows += 1
+    }
+    var sqlRows = 0
+    agg.gpuSqlAggs.filter(_.count >= 2L).foreach { row =>
+      val stages = app.sqlIdToStages.getOrElse(row.sqlId, Seq.empty[Int]).toSeq
+      check(s"sql ${row.sqlId}", row.metricName, stages, row.count, row.stddev, row.min)
+      sqlRows += 1
+    }
+    assert(appRows > 0, "expected app rows with two or more samples")
+    assert(sqlRows > 0, "expected sql rows with two or more samples")
+    // a metric whose stages sit at different levels must not report a stage-sized spread
+    val spread = agg.gpuAppAggs.find(_.metricName == "gpuRetryComputationTime")
+    assert(spread.flatMap(_.stddev).exists(_ > 0.0), "pooled spread collapsed to zero")
+  }
+
   test("a scaled metric renders divided in the emitted row") {
     // Pins the published strings rather than the stored Longs: the store holds thousandths.
-    // total and count are the stored inputs; sum and avg are derived on the way out.
+    // sum publishes the stored total; avg divides sampleTotal by count.
     val row = StageAggGpuMetricsProfileResult(
       stageId = 1, numTasks = 72, metricName = "gpuOnGpuTasksWaitingGPUAvgCount",
-      unit = "count", total = Some(3570L), max = Some(2500L), count = 5L)
+      unit = "count", total = Some(3570L), max = Some(2500L), count = 5L, min = Some(200L),
+      welfordSumSqDev = 4000000.0, sampleTotal = Some(3570L))
     // the stored total is present; it is the publishing of it that is suppressed
     assert(row.total.isDefined && row.sum.isEmpty, "max-aggregated total must stay unpublished")
-    assert(row.convertToCSVSeq().toSeq == Seq("1", "72", "gpuOnGpuTasksWaitingGPUAvgCount",
-      "count", "", "2.5", "0.714"))
+    val cells = row.convertToCSVSeq().toSeq
+    assert(cells.length == row.outputHeaders.length, "cell count must match the declared header")
+    assert(cells.take(7) == Seq("1", "72", "gpuOnGpuTasksWaitingGPUAvgCount",
+      "count", "", "2.5", "0.71"))
+    // stddev and cv carry distinct values, so transposing the two cells cannot pass.
+    // maxOverMean divides the scale out of max before comparing it with the unscaled avg.
+    assert(cells.drop(7) == Seq("5", "0.2", "1", "1.4", "3.5"))
     // an unscaled metric is byte-identical to before
     val plain = StageAggGpuMetricsProfileResult(
       stageId = 1, numTasks = 72, metricName = "gpuMaxTaskFootprint",
-      unit = "bytes", total = Some(4234820190L), max = Some(7123115846L), count = 3L)
-    assert(plain.convertToCSVSeq().toSeq == Seq("1", "72", "gpuMaxTaskFootprint",
+      unit = "bytes", total = Some(4234820190L), max = Some(7123115846L), count = 3L,
+      sampleTotal = Some(4234820190L))
+    val plainCells = plain.convertToCSVSeq().toSeq
+    assert(plainCells.length == plain.outputHeaders.length,
+      "cell count must match the declared header")
+    assert(plainCells.take(7) == Seq("1", "72", "gpuMaxTaskFootprint",
       "bytes", "", "7123115846", "1411606730"))
+    assert(plainCells.drop(7) == Seq("3", "", "0", "0", "5.05"))
+  }
+
+  test("a metric no task reported leaves avg blank rather than zero") {
+    // count == 0 means the stage-level accumulable value arrived with no task updates behind it.
+    // A mean over zero samples is undefined, so the cell must stay empty, not read as 0.
+    val row = StageAggGpuMetricsProfileResult(
+      stageId = 1, numTasks = 72, metricName = "gpuTime",
+      unit = "ms", total = Some(500L), max = Some(500L), count = 0L,
+      sampleTotal = Some(500L))
+    assert(row.avg.isEmpty, "a mean over zero reporting tasks is undefined")
+    val cells = row.convertToCSVSeq().toSeq
+    assert(cells.length == row.outputHeaders.length, "cell count must match the declared header")
+    // avg is the seventh cell; reading the last one would check maxOverMean instead.
+    assert(cells(6) == "", "empty avg must render as a blank cell")
+    assert(cells(8) == "", "min over zero reporting tasks must render blank")
+    assert(cells(11) == "", "maxOverMean without a mean must render blank")
+    assert(MetricCatalog.DEFAULT.meanOf("gpuTime", 500L, 0L).isEmpty)
+    // A zero mean is a second way for the two ratios to be undefined, distinct from count == 0.
+    val zeroMean = StageAggGpuMetricsProfileResult(
+      stageId = 1, numTasks = 72, metricName = "gpuTime",
+      unit = "ms", total = Some(500L), max = Some(0L), count = 5L, min = Some(0L),
+      welfordSumSqDev = 0.0, sampleTotal = Some(0L))
+    assert(zeroMean.avg.contains(0.0), "a mean of zero is defined, unlike a mean of nothing")
+    assert(zeroMean.cv.isEmpty && zeroMean.maxOverMean.isEmpty, "both ratios divide by the mean")
+    assert(zeroMean.convertToCSVSeq().toSeq.slice(10, 12) == Seq("", ""))
+    // A single reporting task has no dispersion, which the report path must not publish as zero.
+    val oneSample = StageAggGpuMetricsProfileResult(
+      stageId = 1, numTasks = 72, metricName = "gpuTime",
+      unit = "ms", total = Some(500L), max = Some(500L), count = 1L, min = Some(500L),
+      sampleTotal = Some(500L))
+    assert(oneSample.stddev.isEmpty && oneSample.cv.isEmpty, "one sample has no spread")
+    assert(oneSample.convertToCSVSeq().toSeq.slice(9, 11) == Seq("", ""))
   }
 
   test("every render site divides out the scale, not just the stage-level one") {
-    // Four independent copies of render() exist. The SQL and app rows look up the scale by
-    // metric name; AccumProfileResults reads it from its AccumMetaRef instead, a different
-    // source, and had no test at all.
+    // Two scale sources: the GPU rows look it up by metric name, AccumProfileResults reads it
+    // from its AccumMetaRef. Covering one does not cover the other.
     val name = "gpuOnGpuTasksWaitingGPUAvgCount"
+    // sum, max and avg sit at indices 3 to 5, after the row identifier, name and unit.
     val sqlRow = SQLAggGpuMetricsProfileResult(
       sqlId = 0, metricName = name, unit = "count",
-      sum = None, max = Some(2500L), avg = Some(714L))
-    assert(sqlRow.convertToCSVSeq().toSeq.takeRight(3) == Seq("", "2.5", "0.714"))
+      total = Some(3570L), max = Some(2500L), count = 5L, sampleTotal = Some(3570L))
+    assert(sqlRow.convertToCSVSeq().toSeq.slice(3, 6) == Seq("", "2.5", "0.71"))
     val appRow = AppAggGpuMetricsProfileResult(
       appId = "app-1", metricName = name, unit = "count",
-      sum = None, max = Some(2500L), avg = Some(714L))
-    assert(appRow.convertToCSVSeq().toSeq.takeRight(3) == Seq("", "2.5", "0.714"))
+      total = Some(3570L), max = Some(2500L), count = 5L, sampleTotal = Some(3570L))
+    assert(appRow.convertToCSVSeq().toSeq.slice(3, 6) == Seq("", "2.5", "0.71"))
     // AccumProfileResults, which feeds stage_level_all_metrics.csv
     val ref = AccumMetaRef(116L, Some(name))
     assert(ref.storageScale == 1000L, "precondition: the metric is scaled")

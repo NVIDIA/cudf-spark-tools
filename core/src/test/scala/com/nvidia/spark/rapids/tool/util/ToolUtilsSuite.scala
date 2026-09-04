@@ -30,7 +30,7 @@ import org.scalatest.matchers.should.Matchers.{convertToAnyShouldWrapper, equal,
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.TrampolineUtil
-import org.apache.spark.sql.rapids.tool.InvalidMemoryUnitFormatException
+import org.apache.spark.sql.rapids.tool.{InvalidMemoryUnitFormatException, ToolUtils}
 import org.apache.spark.sql.rapids.tool.util._
 
 class ToolUtilsSuite extends AnyFunSuite with Logging {
@@ -316,6 +316,55 @@ class ToolUtilsSuite extends AnyFunSuite with Logging {
 
     // Test large values that don't perfectly align with units
     StringUtils.convertBytesToLargestUnit(1234567) shouldBe "1234567b"
+  }
+
+  test("optionToString applies the formatter and honours the empty marker") {
+    // Every production caller takes the default marker, so a regression that ignored the third
+    // argument would still pass every other test in the tree.
+    val longFmt = (v: Long) => v.toString
+    val doubleFmt = (v: Double) => v.toString
+    assert(StringUtils.optionToString(Some(42L), longFmt) == "42")
+    assert(StringUtils.optionToString(Some(1.5), doubleFmt) == "1.5")
+    assert(StringUtils.optionToString(None, longFmt) == "")
+    assert(StringUtils.optionToString(None, longFmt, "N/A") == "N/A")
+    assert(StringUtils.optionToString(None, doubleFmt, "NaN") == "NaN")
+    // the formatter is applied rather than bypassed by a toString on the Option
+    assert(StringUtils.optionToString(Some(7L), (v: Long) => s"<$v>") == "<7>")
+  }
+
+  test("formatDoublePrecision rounds HALF_UP, not floor or HALF_EVEN") {
+    // 0.714 renders 0.71 under every rounding mode, so the existing cases pin nothing.
+    // 1.005 separates HALF_UP from HALF_EVEN, HALF_DOWN and FLOOR, which all give 1.
+    assert(ToolUtils.formatDoublePrecision(1.005) == "1.01")
+    assert(ToolUtils.formatDoublePrecision(-1.005) == "-1.01")
+    assert(ToolUtils.formatDoublePrecision(2.675) == "2.68")
+  }
+
+  test("formatDoublePrecision avoids scientific notation and keeps whole values integral") {
+    // Double.toString switches to scientific notation at 1e7, which would corrupt a byte column.
+    assert(ToolUtils.formatDoublePrecision(1411606730.0) == "1411606730")
+    assert(ToolUtils.formatDoublePrecision(1.0e7) == "10000000")
+    assert(ToolUtils.formatDoublePrecision(852.0) == "852")
+    assert(ToolUtils.formatDoublePrecision(0.0) == "0")
+  }
+
+  test("formatDoublePrecision is locale independent") {
+    // A comma decimal separator inside a comma-delimited CSV shifts every later column.
+    val original = java.util.Locale.getDefault
+    try {
+      Seq(java.util.Locale.GERMANY, java.util.Locale.FRANCE, java.util.Locale.US).foreach { loc =>
+        java.util.Locale.setDefault(loc)
+        assert(ToolUtils.formatDoublePrecision(59.78) == "59.78", s"broken under $loc")
+        assert(!ToolUtils.formatDoublePrecision(59.78).contains(","), s"comma under $loc")
+      }
+    } finally {
+      java.util.Locale.setDefault(original)
+    }
+  }
+
+  test("formatDoublePrecision honours a caller supplied precision") {
+    assert(ToolUtils.formatDoublePrecision(0.714, 3) == "0.714")
+    assert(ToolUtils.formatDoublePrecision(59.784, 1) == "59.8")
   }
 
   case class MockProfileResults(appID: String, nonEnglishField: String,

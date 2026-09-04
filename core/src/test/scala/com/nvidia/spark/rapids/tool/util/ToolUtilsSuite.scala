@@ -164,6 +164,68 @@ class ToolUtilsSuite extends AnyFunSuite with Logging {
     }
   }
 
+  test("parseAccumFieldToLong normalizes each serialized form to a canonical unit") {
+    // The three branches produce Longs in three DIFFERENT units, and the function does not say
+    // which. That is the reason a downstream caller must not convert again.
+    EventUtils.parseAccumFieldToLong("1773") shouldBe Some(1773L)          // raw
+    EventUtils.parseAccumFieldToLong("00:00:01.773") shouldBe Some(1773L)  // MILLISECONDS
+    EventUtils.parseAccumFieldToLong("1.01GB (1085796899 bytes)") shouldBe
+      Some(1085796899L)                                                    // BYTES
+    // a decimal is not readable without a declared storage scale
+    EventUtils.parseAccumFieldToLong("0.5") shouldBe None
+    EventUtils.parseAccumFieldToLong("[]") shouldBe None
+  }
+
+  test("parseScaledDecimalToLong stores decimals as fixed point") {
+    EventUtils.parseScaledDecimalToLong("0.5", 1000L) shouldBe Some(500L)
+    EventUtils.parseScaledDecimalToLong("2.6666666666666665", 1000L) shouldBe Some(2667L)
+    EventUtils.parseScaledDecimalToLong("3.0", 1000L) shouldBe Some(3000L)
+    // the accumulator's zero case arrives as a plain integer and must scale the same way, so
+    // that every value of the metric is stored in the same units
+    EventUtils.parseScaledDecimalToLong("0", 1000L) shouldBe Some(0L)
+    EventUtils.parseScaledDecimalToLong("7", 1000L) shouldBe Some(7000L)
+    EventUtils.parseScaledDecimalToLong("-1.5", 1000L) shouldBe Some(-1500L)
+  }
+
+  test("parseScaledDecimalToLong accepts exponent form, which Double.toString emits") {
+    // java.lang.Double.toString switches to E-notation below 1e-3, and this metric is an
+    // average that can legitimately land there. Rejecting the shape would drop the sample and
+    // remove the task from the denominator of the mean.
+    EventUtils.parseScaledDecimalToLong("5.0E-4", 1000L) shouldBe Some(1L)
+    EventUtils.parseScaledDecimalToLong("2.5E-4", 1000L) shouldBe Some(0L)
+    EventUtils.parseScaledDecimalToLong("1.0E4", 1000L) shouldBe Some(10000000L)
+    EventUtils.parseScaledDecimalToLong("1.5e2", 1000L) shouldBe Some(150000L)
+  }
+
+  test("parseScaledDecimalToLong rejects everything Double.parseDouble would wrongly accept") {
+    // Double.parseDouble accepts all of these. "Infinity" in particular would become
+    // Long.MaxValue and overflow the running total to a negative number.
+    Seq("NaN", "Infinity", "-Infinity", "3d", "5f", "0x1p3", "", " ",
+      "1.2.3", "[]", "null", "1,5", "1e", "e5", "--1").foreach { bad =>
+      EventUtils.parseScaledDecimalToLong(bad, 1000L) shouldBe None
+    }
+    // A value that would overflow after scaling is rejected rather than wrapping, and the
+    // bound is symmetric: the negative mirror must not be clamped to Long.MinValue, which is
+    // what a strict lower bound did -- double spacing near 2^63 is 2048, so a true value beyond
+    // the range rounds onto the representable -2^63.
+    EventUtils.parseScaledDecimalToLong("9223372036854775.0", 1000L) shouldBe None
+    EventUtils.parseScaledDecimalToLong("-9223372036854775.0", 1000L) shouldBe None
+    EventUtils.parseScaledDecimalToLong("-9223372036854776.0", 1000L) shouldBe None
+    EventUtils.parseScaledDecimalToLong("1e300", 1000L) shouldBe None
+    EventUtils.parseScaledDecimalToLong("-1e300", 1000L) shouldBe None
+    // negatives well inside range still work
+    EventUtils.parseScaledDecimalToLong("-1.5", 1000L) shouldBe Some(-1500L)
+  }
+
+  test("parseAccumFieldToLong with a scale routes to the right parser") {
+    // scale 1 is the pre-existing behaviour, unchanged
+    EventUtils.parseAccumFieldToLong("00:00:01.773", 1L) shouldBe Some(1773L)
+    EventUtils.parseAccumFieldToLong("0.5", 1L) shouldBe None
+    // a scaled metric reads decimals and scales plain integers alike
+    EventUtils.parseAccumFieldToLong("0.5", 1000L) shouldBe Some(500L)
+    EventUtils.parseAccumFieldToLong("0", 1000L) shouldBe Some(0L)
+  }
+
   test("convertMemorySizeToBytes should correctly parse memory sizes") {
     // Test basic unit conversions with default ByteUnit.BYTE
     StringUtils.convertMemorySizeToBytes("1024b", None) shouldBe 1024L

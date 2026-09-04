@@ -410,30 +410,18 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
   // GPU task metric aggregations (Stage / SQL / App)
   // ---------------------------------------------------------------------------
   //
-  // Discovery convention: an accumulator is a GPU task metric if its name
-  //   - starts with "gpu",  OR
-  //   - starts with "perfio.s3.", OR
-  //   - equals "multithreadReaderMaxParallelism".
-  // Unit convention (from name): contains Time|Wait → ms (raw ns / 1e6);
-  // contains Bytes → bytes; otherwise → count.
-  // Max-aggregated metrics are discriminated via AccumMetaRef.isAggregateByMax;
-  // for those, sum and avg are empty and only max is meaningful.
+  // Discovery lives in MetricCatalog.isGpuReportedMetric and is cached per accumulator id on
+  // AccumMetaRef, so the rule is stated once rather than reconstructed at each call site.
+  //
+  // Unit comes from the catalog, which declares it per metric. An undeclared metric falls back
+  // to the legacy name heuristic, which is label-only: nothing is scaled by it.
+  //
+  // There is deliberately no value conversion here. EventUtils.parseAccumFieldToLong already
+  // normalizes every serialized form to a canonical unit -- a plain integer stays raw,
+  // "00:00:01.773" becomes 1773 milliseconds, "3.28GB (3526702303 bytes)" becomes bytes -- so
+  // converting again is what silently deleted every timing metric from this report.
 
-  private def isGpuMetric(name: String): Boolean = {
-    name.startsWith("gpu") ||
-      name.startsWith("perfio.s3.") ||
-      name == "multithreadReaderMaxParallelism"
-  }
-
-  private def unitForMetric(name: String): String = {
-    if (name.contains("Time") || name.contains("Wait")) "ms"
-    else if (name.contains("Bytes")) "bytes"
-    else "count"
-  }
-
-  private def convertValue(name: String, raw: Long): Long = {
-    if (name.contains("Time") || name.contains("Wait")) raw / 1000000L else raw
-  }
+  private def unitForMetric(name: String): String = MetricCatalog.DEFAULT.unitFor(name)
 
   /**
    * Aggregate GPU task accumulators by stage. Emits one row per (stageId,
@@ -442,7 +430,7 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
    */
   def aggregateGpuMetricsByStage(index: Int): Seq[StageAggGpuMetricsProfileResult] = {
     val gpuAccums = app.accumManager.accumInfoMap.values.filter { ai =>
-      isGpuMetric(ai.infoRef.getName())
+      ai.infoRef.isGpuReportedMetric
     }.toSeq
     if (gpuAccums.isEmpty) {
       return Seq.empty
@@ -452,42 +440,36 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
     gpuAccums.foreach { ai =>
       val name = ai.infoRef.getName()
       val unit = unitForMetric(name)
-      val isMax = ai.infoRef.isAggregateByMax
       ai.getStageIds.foreach { stageId =>
         ai.calculateAccStatsForStage(stageId).foreach { stats =>
           // Invariant: stages with GPU accumulators are tracked by stageManager
           // and therefore cached. The fallback to 0 is defensive for edge cases
           // (e.g. driver-side accumulators) where the stage is absent from the
-          // task-metrics cache. A 0 here would also exclude the stage from the
-          // task-weighted avg in rollupGpuRows while sum/max still accumulate,
-          // so log a warning so the inconsistency is visible.
+          // task-metrics cache. It affects only the emitted numTasks column: the
+          // SQL/app rollups pool total/count and never read numTasks.
           val numTasks = stageCache.get(stageId).map(_.numTasks).getOrElse {
             logWarning(s"GPU accumulator '$name' references stage $stageId which " +
-              s"is not in the stage-task metrics cache; using numTasks = 0. " +
-              s"This will be excluded from task-weighted averages at SQL/app level.")
+              s"is not in the stage-task metrics cache; using numTasks = 0.")
             0
           }
-          val (sum, max, avg) = if (isMax) {
-            (None: Option[Long],
-              Some(convertValue(name, stats.max)),
-              None: Option[Long])
-          } else {
-            (Some(convertValue(name, stats.total)),
-              Some(convertValue(name, stats.max)),
-              Some(convertValue(name, stats.med)))
-          }
-          // Skip rows carrying no signal (both sum and max zero/absent).
-          val zeroSum = sum.forall(_ == 0L)
-          val zeroMax = max.forall(_ == 0L)
-          if (!(zeroSum && zeroMax)) {
-            rows += StageAggGpuMetricsProfileResult(
-              stageId = stageId,
-              numTasks = numTasks,
-              metricName = name,
-              unit = unit,
-              sum = sum,
-              max = max,
-              avg = avg)
+          // The row carries what the store holds -- the accumulated total and the number of
+          // tasks that reported the metric -- and derives the published sum and avg from them.
+          // `stats` has been through readjustTotalStats, which replaces total with max for a
+          // max-aggregated metric, so the unadjusted record is the only place the real sum
+          // survives, and that sum is the numerator every mean needs.
+          val rawStats = ai.getRawStatsForStage(stageId)
+          val max = Some(stats.max)
+          val row = StageAggGpuMetricsProfileResult(
+            stageId = stageId,
+            numTasks = numTasks,
+            metricName = name,
+            unit = unit,
+            total = rawStats.map(_.total),
+            max = max,
+            count = rawStats.map(_.count).getOrElse(0L))
+          // Skip rows carrying no signal (both the published sum and max zero/absent).
+          if (!(row.sum.forall(_ == 0L) && max.forall(_ == 0L))) {
+            rows += row
           }
         }
       }
@@ -497,11 +479,10 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
 
   /**
    * Rollup helper: groups stage-level GPU rows by metric name and reduces to
-   * (unit, sum, max, avg). sum is Σ stage.sum (None for max metrics); max is
-   * max stage.max; avg is task-weighted Σ(stage.avg * stage.numTasks)
-   * / Σ stage.numTasks over the stages that recorded the metric. numTasks is
-   * intentionally not propagated — see SQLAggGpuMetricsProfileResult /
-   * AppAggGpuMetricsProfileResult docstrings.
+   * (unit, sum, max, avg). sum adds the stage sums (None for max metrics); max is
+   * the largest stage max; avg divides the pooled stage totals by the pooled stage
+   * counts over the stages that recorded the metric. numTasks is intentionally not
+   * propagated: see SQLAggGpuMetricsProfileResult / AppAggGpuMetricsProfileResult.
    */
   private def rollupGpuRows(
       rows: Seq[StageAggGpuMetricsProfileResult]
@@ -516,14 +497,16 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
         val xs = group.flatMap(_.max)
         if (xs.isEmpty) None else Some(xs.max)
       }
+      // Pooled as sum-of-totals over sum-of-counts, not a weighted average of the stage
+      // averages. Two reasons: stage `avg` is already integer-truncated, so re-averaging
+      // truncates twice; and the correct weight is the number of tasks that reported the
+      // metric, not the stage's task count. GPU accumulables are frequently sparse -- spill
+      // and retry metrics land on a handful of tasks in a large stage -- so weighting by
+      // numTasks skews the result toward the stages that reported it least, without bound.
       val avgOpt: Option[Long] = {
-        val weighted = group.flatMap { r => r.avg.map(a => (a, r.numTasks)) }
-        val weightTasks = weighted.map(_._2).sum
-        if (weighted.isEmpty || weightTasks == 0) {
-          None
-        } else {
-          Some(weighted.map { case (a, n) => a * n }.sum / weightTasks)
-        }
+        val reporting = group.filter(_.count > 0L)
+        val totalCount = reporting.map(_.count).sum
+        if (totalCount <= 0L) None else Some(reporting.flatMap(_.total).sum / totalCount)
       }
       (metricName, unit, sumOpt, maxOpt, avgOpt)
     }.toSeq

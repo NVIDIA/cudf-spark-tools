@@ -218,6 +218,35 @@ default:
     default: 2
     usedBy: spark.sql.shuffle.partitions
 
+  # Downward shuffle-partition tuning configs.
+  # These drive the final downward-only pass that lowers an oversized shuffle partition
+  # recommendation based on the total uncompressed shuffle input of the worst consumer stage.
+  - name: DOWNWARD_SHUFFLE_ENABLED
+    description: >-
+      Enables the final downward-only shuffle partition pass. When disabled, the AutoTuner
+      never lowers the shuffle partition recommendation produced by the normal tuning passes.
+      Disabled by default, so enabling it is a per-run opt-in. What has to be settled before it
+      defaults to true is the target partition size, not a count of validated applications: on a
+      large workload the hand-tuned value, the ColumnarExchange bound and this pass at a 1 GiB
+      target disagree, and this pass asks for the most partitions of the three.
+    default: false
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_TARGET_PARTITION_SIZE
+    description: >-
+      Target amount of estimated GPU shuffle input processed by a single partition. The
+      per-stage partition requirement is the estimated stage input divided by this value.
+    default: 1g
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
+  - name: DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR
+    description: >-
+      Factor applied to the measured uncompressed shuffle input to estimate the GPU input size.
+      Profiling reads measured GpuColumnarExchange data, so it uses 1.0. Qualification reads CPU
+      Exchange data and overrides this in the qualification section.
+    default: 1.0
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
+
   - name: WORKER_GPU_COUNT
     description: >-
       Default number of GPUs per worker node
@@ -443,6 +472,13 @@ qualification:
       Batch size for GPU operations optimized for qualification workloads
     default: 1g
     usedBy: spark.rapids.sql.batchSizeBytes
+
+  - name: DOWNWARD_SHUFFLE_INPUT_SIZE_FACTOR
+    description: >-
+      Qualification reads uncompressed CPU Exchange data, so the GPU input size is estimated
+      rather than measured. This factor is an initial conservative estimate.
+    default: 0.8
+    usedBy: spark.sql.shuffle.partitions, spark.sql.adaptive.coalescePartitions.initialPartitionNum
 
 # Profiling tool specific tuning configs
 profiling:

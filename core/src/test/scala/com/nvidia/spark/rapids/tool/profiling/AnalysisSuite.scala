@@ -505,8 +505,8 @@ class AnalysisSuite extends AnyFunSuite {
       }
       // sum stays empty: adding per-task peaks is meaningless because they never coexist.
       assert(sum.isEmpty, s"max-aggregated metric should have empty sum: $r")
-      // avg is populated: it is the mean across tasks of each task's own peak, which is a
-      // different quantity from the sum and was previously discarded on the way out.
+      // avg is populated: it is the mean, over the tasks that reported the metric, of each
+      // task's reported value -- a different quantity from the sum, and previously discarded.
       assert(avg.isDefined, s"max-aggregated metric should carry an avg: $r")
       assert(max.isDefined, s"max-aggregated metric should have a max value: $r")
     }
@@ -566,17 +566,78 @@ class AnalysisSuite extends AnyFunSuite {
     }
   }
 
+  test("SQL and app avg pool the reporting tasks rather than re-averaging stage means") {
+    // The rollup used to weight each stage mean by the stage's task count. That denominator
+    // counts tasks which never reported the metric, and GPU accumulables are often sparse, so
+    // the published mean drifted toward the stages that reported it least. It also truncated
+    // twice, once at stage level and again in the rollup.
+    val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
+    val apps = ToolTestUtils.processProfileApps(logs, sparkSession)
+    val agg = RawMetricProfilerView.getAggMetrics(apps.toSeq)
+    // Oracle read straight from the store, keyed by (name, stageId) because accumInfoMap is
+    // keyed by accumulator id and each metric gets a distinct id per stage.
+    val rawByNameAndStage = apps.head.accumManager.accumInfoMap.values
+      .filter(_.infoRef.isGpuReportedMetric)
+      .flatMap(ai => ai.getStageIds.flatMap(sId =>
+        ai.getRawStatsForStage(sId).map(raw => (ai.infoRef.getName(), sId) -> raw)))
+      .toMap
+    // Restricted to the stages that actually produced a row, so the zero-signal filter in
+    // aggregateGpuMetricsByStage does not make the oracle disagree for the wrong reason.
+    val pooled = agg.gpuStageAggs.groupBy(_.metricName).map { case (name, group) =>
+      val stats = group.flatMap(r => rawByNameAndStage.get((name, r.stageId)))
+        .filter(_.count > 0L)
+      val pooledTotal = stats.map(_.total).sum
+      val pooledCount = stats.map(_.count).sum
+      name -> ((pooledTotal, pooledCount))
+    }
+    assert(agg.gpuAppAggs.nonEmpty, "expected app-level GPU rows")
+    agg.gpuAppAggs.foreach { row =>
+      val (total, count) = pooled(row.metricName)
+      assert(count > 0L, s"no reporting tasks for ${row.metricName}")
+      assert(row.avg.contains(total / count),
+        s"${row.metricName}: avg ${row.avg} != pooled $total/$count")
+    }
+    // SQL rows pool over that SQL's own stage set, derived here rather than reusing the
+    // app-level pooling above.
+    val sqlToStages = apps.head.sqlIdToStages
+    assert(agg.gpuSqlAggs.nonEmpty, "expected SQL-level GPU rows")
+    agg.gpuSqlAggs.foreach { row =>
+      val stageIds = sqlToStages.getOrElse(row.sqlId, Seq.empty).toSet
+      val stats = agg.gpuStageAggs
+        .filter(r => r.metricName == row.metricName && stageIds.contains(r.stageId))
+        .flatMap(r => rawByNameAndStage.get((r.metricName, r.stageId)))
+        .filter(_.count > 0L)
+      val sqlCount = stats.map(_.count).sum
+      assert(sqlCount > 0L, s"no reporting tasks for ${row.metricName} in SQL ${row.sqlId}")
+      assert(row.avg.contains(stats.map(_.total).sum / sqlCount),
+        s"SQL ${row.sqlId} ${row.metricName}: avg ${row.avg} is not the pooled mean")
+    }
+
+    // Regression guard: on this fixture the two formulas genuinely disagree for at least one
+    // metric, so reverting to the task-count weighting fails here instead of passing silently.
+    val byNumTasks = agg.gpuStageAggs.groupBy(_.metricName).map { case (name, group) =>
+      val weighted = group.flatMap(r => r.avg.map(a => (a, r.numTasks.toLong)))
+      val tasks = weighted.map(_._2).sum
+      name -> (if (tasks == 0L) None else Some(weighted.map(p => p._1 * p._2).sum / tasks))
+    }
+    assert(agg.gpuAppAggs.exists(row => byNumTasks(row.metricName) != row.avg),
+      "fixture no longer distinguishes the two rollup formulas; the guard is now vacuous")
+  }
+
   test("a scaled metric renders divided in the emitted row") {
     // Pins the published strings rather than the stored Longs: the store holds thousandths.
+    // total and count are the stored inputs; sum and avg are derived on the way out.
     val row = StageAggGpuMetricsProfileResult(
       stageId = 1, numTasks = 72, metricName = "gpuOnGpuTasksWaitingGPUAvgCount",
-      unit = "count", sum = None, max = Some(2500L), avg = Some(714L))
+      unit = "count", total = Some(3570L), max = Some(2500L), count = 5L)
+    // the stored total is present; it is the publishing of it that is suppressed
+    assert(row.total.isDefined && row.sum.isEmpty, "max-aggregated total must stay unpublished")
     assert(row.convertToCSVSeq().toSeq == Seq("1", "72", "gpuOnGpuTasksWaitingGPUAvgCount",
       "count", "", "2.5", "0.714"))
     // an unscaled metric is byte-identical to before
     val plain = StageAggGpuMetricsProfileResult(
       stageId = 1, numTasks = 72, metricName = "gpuMaxTaskFootprint",
-      unit = "bytes", sum = None, max = Some(7123115846L), avg = Some(1411606730L))
+      unit = "bytes", total = Some(4234820190L), max = Some(7123115846L), count = 3L)
     assert(plain.convertToCSVSeq().toSeq == Seq("1", "72", "gpuMaxTaskFootprint",
       "bytes", "", "7123115846", "1411606730"))
   }

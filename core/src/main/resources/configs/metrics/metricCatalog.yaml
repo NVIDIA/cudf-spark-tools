@@ -1,0 +1,384 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Declarative catalog of per-task accumulable metrics.
+#
+# This table replaces a set of substring rules that inferred a metric's unit and its
+# aggregation from its *name*. That information belongs to the accumulator that emits the
+# metric, not to the string naming it, so it is declared here instead.
+#
+# Fields
+# ------
+#   name             The normalized accumulable name, i.e. what AccumMetaRef.getName() returns.
+#                    EventUtils.normalizeMetricName is the identity on every name declared here,
+#                    but consumers look up by the normalized form, so that is the form declared.
+#   family           Which family the metric belongs to: gpu | perfio | spark. This is what
+#                    decides GPU reporting. Being declared in this catalog is NOT enough to make
+#                    a metric a GPU metric -- the catalog is deliberately not GPU-specific, so
+#                    that CPU and taskModel-sourced metrics can be declared here later without
+#                    leaking into the gpu_* output files. The gpu_* files carry the gpu and
+#                    perfio families; perfio is separate so it can be queried, and later reported,
+#                    on its own without redefining what a GPU metric is.
+#   source           Where the per-task values come from.
+#                      accumulable  - an event-log accumulable, folded by AccumInfo.
+#                      taskModel    - a field already retained on TaskModel. Not yet consumed.
+#   unit             The unit the value is reported in: bytes | ms | count. This is a LABEL
+#                    only. No scaling is derived from it -- see "no source scale" below.
+#   valueForm        How the value is serialized in the event log.
+#                      integer  - parses via the plain-integer, duration or memory branch.
+#                      decimal  - MAY be a Double, e.g. "0.5". The accumulator's zero case still
+#                                 serializes as a plain "0", so ingest must accept both forms.
+#                                 Needs storageScale to survive a Long store.
+#   storageScale     Fixed-point multiplier applied on ingest so sub-integer values survive the
+#                    Long store. Must be 1, or a power of ten for a decimal metric. FULLY WIRED:
+#                    EventUtils.parseAccumFieldToLong multiplies by it on ingest, every stored
+#                    statistic for that metric is then in those units, and it is divided out only
+#                    at render, in convertToSeq/convertToCSVSeq via MetricCatalog.formatStoredValue.
+#                    A decimal metric MUST declare a scale > 1; validation rejects it otherwise,
+#                    because without one every non-integral sample is silently dropped.
+#   aggregation      How per-task values combine into a stage value: sum | max.
+#                    NOT derivable from the accumulator class -- gpuMaxTaskFootprint and
+#                    gpuSpillToHostBytes are both SizeInBytesAccumulator but one is a per-task
+#                    high-water mark and the other a running total.
+#   includeInDiagnostics Whether the metric appears in the per-stage distribution report.
+#   description      One line, for the report column documentation.
+#
+# There is deliberately NO source-scale field
+# -------------------------------------------
+# EventUtils.parseAccumFieldToLong already normalizes every serialized form to a canonical
+# unit: a plain integer stays raw, "00:00:01.773" becomes 1773 milliseconds, and
+# "3.28GB (3526702303 bytes)" becomes bytes. Nothing downstream should convert again. The
+# serialized form is also not stable across plugin releases -- the memory metrics moved from a
+# plain integer to the human-readable string -- so recording it here would go stale. Absorbing
+# that variation is the parser's job.
+#
+# Metrics absent from this table
+# ------------------------------
+# An undeclared metric falls back to the legacy name-based heuristic for its unit LABEL ONLY:
+# a name containing Time or Wait is labelled ms, one containing Bytes is labelled bytes, anything
+# else count. It is unscaled and aggregated by sum.
+#
+# That heuristic is the very thing this table replaces, so relying on it as a fallback needs a
+# word of justification. It is right for any metric whose name follows the plugin's convention --
+# a new NanoSecondAccumulator called gpuFooTime is correctly labelled ms -- and wrong only for the
+# names that motivated this table (gpuMaxTaskFootprint is bytes without saying so;
+# ...WaitingGPUMaxCount is a count that says Wait). Crucially it is now label-only: the value is
+# no longer scaled by it, so a bad guess costs a wrong column header rather than a destroyed
+# number. Declaring the metric here is still preferred and is the only way to get its
+# aggregation, value form and storage scale right.
+#
+# Discovery works like this: a DECLARED metric is reported in the gpu_* files if and only if its
+# family is gpu or perfio, and an UNDECLARED metric falls back to the legacy prefix rule -- a name
+# starting with "gpu" or "perfio.", or the literal multithreadReaderMaxParallelism. Note the
+# fallback prefix is "perfio." and not "perfio.s3.": widening it is what makes an undeclared
+# perfio.gcs.* or perfio.abfs.* metric discoverable rather than silently dropped. Declaring a
+# metric here still matters even when it would match the prefix, because only a declaration
+# carries its unit, aggregation and value form.
+
+metrics:
+  # --- timing: NanoSecondAccumulator, serialized as "HH:MM:SS.mmm", parsed to milliseconds ----
+  - name: gpuTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: true
+    description: Time the task held the GPU semaphore.
+  - name: gpuSemaphoreWait
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: true
+    description: Time the task spent blocked waiting to acquire the GPU semaphore.
+  - name: gpuRetryBlockTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time the task spent blocked during an out-of-memory retry.
+  - name: gpuRetryComputationTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time spent recomputing work discarded by an out-of-memory retry.
+  - name: gpuSpillToHostTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time spent spilling device memory to host memory.
+  - name: gpuSpillToDiskTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time spent spilling memory to disk.
+  - name: gpuReadSpillFromHostTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time spent reading spilled data back from host memory.
+  - name: gpuReadSpillFromDiskTime
+    family: gpu
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time spent reading spilled data back from disk.
+  - name: perfio.s3.requestLimiter.totalWaitTime
+    family: perfio
+    source: accumulable
+    unit: ms
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Time PerfIO S3 requests spent waiting on the request limiter.
+
+  # --- byte totals: SizeInBytesAccumulator / LongAccumulator, summed across tasks -------------
+  - name: gpuSpillToHostBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: true
+    description: Bytes spilled from device memory to host memory.
+  - name: gpuSpillToDiskBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: true
+    description: Bytes spilled to disk.
+  - name: gpuDiskWriteSavedBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Disk writes avoided by the spillable partial-file handle.
+
+  # --- byte high-water marks: per-task peaks, so aggregated by max, never summed --------------
+  - name: gpuMaxTaskFootprint
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak GPU memory footprint of the task. The value the runtime estimator samples.
+  - name: gpuMaxDeviceMemoryBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak device memory allocated by the task.
+  - name: gpuMaxHostMemoryBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak host memory allocated by the task.
+  - name: gpuMaxPinnedMemoryBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak pinned host memory allocated by the task.
+  - name: gpuMaxPageableMemoryBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak pageable host memory allocated by the task.
+  - name: gpuMaxDiskMemoryBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak disk space used by spilled data for the task.
+
+  # --- counts --------------------------------------------------------------------------------
+  - name: gpuMaxConcurrentGpuTasks
+    family: gpu
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak number of tasks concurrently holding the GPU semaphore.
+  - name: gpuOnGpuTasksWaitingGPUMaxCount
+    family: gpu
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak number of tasks queued waiting for the GPU.
+  - name: gpuOnGpuTasksWaitingGPUAvgCount
+    family: gpu
+    source: accumulable
+    unit: count
+    valueForm: decimal
+    storageScale: 1000
+    aggregation: max
+    includeInDiagnostics: false
+    description: >-
+      Highest per-task average queue depth for tasks waiting on the GPU. Each task reports its own
+      average, and the stage reports the maximum of those averages -- so this is neither a mean
+      across tasks nor a peak queue depth, and it does not pair with the Max sibling over the same
+      population. Emitted by AvgLongAccumulator as a Double, so it is stored as fixed-point
+      thousandths.
+  - name: multithreadReaderMaxParallelism
+    family: gpu
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: true
+    description: Peak parallelism reached by the multithreaded reader.
+  - name: gpuRetryCount
+    family: gpu
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Number of out-of-memory retries the task performed.
+  - name: gpuSplitAndRetryCount
+    family: gpu
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Number of split-and-retry attempts the task performed.
+  # Aggregated by max, unlike today's behaviour. It is a MaxLongAccumulator, so each task reports
+  # its own deepest observed queue; summing those gives Sigma(per-task peaks), e.g. 800 for a
+  # limiter that never exceeded 8. No available event log exercises this metric, so the change is
+  # invisible on current fixtures.
+  - name: perfio.s3.requestLimiter.maxWaitingRequests
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: max
+    includeInDiagnostics: false
+    description: Peak number of PerfIO S3 requests queued on the request limiter.
+  - name: perfio.s3.netty.executors
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Executors using the PerfIO S3 Netty backend.
+  - name: perfio.s3.crt.executors
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Executors using the PerfIO S3 CRT backend.
+  - name: perfio.s3.s3a.executors
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Executors falling back to the S3A backend.
+  - name: perfio.s3.iceberg.fallbacks
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Iceberg reads that fell back off the PerfIO S3 path.
+  - name: perfio.gcs.http.executors
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Executors using the PerfIO GCS HTTP transport.
+  - name: perfio.gcs.grpc.executors
+    family: perfio
+    source: accumulable
+    unit: count
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: false
+    description: Executors using the PerfIO GCS gRPC transport.

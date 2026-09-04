@@ -33,6 +33,12 @@ import org.apache.spark.sql.execution.ui.{SparkListenerSQLExecutionEnd, SparkLis
  * Utility containing the implementation of helpers used for parsing data from event.
  */
 object EventUtils extends Logging {
+  // A decimal literal, optionally in exponent form. Double.toString switches to E-notation
+  // below 1e-3, so excluding it would silently drop the small averages this exists to read.
+  // Type suffixes ("3d", "5f"), NaN and Infinity still fail the digits-first shape, and the
+  // range check in parseScaledDecimalToLong rejects anything that would not fit a Long.
+  private val DECIMAL_LITERAL_REGEX = """^-?\d+(\.\d+)?([eE][-+]?\d+)?$""".r
+
   // A valid Spark catalog name must start with a letter, can contain letters, digits,
   // underscores, or dashes, and must not end with a dot.
   val SPARK_CATALOG_REGEX: Regex = """spark\\.sql\\.catalog\\.([A-Za-z][A-Za-z0-9_-]*)$""".r
@@ -60,10 +66,38 @@ object EventUtils extends Logging {
   // The key is the exception message, and the value is the count of occurences
   private val cachedUnknownExceptions = new java.util.concurrent.ConcurrentHashMap[String, Int]()
 
+  // A cache to avoid reporting the same unparseable accumulable more than once. The key is the
+  // accumulable name and the value is the number of occurrences. This is process-global rather
+  // than per application on purpose: the profiler parses many event logs concurrently, and a
+  // metric the tool cannot read is a property of the metric, not of the log, so one line per
+  // distinct name is the useful amount of noise.
+  private val cachedUnparseableAccums =
+    new java.util.concurrent.ConcurrentHashMap[String, Int]()
+
   private def reportMissingEventClass(className: String): Unit = {
     if (!missingEventClasses.contains(className)) {
       missingEventClasses.add(className)
       logWarning(s"ClassNotFoundException while parsing an event: $className")
+    }
+  }
+
+  /**
+   * Reports, once per process, that no parser could read a value for an accumulable.
+   *
+   * A silent drop here is what let a Double-valued accumulator go unnoticed while its metric
+   * published zeros, so the failure is now visible -- but only the first occurrence, since the
+   * same metric fails on every task of every application in a run.
+   *
+   * @param accumName the accumulable name
+   * @param rawValue the value that could not be parsed, quoted into the message
+   */
+  def reportUnparseableAccum(accumName: String, rawValue: Any): Unit = {
+    val occurrences =
+      cachedUnparseableAccums.compute(accumName, (_, v) => Option(v).map(_ + 1).getOrElse(1))
+    if (occurrences == 1) {
+      logWarning(s"No parser could read a value for the accumulable '$accumName'; " +
+        s"first unreadable value was '$rawValue'. This accumulable will be missing from the " +
+        "report. Only the first occurrence is logged; subsequent ones are suppressed.")
     }
   }
 
@@ -196,6 +230,60 @@ object EventUtils extends Logging {
         StringUtils.parseFromGPUMemoryMetricToLongOption(strData)
       case NonFatal(_) =>
         None
+    }
+  }
+
+  /**
+   * Parses an accumulable value that the metric catalog declares as decimal, storing it as a
+   * fixed-point integer scaled by `storageScale`.
+   *
+   * Deliberately strict rather than delegating to `toDouble`: `java.lang.Double.parseDouble`
+   * accepts `"1e9"`, `"3d"`, `"5f"`, `"NaN"` and `"Infinity"`, and an infinite value would
+   * overflow the running total to a negative number. Only a plain decimal literal is admitted.
+   *
+   * Note the zero case of such a metric still arrives as a plain `"0"`, which this accepts and
+   * scales like any other value so that stored units stay consistent.
+   *
+   * Rounding is `Math.round`, i.e. half-up rather than half-away-from-zero, so an exact
+   * negative half tie rounds toward zero. Unreachable for the only decimal metric declared
+   * today, which is a non-negative queue depth.
+   */
+  def parseScaledDecimalToLong(data: Any, storageScale: Long): Option[Long] = {
+    val strData = data.toString.trim
+    if (!DECIMAL_LITERAL_REGEX.pattern.matcher(strData).matches()) {
+      None
+    } else {
+      try {
+        val scaled = java.lang.Double.parseDouble(strData) * storageScale.toDouble
+        // Reject on magnitude, symmetrically. Long.MaxValue.toDouble rounds UP to 2^63, so a
+        // scaled value that reaches it is already out of range and Math.round would clamp
+        // rather than fail. The same has to apply to the negative side: double spacing near
+        // 2^63 is 2048, so a true value slightly beyond -2^63 rounds ONTO the representable
+        // -2^63 and would be clamped to Long.MinValue -- an in-range-looking number that is
+        // not the input. This errs conservatively at both ends: a true value within Long range
+        // but within one double-step of the boundary is rejected rather than fabricated.
+        if (scaled.isNaN || scaled.isInfinite ||
+          Math.abs(scaled) >= Long.MaxValue.toDouble) {
+          None
+        } else {
+          Some(Math.round(scaled))
+        }
+      } catch {
+        case _: NumberFormatException => None
+      }
+    }
+  }
+
+  /**
+   * Parses an accumulable value, applying the metric's fixed-point storage scale.
+   *
+   * A scale of 1, which is every metric but one, is the pre-existing behaviour unchanged.
+   */
+  def parseAccumFieldToLong(data: Any, storageScale: Long): Option[Long] = {
+    if (storageScale <= 1L) {
+      parseAccumFieldToLong(data)
+    } else {
+      parseScaledDecimalToLong(data, storageScale)
     }
   }
 

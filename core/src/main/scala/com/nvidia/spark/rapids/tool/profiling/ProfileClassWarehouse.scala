@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.profiling
 
 import scala.collection.Map
 
-import com.nvidia.spark.rapids.tool.analysis.StatisticsMetrics
+import com.nvidia.spark.rapids.tool.analysis.{MetricCatalog, StatisticsMetrics}
 import com.nvidia.spark.rapids.tool.views.OutHeaderRegistry
 
 import org.apache.spark.resource.{ExecutorResourceRequest, TaskResourceRequest}
@@ -388,24 +388,32 @@ case class AccumProfileResults(
     OutHeaderRegistry.outputHeaders("AccumProfileResults")
   }
 
+  /**
+   * Values are stored as integers, so a metric the catalog declares as decimal is held in
+   * fixed-point units and must be divided before display. A no-op for every other metric.
+   */
+  private def render(value: Long): String = {
+    MetricCatalog.formatStoredValue(value, accMetaRef.storageScale)
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(stageId.toString,
       accMetaRef.id.toString,
       accMetaRef.getName(),
-      min.toString,
-      median.toString,
-      max.toString,
-      total.toString)
+      render(min),
+      render(median),
+      render(max),
+      render(total))
   }
 
   override def convertToCSVSeq(): Array[String] = {
     Array(stageId.toString,
       accMetaRef.id.toString,
       accMetaRef.name.csvValue,
-      min.toString,
-      median.toString,
-      max.toString,
-      total.toString)
+      render(min),
+      render(median),
+      render(max),
+      render(total))
   }
 }
 
@@ -1587,13 +1595,23 @@ object UnixExitCode {
 }
 
 /**
- * GPU task metric aggregation at stage level — one row per (stageId, metricName).
- * Long/transposed schema: unit and sum/max/avg vary by metric. Empty `sum` / `avg`
- * denote max-aggregated metrics (e.g. `gpuMaxDeviceMemoryBytes`).
+ * GPU task metric aggregation at stage level: one row per (stageId, metricName).
+ * Long/transposed schema: unit and the three numeric cells vary by metric.
+ *
+ * The row stores what the accumulator store actually holds, `total` and `count`, and
+ * derives the two published quantities from them. `sum` is `total` suppressed for
+ * max-aggregated metrics, whose per-task peaks never coexist and so must not be added;
+ * `avg` is `total / count`. Keeping the derivation here rather than at construction means
+ * the SQL and app rollups can pool the raw totals and divide once, instead of re-averaging
+ * already-truncated stage means against a denominator (`numTasks`) that counts tasks which
+ * never reported the metric.
+ *
+ * `count` is the number of tasks that reported the metric, which is at most `numTasks` and
+ * is often far below it: spill and retry metrics land on a handful of tasks in a stage.
  *
  * Note on stage attempts: unlike StageAggTaskMetricsProfileResult, this class has
  * no aggregateStageProfileMetric helper because attempt merging happens upstream
- * at the AccumInfo layer — `AccumInfo.stagesStatMap` is keyed by stageId only
+ * at the AccumInfo layer. `AccumInfo.stagesStatMap` is keyed by stageId only
  * (not stageId + attemptNumber), so calculateAccStatsForStage already returns
  * the merged result across attempts.
  */
@@ -1602,12 +1620,33 @@ case class StageAggGpuMetricsProfileResult(
     numTasks: Int,
     metricName: String,
     unit: String,
-    sum: Option[Long],
+    total: Option[Long],
     max: Option[Long],
-    avg: Option[Long]) extends ProfileResult {
+    count: Long) extends ProfileResult {
+
+  /**
+   * The published total. Empty for a max-aggregated metric: adding up per-task peaks is
+   * meaningless because those peaks never coexist. `total` still holds the sum, which is a
+   * valid numerator for `avg` even where it is not a valid figure to publish.
+   */
+  def sum: Option[Long] = {
+    if (MetricCatalog.DEFAULT.isAggregatedByMax(metricName)) None else total
+  }
+
+  /**
+   * Arithmetic mean over the tasks that reported the metric. Divided once from the raw total
+   * rather than read from the store's `med`, which is a rolling mean recomputed with integer
+   * division on every update and therefore ratchets toward the floor.
+   */
+  def avg: Option[Long] = if (count > 0L) total.map(_ / count) else None
 
   override def outputHeaders: Array[String] = {
     OutHeaderRegistry.outputHeaders("StageAggGpuMetricsProfileResult")
+  }
+
+  /** Divides out the fixed-point scale of a decimal metric; a no-op for every other metric. */
+  private def render(value: Option[Long]): String = {
+    value.map(MetricCatalog.DEFAULT.formatValue(metricName, _)).getOrElse("")
   }
 
   override def convertToSeq(): Array[String] = {
@@ -1616,19 +1655,21 @@ case class StageAggGpuMetricsProfileResult(
       numTasks.toString,
       metricName,
       unit,
-      sum.map(_.toString).getOrElse(""),
-      max.map(_.toString).getOrElse(""),
-      avg.map(_.toString).getOrElse(""))
+      render(sum),
+      render(max),
+      render(avg))
   }
 
   override def convertToCSVSeq(): Array[String] = convertToSeq()
 }
 
 /**
- * GPU task metric aggregation at SQL level — one row per (sqlId, metricName).
- * Rolled up from stage-level rows: sum = Σ stage.sum, max = max stage.max,
- * avg = task-weighted average over stage.avg. numTasks is intentionally not
- * carried — it would be a constant per SQL across every metric row (the non-GPU
+ * GPU task metric aggregation at SQL level: one row per (sqlId, metricName).
+ * Rolled up from stage-level rows. sum adds the stage sums (None for max metrics);
+ * max is the largest stage max; avg divides the pooled stage totals by the pooled
+ * stage counts, so it is a mean over the tasks that reported the metric rather than
+ * a re-average of the stage means. numTasks is intentionally not carried: it would
+ * be a constant per SQL across every metric row (the non-GPU
  * sql_level_aggregated_task_metrics.csv already has it once per SQL).
  */
 case class SQLAggGpuMetricsProfileResult(
@@ -1643,14 +1684,19 @@ case class SQLAggGpuMetricsProfileResult(
     OutHeaderRegistry.outputHeaders("SQLAggGpuMetricsProfileResult")
   }
 
+  /** Divides out the fixed-point scale of a decimal metric; a no-op for every other metric. */
+  private def render(value: Option[Long]): String = {
+    value.map(MetricCatalog.DEFAULT.formatValue(metricName, _)).getOrElse("")
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(
       sqlId.toString,
       metricName,
       unit,
-      sum.map(_.toString).getOrElse(""),
-      max.map(_.toString).getOrElse(""),
-      avg.map(_.toString).getOrElse(""))
+      render(sum),
+      render(max),
+      render(avg))
   }
 
   override def convertToCSVSeq(): Array[String] = convertToSeq()
@@ -1673,14 +1719,19 @@ case class AppAggGpuMetricsProfileResult(
     OutHeaderRegistry.outputHeaders("AppAggGpuMetricsProfileResult")
   }
 
+  /** Divides out the fixed-point scale of a decimal metric; a no-op for every other metric. */
+  private def render(value: Option[Long]): String = {
+    value.map(MetricCatalog.DEFAULT.formatValue(metricName, _)).getOrElse("")
+  }
+
   override def convertToSeq(): Array[String] = {
     Array(
       appId,
       metricName,
       unit,
-      sum.map(_.toString).getOrElse(""),
-      max.map(_.toString).getOrElse(""),
-      avg.map(_.toString).getOrElse(""))
+      render(sum),
+      render(max),
+      render(avg))
   }
 
   override def convertToCSVSeq(): Array[String] = convertToSeq()

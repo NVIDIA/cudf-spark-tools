@@ -1,6 +1,19 @@
 
 <br/>
 
+## Release [v26.08.0](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.08.0)
+Generated on 2026-09-05
+### Autotuner
+
+- Add a downward-only shuffle partition pass sized from consumer-stage shuffle input ([#2129](https://github.com/NVIDIA/cudf-spark-tools/pull/2129))
+
+### Bug Fixes
+
+- Fix GPU task metric unit inference ([#2139](https://github.com/NVIDIA/cudf-spark-tools/pull/2139))
+
+
+<br/>
+
 ## Release [v26.06.4](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.06.4)
 Generated on 2026-09-03
 ### Autotuner

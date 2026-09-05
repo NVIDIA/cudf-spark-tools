@@ -25,7 +25,8 @@ from spark_rapids_pytools.cloud_api.gstorage import GStorageDriver
 from spark_rapids_pytools.cloud_api.sp_types import PlatformBase, CMDDriverBase, \
     ClusterBase, ClusterNode, SysInfo, GpuHWInfo, SparkNodeType, ClusterState, GpuDevice, \
     NodeHWInfo, ClusterGetAccessor
-from spark_rapids_pytools.common.prop_manager import JSONPropertiesContainer, is_valid_gpu_device
+from spark_rapids_tools.utils.propmanager import AbstractPropContainer
+from spark_rapids_pytools.common.prop_manager import is_valid_gpu_device
 from spark_rapids_pytools.common.sys_storage import FSUtil
 from spark_rapids_pytools.common.utilities import Utils
 from spark_rapids_pytools.pricing.dataproc_pricing import DataprocPriceProvider
@@ -114,10 +115,9 @@ class DataprocPlatform(PlatformBase):
                                 source_cost: float = None):
         raw_pricing_config = self.configs.get_value_silent('pricing')
         if raw_pricing_config:
-            pricing_config = JSONPropertiesContainer(prop_arg=raw_pricing_config,
-                                                     file_load=False)
+            pricing_config = AbstractPropContainer(props=raw_pricing_config)
         else:
-            pricing_config: JSONPropertiesContainer = None
+            pricing_config: AbstractPropContainer = None
         pricing_provider = DataprocPriceProvider(region=self.cli.get_region(),
                                                  pricing_configs={'gcloud': pricing_config})
         saving_estimator = DataprocSavingsEstimator(price_provider=pricing_provider,
@@ -319,7 +319,7 @@ class DataprocCMDDriver(CMDDriverBase):  # pylint: disable=abstract-method
             return gpu_name.upper()
 
         processed_instance_descriptions = {}
-        raw_instances_descriptions = JSONPropertiesContainer(prop_arg=instance_descriptions, file_load=False)
+        raw_instances_descriptions = AbstractPropContainer(props=instance_descriptions)
         for instance in raw_instances_descriptions.props:
             instance_content = {}
             instance_content['VCpuCount'] = int(instance.get('guestCpus', -1))
@@ -505,7 +505,7 @@ class DataprocCluster(ClusterBase):
             for worker_node in worker_nodes_from_conf:
                 worker_props = {
                     'name': worker_node,
-                    'props': JSONPropertiesContainer(prop_arg=raw_worker_prop, file_load=False),
+                    'props': AbstractPropContainer(props=raw_worker_prop),
                     # set the node zone based on the wrapper defined zone
                     'zone': self.zone
                 }
@@ -516,7 +516,7 @@ class DataprocCluster(ClusterBase):
         raw_master_props = self.props.get_value('config', 'masterConfig')
         master_props = {
             'name': master_nodes_from_conf[0],
-            'props': JSONPropertiesContainer(prop_arg=raw_master_props, file_load=False),
+            'props': AbstractPropContainer(props=raw_master_props),
             # set the node zone based on the wrapper defined zone
             'zone': self.zone
         }
@@ -527,7 +527,7 @@ class DataprocCluster(ClusterBase):
             SparkNodeType.MASTER: master_node
         }
 
-    def _set_zone_from_props(self, prop_container: JSONPropertiesContainer):
+    def _set_zone_from_props(self, prop_container: AbstractPropContainer):
         """
         Extracts the 'zoneUri' from the properties container and updates the environment variable dictionary.
         """

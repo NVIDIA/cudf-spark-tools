@@ -23,7 +23,7 @@
     <artifactId>rapids-4-spark-tools_2.12</artifactId>
     <name>NVIDIA cuDF plugin for Apache Spark tools</name>
     <description>NVIDIA cuDF plugin for Apache Spark tools</description>
-    <version>26.06.5-SNAPSHOT</version>
+    <version>26.08.1-SNAPSHOT</version>
     <packaging>jar</packaging>
     <url>http://github.com/NVIDIA/cudf-spark-tools</url>
 

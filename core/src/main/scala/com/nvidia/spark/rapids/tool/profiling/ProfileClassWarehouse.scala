@@ -968,15 +968,17 @@ case class StageAggTaskMetricsProfileResult(
   def aggregateStageProfileMetric(
       other: StageAggTaskMetricsProfileResult
   ): StageAggTaskMetricsProfileResult = {
+    val mergedNumTasks = this.numTasks + other.numTasks
+    val mergedDurationSum = this.durationSum + other.durationSum
     StageAggTaskMetricsProfileResult(
       id = this.id,
-      numTasks = this.numTasks + other.numTasks,
+      numTasks = mergedNumTasks,
       duration = Option(this.duration.getOrElse(0L) + other.duration.getOrElse(0L)),
       diskBytesSpilledSum = this.diskBytesSpilledSum + other.diskBytesSpilledSum,
-      durationSum = this.durationSum + other.durationSum,
+      durationSum = mergedDurationSum,
       durationMax = Math.max(this.durationMax, other.durationMax),
       durationMin = Math.min(this.durationMin, other.durationMin),
-      durationAvg = (this.durationAvg + other.durationAvg) / 2,
+      durationAvg = ToolUtils.calculateAverage(mergedDurationSum, mergedNumTasks, 1),
       executorCPUTimeSum = this.executorCPUTimeSum + other.executorCPUTimeSum,
       executorDeserializeCpuTimeSum = this.executorDeserializeCpuTimeSum +
         other.executorDeserializeCpuTimeSum,

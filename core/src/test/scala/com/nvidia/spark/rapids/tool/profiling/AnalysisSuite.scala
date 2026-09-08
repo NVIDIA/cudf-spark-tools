@@ -649,6 +649,50 @@ class AnalysisSuite extends AnyFunSuite {
       "fixture no longer distinguishes the two rollup formulas; the guard is now vacuous")
   }
 
+  test("stage attempt avg pools task durations rather than averaging attempt means") {
+    val firstAttempt = StageAggTaskMetricsProfileResult(
+      id = 1L,
+      numTasks = 2,
+      duration = None,
+      diskBytesSpilledSum = 0L,
+      durationSum = 800L,
+      durationMax = 0L,
+      durationMin = 0L,
+      durationAvg = 400.0,
+      executorCPUTimeSum = 0L,
+      executorDeserializeCpuTimeSum = 0L,
+      executorDeserializeTimeSum = 0L,
+      executorRunTimeSum = 0L,
+      inputBytesReadSum = 0L,
+      inputBytesReadMax = 0L,
+      inputRecordsReadSum = 0L,
+      jvmGCTimeSum = 0L,
+      memoryBytesSpilledSum = 0L,
+      outputBytesWrittenSum = 0L,
+      outputRecordsWrittenSum = 0L,
+      peakExecutionMemoryMax = 0L,
+      resultSerializationTimeSum = 0L,
+      resultSizeMax = 0L,
+      srFetchWaitTimeSum = 0L,
+      srLocalBlocksFetchedSum = 0L,
+      srcLocalBytesReadSum = 0L,
+      srRemoteBlocksFetchSum = 0L,
+      srRemoteBytesReadSum = 0L,
+      srRemoteBytesReadToDiskSum = 0L,
+      srTotalBytesReadSum = 0L,
+      swBytesWrittenSum = 0L,
+      swRecordsWrittenSum = 0L,
+      swWriteTimeSum = 0L)
+    val retryAttempt = firstAttempt.copy(
+      numTasks = 1,
+      durationSum = 200L,
+      durationAvg = 200.0)
+
+    val result = firstAttempt.aggregateStageProfileMetric(retryAttempt)
+
+    assert(result.durationAvg === 333.3)
+  }
+
   test("dispersion columns are consistent with the row they sit in") {
     val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
     val apps = ToolTestUtils.processProfileApps(logs, sparkSession)

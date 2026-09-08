@@ -1,6 +1,11 @@
 
 <br/>
 
+## Release [v26.08.1](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.08.1)
+Generated on 2026-09-08
+- no changes
+<br/>
+
 ## Release [v26.08.0](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.08.0)
 Generated on 2026-09-05
 ### Autotuner

@@ -3179,12 +3179,8 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
             |
             |Comments:
             |- 'spark.executor.instances' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
             |- 'spark.rapids.sql.batchSizeBytes' was not set.
-            |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
             |- 'spark.rapids.sql.enabled' was not set.
-            |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- ${notEnoughMemCommentForKey("spark.executor.memory")}

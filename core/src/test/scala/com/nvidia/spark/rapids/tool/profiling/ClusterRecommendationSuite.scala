@@ -252,7 +252,9 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
 
 
   /**
-   * Test to validate the cluster shape recommendation with enforced spark properties.
+   * Test to validate the cluster shape recommendation with enforced and preserved spark
+   * properties. The event log sets concurrentGpuTasks to 4 while the calculated value is 3,
+   * making preservation observable in the output.
    *
    * Target Cluster YAML file:
    * {{{
@@ -267,9 +269,12 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
    *    spark.memory.offHeap.enabled: true
    *    spark.memory.offHeap.size: 2g
    *    spark.sql.shuffle.partitions: 400
+   *  preserve:
+   *    - spark.rapids.sql.concurrentGpuTasks
    * }}}
    */
-  test(s"test valid cluster shape recommendation with enforced spark properties on dataproc") {
+  test(s"test valid cluster shape recommendation with enforced and preserved spark properties " +
+    s"on dataproc") {
     val expectedClusterInfo = RecommendedClusterInfo(
       vendor = PlatformNames.DATAPROC,
       coresPerExecutor = 8,
@@ -291,12 +296,14 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
       "spark.memory.offHeap.size" -> "2g",
       "spark.sql.shuffle.partitions" -> "400"
     )
+    val preservedProperty = "spark.rapids.sql.concurrentGpuTasks"
     TrampolineUtil.withTempDir { tempDir =>
       val targetClusterInfoFile = ToolTestUtils.createTargetClusterInfoFile(
         tempDir.getAbsolutePath,
         driverNodeInstanceType = expectedClusterInfo.driverNodeType,
         workerNodeInstanceType = expectedClusterInfo.workerNodeType,
-        enforcedSparkProperties = expectedEnforcedSparkProperties)
+        enforcedSparkProperties = expectedEnforcedSparkProperties,
+        preserveSparkProperties = List(preservedProperty))
 
       val appArgs = new ProfileArgs(Array(
         "--platform",
@@ -320,7 +327,7 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
       // 1. Verify the recommended cluster info
       assertRecommendedClusterInfo(actualClusterInfoFile, expectedClusterInfo)
 
-      // 2. Verify the enforced spark properties
+      // 2. Verify the target Spark properties
       val logFile = getOutputFilePath(tempDir, "profile.log")
       val profileLogContent = FSUtils.readFileContentAsUTF8(logFile)
       val actualResults = extractAutoTunerResults(profileLogContent)
@@ -340,7 +347,7 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |--conf spark.rapids.shuffle.multiThreaded.reader.threads=20
             |--conf spark.rapids.shuffle.multiThreaded.writer.threads=20
             |--conf spark.rapids.sql.batchSizeBytes=2147483647b
-            |--conf spark.rapids.sql.concurrentGpuTasks=3
+            |--conf $preservedProperty=4
             |--conf spark.rapids.sql.enabled=true
             |--conf spark.rapids.sql.multiThreadedRead.numThreads=40
             |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
@@ -358,13 +365,9 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |- ${getEnforcedPropertyComment("spark.executor.memory")}
             |- ${getEnforcedPropertyComment("spark.memory.offHeap.enabled")}
             |- ${getEnforcedPropertyComment("spark.memory.offHeap.size")}
-            |- 'spark.rapids.memory.pinnedPool.size' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
             |- 'spark.rapids.sql.batchSizeBytes' was not set.
-            |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
+            |- ${getPreservedPropertyComment(preservedProperty)}
             |- 'spark.rapids.sql.enabled' was not set.
-            |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- ${getEnforcedPropertyComment("spark.sql.shuffle.partitions")}
@@ -477,13 +480,8 @@ class ClusterRecommendationSuite extends ProfilingAutoTunerSuiteBase
             |- ${getEnforcedPropertyComment("spark.executor.cores")}
             |- ${getEnforcedPropertyComment("spark.executor.instances")}
             |- ${getEnforcedPropertyComment("spark.executor.memory")}
-            |- 'spark.rapids.memory.pinnedPool.size' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
             |- 'spark.rapids.sql.batchSizeBytes' was not set.
-            |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
             |- 'spark.rapids.sql.enabled' was not set.
-            |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- $shufflePartitionsCommentForSpilling

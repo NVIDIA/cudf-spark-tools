@@ -649,6 +649,84 @@ class AnalysisSuite extends AnyFunSuite {
       "fixture no longer distinguishes the two rollup formulas; the guard is now vacuous")
   }
 
+  test("zero-task stages do not lower SQL duration minimum") {
+    val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
+    val apps = ToolTestUtils.processProfileApps(logs, sparkSession)
+    val agg = RawMetricProfilerView.getAggMetrics(apps.toSeq)
+    val stagesById = agg.stageAggs.map(row => row.id -> row).toMap
+    val durationMinIndex = stagesById(32L).outputHeaders.indexOf("duration_min")
+
+    assert(durationMinIndex >= 0)
+    Seq(32L, 33L, 37L).foreach { stageId =>
+      val emptyStage = stagesById(stageId)
+      assert(emptyStage.numTasks === 0)
+      assert(emptyStage.durationMin === 0L)
+      assert(emptyStage.convertToCSVSeq()(durationMinIndex).isEmpty)
+    }
+    assert(agg.sqlAggs.find(_.sqlId == 24L)
+      .map(row => (row.numTasks, row.durationMin))
+      .contains((353, 3085L)))
+  }
+
+  test("stage attempts aggregate task duration statistics across empty attempts") {
+    val firstAttempt = StageAggTaskMetricsProfileResult(
+      id = 1L,
+      numTasks = 2,
+      duration = None,
+      diskBytesSpilledSum = 0L,
+      durationSum = 800L,
+      durationMax = 500L,
+      durationMin = 300L,
+      durationAvg = 400.0,
+      executorCPUTimeSum = 0L,
+      executorDeserializeCpuTimeSum = 0L,
+      executorDeserializeTimeSum = 0L,
+      executorRunTimeSum = 0L,
+      inputBytesReadSum = 0L,
+      inputBytesReadMax = 0L,
+      inputRecordsReadSum = 0L,
+      jvmGCTimeSum = 0L,
+      memoryBytesSpilledSum = 0L,
+      outputBytesWrittenSum = 0L,
+      outputRecordsWrittenSum = 0L,
+      peakExecutionMemoryMax = 0L,
+      resultSerializationTimeSum = 0L,
+      resultSizeMax = 0L,
+      srFetchWaitTimeSum = 0L,
+      srLocalBlocksFetchedSum = 0L,
+      srcLocalBytesReadSum = 0L,
+      srRemoteBlocksFetchSum = 0L,
+      srRemoteBytesReadSum = 0L,
+      srRemoteBytesReadToDiskSum = 0L,
+      srTotalBytesReadSum = 0L,
+      swBytesWrittenSum = 0L,
+      swRecordsWrittenSum = 0L,
+      swWriteTimeSum = 0L)
+    val retryAttempt = firstAttempt.copy(
+      numTasks = 1,
+      durationSum = 200L,
+      durationMax = 200L,
+      durationMin = 200L,
+      durationAvg = 200.0)
+
+    val result = firstAttempt.aggregateStageProfileMetric(retryAttempt)
+
+    // Preserve the existing pooled-average contract while adding minimum coverage.
+    assert(result.durationAvg === 333.3)
+    assert(result.durationMin === 200L)
+
+    val emptyAttempt = firstAttempt.copy(
+      numTasks = 0,
+      durationSum = 0L,
+      durationMax = 0L,
+      durationMin = 0L,
+      durationAvg = 0.0)
+
+    assert(firstAttempt.aggregateStageProfileMetric(emptyAttempt).durationMin === 300L)
+    assert(emptyAttempt.aggregateStageProfileMetric(firstAttempt).durationMin === 300L)
+    assert(emptyAttempt.aggregateStageProfileMetric(emptyAttempt).durationMin === 0L)
+  }
+
   test("dispersion columns are consistent with the row they sit in") {
     val logs = Array(s"$logDir/gpu_oom_eventlog.zstd")
     val apps = ToolTestUtils.processProfileApps(logs, sparkSession)

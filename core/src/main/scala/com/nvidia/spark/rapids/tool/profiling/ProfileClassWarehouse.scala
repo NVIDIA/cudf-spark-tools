@@ -836,6 +836,13 @@ trait BaseJobStageAggTaskMetricsProfileResult extends ProfileResult {
     case None => "null"
   }
 
+  /** The minimum is undefined on a record that observed no tasks. */
+  private def durationMinOpt: Option[Long] =
+    if (numTasks > 0) Some(durationMin) else None
+
+  private def durationMinStr: String =
+    StringUtils.optionToString(durationMinOpt, (value: Long) => value.toString)
+
   override def convertToSeq(): Array[String] = {
     Array(id.toString,
       numTasks.toString,
@@ -843,7 +850,7 @@ trait BaseJobStageAggTaskMetricsProfileResult extends ProfileResult {
       diskBytesSpilledSum.toString,
       durationSum.toString,
       durationMax.toString,
-      durationMin.toString,
+      durationMinStr,
       durationAvg.toString,
       executorCPUTimeSum.toString,
       executorDeserializeCpuTimeSum.toString,
@@ -951,6 +958,23 @@ case class StageAggTaskMetricsProfileResult(
   ) extends BaseJobStageAggTaskMetricsProfileResult {
 
   /**
+   * Minimum task duration across two attempts, ignoring an attempt that recorded no tasks.
+   * An empty attempt carries durationMin = 0 from TaskMetricsAccumRec.resetFields, which is a
+   * placeholder rather than a measurement, so folding it with Math.min would report zero.
+   */
+  private def minDurationWith(other: StageAggTaskMetricsProfileResult): Long = {
+    if (this.numTasks > 0 && other.numTasks > 0) {
+      Math.min(this.durationMin, other.durationMin)
+    } else if (this.numTasks > 0) {
+      this.durationMin
+    } else if (other.numTasks > 0) {
+      other.durationMin
+    } else {
+      0L
+    }
+  }
+
+  /**
    * Combines two StageAggTaskMetricsProfileResults for the same stage.
    * This method aggregates the metrics from the current instance and the provided `other` instance.
    *
@@ -977,7 +1001,7 @@ case class StageAggTaskMetricsProfileResult(
       diskBytesSpilledSum = this.diskBytesSpilledSum + other.diskBytesSpilledSum,
       durationSum = mergedDurationSum,
       durationMax = Math.max(this.durationMax, other.durationMax),
-      durationMin = Math.min(this.durationMin, other.durationMin),
+      durationMin = minDurationWith(other),
       durationAvg = ToolUtils.calculateAverage(mergedDurationSum, mergedNumTasks, 1),
       executorCPUTimeSum = this.executorCPUTimeSum + other.executorCPUTimeSum,
       executorDeserializeCpuTimeSum = this.executorDeserializeCpuTimeSum +

@@ -142,8 +142,12 @@ class TaskMetricsAccumRec {
     inputBytesReadMax = math.max(inputBytesReadMax, rec.inputBytesReadMax)
     peakExecutionMemoryMax = math.max(peakExecutionMemoryMax, rec.peakExecutionMemoryMax)
     resultSizeMax = math.max(resultSizeMax, rec.resultSizeMax)
-    // Min
-    durationMin = math.min(durationMin, rec.durationMin)
+    // Min. A record with no tasks carries durationMin = 0 from resetFields, which is a
+    // placeholder rather than a measurement. durationMin seeds at Long.MaxValue, the identity
+    // for min, so an empty accumulator needs no separate case here.
+    if (rec.numTasks > 0) {
+      durationMin = math.min(durationMin, rec.durationMin)
+    }
   }
 
   /**

@@ -138,6 +138,20 @@ class TestS3EndpointResolution:
 
         assert resolve_s3_endpoint_override() == "https://swiftstack.example"
 
+    def test_s3_endpoint_preserves_percent_encoded_profile_url(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_text(
+            "[profile swiftstack]\n"
+            "endpoint_url = https://swiftstack.example/bucket%2Fprefix\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+        monkeypatch.setenv("AWS_PROFILE", "swiftstack")
+
+        assert resolve_s3_endpoint_override() == "https://swiftstack.example/bucket%2Fprefix"
+
     @pytest.mark.parametrize(
         ("selected_env", "selected_profile"),
         [
@@ -221,6 +235,15 @@ class TestS3EndpointResolution:
     def test_s3_endpoint_ignores_invalid_profile_config(self, monkeypatch, tmp_path):
         config_file = tmp_path / "aws_config"
         config_file.write_text("endpoint_url = https://invalid.example\n", encoding="utf-8")
+        monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+        monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+
+        assert resolve_s3_endpoint_override() is None
+
+    def test_s3_endpoint_ignores_undecodable_profile_config(self, monkeypatch, tmp_path):
+        config_file = tmp_path / "aws_config"
+        config_file.write_bytes(b"[default]\nendpoint_url = https://invalid-\xff.example\n")
         monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
         monkeypatch.delenv("AWS_ENDPOINT_URL_S3", raising=False)
         monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))

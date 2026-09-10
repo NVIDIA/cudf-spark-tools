@@ -38,13 +38,13 @@ def resolve_s3_endpoint_override() -> Optional[str]:
 
 
 def _resolve_profile_s3_endpoint() -> Optional[str]:
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(interpolation=None)
     config_path = Path(os.environ.get(_AWS_CONFIG_FILE, Path.home() / '.aws' / 'config')).expanduser()
     try:
         if not config_path.exists():
             return None
-        config.read(config_path)
-    except (configparser.Error, OSError):
+        config.read(config_path, encoding='utf-8')
+    except (configparser.Error, OSError, UnicodeError):
         return None
 
     profile_name = _selected_profile_name()

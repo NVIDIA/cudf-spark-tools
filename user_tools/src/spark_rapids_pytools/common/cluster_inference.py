@@ -14,10 +14,11 @@
 
 """This module provides functionality for cluster inference"""
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 from logging import Logger
+from typing import Optional
 
 import pandas as pd
 
@@ -145,6 +146,8 @@ class ClusterInference:
             cluster_conf = self.platform.generate_cluster_configuration(cluster_template_args)
             if cluster_conf is None:
                 return None
+            if isinstance(cluster_conf, str):
+                cluster_conf = json.loads(cluster_conf)
             cluster_props_new = AbstractPropContainer(props=cluster_conf)
             return self.platform.load_cluster_by_prop(cluster_props_new, is_inferred=True)
         except Exception as e:  # pylint: disable=broad-except

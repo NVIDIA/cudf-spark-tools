@@ -16,6 +16,7 @@
 """Implementation specific to Dataproc"""
 
 from collections import defaultdict
+import json
 from dataclasses import dataclass, field
 from typing import Any, List, Union, Optional
 
@@ -319,6 +320,8 @@ class DataprocCMDDriver(CMDDriverBase):  # pylint: disable=abstract-method
             return gpu_name.upper()
 
         processed_instance_descriptions = {}
+        if isinstance(instance_descriptions, str):
+            instance_descriptions = json.loads(instance_descriptions)
         raw_instances_descriptions = AbstractPropContainer(props=instance_descriptions)
         for instance in raw_instances_descriptions.props:
             instance_content = {}

@@ -15,12 +15,16 @@
 """Tests for path qualification at the tools-to-Hadoop boundary."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from spark_rapids_pytools.rapids.rapids_tool import RapidsJarTool
 
 
 class RapidsJarToolTestShim(RapidsJarTool):
     """Expose wrapper boundary helpers through a public test shim."""
+
+    def process_jar_arg(self):
+        return self._process_jar_arg()
 
     @classmethod
     def prepare_hadoop_arg_path(cls, path_value: str) -> str:
@@ -39,8 +43,69 @@ class RapidsJarToolTestShim(RapidsJarTool):
         return getattr(RapidsJarTool, '_prepare_eventlog_arg_for_hadoop')(eventlog, work_dir)
 
 
+def _silent_logger():
+    return SimpleNamespace(
+        info=lambda *args, **kwargs: None,
+        exception=lambda *args, **kwargs: None,
+    )
+
+
+def _build_jar_tool_shim(wrapper_options, ctxt):
+    tool = object.__new__(RapidsJarToolTestShim)
+    tool.wrapper_options = wrapper_options
+    tool.ctxt = ctxt
+    tool.logger = _silent_logger()
+    return tool
+
+
 class TestPathBoundaryQualification:
     """Verify Hadoop-bound path qualification remains explicit and idempotent."""
+
+    def test_process_jar_arg_uses_local_resource_when_no_explicit_jar(self):
+        rapids_args = {}
+        local_resource_jar = '/opt/resources/rapids-4-spark-tools_2.12-25.08.1.jar'
+
+        def fail_download(*args, **kwargs):
+            raise AssertionError('local resource jar should not be copied')
+
+        ctxt = SimpleNamespace(
+            platform=SimpleNamespace(storage=SimpleNamespace(download_resource=fail_download)),
+            use_local_tools_jar=lambda: True,
+            get_rapids_jar_url=lambda: local_resource_jar,
+            get_local_work_dir=lambda: '/tmp/work',
+            add_rapids_args=rapids_args.__setitem__,
+        )
+        tool = _build_jar_tool_shim({}, ctxt)
+
+        tool.process_jar_arg()
+
+        assert rapids_args['jarFilePath'] == local_resource_jar
+        assert rapids_args['jarFileName'] == 'rapids-4-spark-tools_2.12-25.08.1.jar'
+
+    def test_process_jar_arg_downloads_explicit_remote_jar(self):
+        rapids_args = {}
+        download_calls = []
+        remote_tools_jar = 'gs://bucket/path/rapids-4-spark-tools_2.12-25.08.1.jar'
+        downloaded_jar = '/tmp/work/rapids-4-spark-tools_2.12-25.08.1.jar'
+
+        def record_download(src, dest, fail_ok=False, create_dir=True):
+            download_calls.append((src, dest, fail_ok, create_dir))
+            return downloaded_jar
+
+        ctxt = SimpleNamespace(
+            platform=SimpleNamespace(storage=SimpleNamespace(download_resource=record_download)),
+            use_local_tools_jar=lambda: True,
+            get_rapids_jar_url=lambda: '/opt/resources/rapids-4-spark-tools_2.12-25.08.1.jar',
+            get_local_work_dir=lambda: '/tmp/work',
+            add_rapids_args=rapids_args.__setitem__,
+        )
+        tool = _build_jar_tool_shim({'toolsJar': remote_tools_jar}, ctxt)
+
+        tool.process_jar_arg()
+
+        assert download_calls == [(remote_tools_jar, '/tmp/work', False, True)]
+        assert rapids_args['jarFilePath'] == downloaded_jar
+        assert rapids_args['jarFileName'] == 'rapids-4-spark-tools_2.12-25.08.1.jar'
 
     def test_prepare_hadoop_arg_path_qualifies_local_paths(self, tmp_path):
         local_file = tmp_path / 'worker_info.yaml'

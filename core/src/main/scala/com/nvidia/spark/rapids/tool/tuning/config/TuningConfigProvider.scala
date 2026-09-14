@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,11 @@ import scala.jdk.CollectionConverters._
  * @param rawConfig The raw tuning configuration loaded from YAML files, containing
  *                  default, qualification, and profiling configuration lists
  */
-abstract class TuningConfigProvider(rawConfig: TuningConfiguration) {
+abstract class TuningConfigProvider(
+    rawConfig: TuningConfiguration,
+    private val userProvidedMaxEntries: Set[String]) {
+
+  def this(rawConfig: TuningConfiguration) = this(rawConfig, Set.empty)
 
   /**
    * Tool-specific configuration overrides. Subclasses must define which override list
@@ -62,6 +66,21 @@ abstract class TuningConfigProvider(rawConfig: TuningConfiguration) {
   @throws[java.util.NoSuchElementException]
   def getEntry(key: String): TuningConfigEntry = {
     tuningConfigsMap(key)
+  }
+
+  /**
+   * Returns the final maximum only when the active user configuration explicitly supplied it.
+   * A shipped maximum is intentionally not returned, even when it has the same value.
+   *
+   * @param key The configuration entry name
+   * @return The merged maximum when it came from the user configuration, otherwise None
+   */
+  def getUserProvidedMax(key: String): Option[String] = {
+    if (userProvidedMaxEntries.contains(key)) {
+      Option(getEntry(key).getMax).filter(_.nonEmpty)
+    } else {
+      None
+    }
   }
 
   /**
@@ -98,8 +117,11 @@ abstract class TuningConfigProvider(rawConfig: TuningConfiguration) {
  *                  and profiling configuration lists
  */
 class ProfTuningConfigProvider(
-    rawConfig: TuningConfiguration
-) extends TuningConfigProvider(rawConfig) {
+    rawConfig: TuningConfiguration,
+    userProvidedMaxEntries: Set[String]
+) extends TuningConfigProvider(rawConfig, userProvidedMaxEntries) {
+  def this(rawConfig: TuningConfiguration) = this(rawConfig, Set.empty)
+
   /** Returns the profiling-specific configuration overrides */
   override protected lazy val toolOverrides: util.List[TuningConfigEntry] = rawConfig.profiling
 }
@@ -115,8 +137,11 @@ class ProfTuningConfigProvider(
  *                  and profiling configuration lists
  */
 class QualTuningConfigProvider(
-  rawConfig: TuningConfiguration
-) extends TuningConfigProvider(rawConfig) {
+  rawConfig: TuningConfiguration,
+  userProvidedMaxEntries: Set[String]
+) extends TuningConfigProvider(rawConfig, userProvidedMaxEntries) {
+  def this(rawConfig: TuningConfiguration) = this(rawConfig, Set.empty)
+
   /** Returns the qualification-specific configuration overrides */
   override protected lazy val toolOverrides: util.List[TuningConfigEntry] = rawConfig.qualification
 }
@@ -195,6 +220,28 @@ object TuningConfigProvider {
       }
     }
 
+    private def entriesWithMax(
+        entries: util.List[TuningConfigEntry]): Set[String] = {
+      Option(entries).toSeq.flatMap(_.asScala)
+        .filter(entry => entry.max != null && entry.max.nonEmpty)
+        .map(_.name)
+        .toSet
+    }
+
+    /**
+     * Finds maxima whose final active value comes from the user configuration. Tool-specific
+     * values override default values, so a shipped tool maximum masks a user default maximum.
+     */
+    private def getUserProvidedMaxEntries(
+        shippedToolOverrides: util.List[TuningConfigEntry],
+        getUserToolOverrides: TuningConfiguration => util.List[TuningConfigEntry]): Set[String] = {
+      userProvidedConfig.map { userConfig =>
+        val userToolMaxEntries = entriesWithMax(getUserToolOverrides(userConfig))
+        val shippedToolMaxEntries = entriesWithMax(shippedToolOverrides)
+        userToolMaxEntries ++ (entriesWithMax(userConfig.default) -- shippedToolMaxEntries)
+      }.getOrElse(Set.empty)
+    }
+
     /**
      * Builds a tuning config provider of the specified type.
      *
@@ -215,9 +262,15 @@ object TuningConfigProvider {
     def build[T <: TuningConfigProvider](implicit tag: scala.reflect.ClassTag[T]): T = {
       tag.runtimeClass match {
         case c if c == classOf[QualTuningConfigProvider] =>
-          new QualTuningConfigProvider(finalConfigs).asInstanceOf[T]
+          new QualTuningConfigProvider(
+            finalConfigs,
+            getUserProvidedMaxEntries(defaultConfig.qualification, _.qualification))
+            .asInstanceOf[T]
         case c if c == classOf[ProfTuningConfigProvider] =>
-          new ProfTuningConfigProvider(finalConfigs).asInstanceOf[T]
+          new ProfTuningConfigProvider(
+            finalConfigs,
+            getUserProvidedMaxEntries(defaultConfig.profiling, _.profiling))
+            .asInstanceOf[T]
         case _ =>
           throw new IllegalArgumentException(
             s"Unsupported TuningConfigProvider type: ${tag.runtimeClass.getName}. " +

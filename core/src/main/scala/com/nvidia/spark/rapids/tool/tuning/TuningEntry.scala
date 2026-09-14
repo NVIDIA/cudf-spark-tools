@@ -16,6 +16,8 @@
 
 package com.nvidia.spark.rapids.tool.tuning
 
+import scala.util.Try
+
 import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, TuningEntryDefinition}
 
 import org.apache.spark.internal.Logging
@@ -119,6 +121,22 @@ class TuningEntry(
   init()
 }
 
+/**
+ * A typed entry whose invalid value must be reported by its owning runtime heuristic. Invalid
+ * values are retained verbatim instead of aborting AutoTuner setup.
+ */
+private[tuning] class RuntimeValidatedTuningEntry(
+    override val name: String,
+    originalValueRaw: Option[String],
+    tunedValueRaw: Option[String],
+    definition: Option[TuningEntryDefinition] = None)
+  extends TuningEntry(name, originalValueRaw, tunedValueRaw, definition) {
+
+  override def normalizeValue(propValue: String): String = {
+    Try(super.normalizeValue(propValue)).getOrElse(propValue)
+  }
+}
+
 class MemoryUnitTuningEntry(
     override val name: String,
     originalValueRaw: Option[String],
@@ -190,6 +208,32 @@ class MemoryUnitTuningEntry(
   }
 
   init()
+}
+
+/**
+ * A memory entry whose syntax must match the active Spark runtime byte parser. Invalid values are
+ * retained verbatim so the owning heuristic can report them instead of aborting AutoTuner setup.
+ */
+private[tuning] class RuntimeByteTuningEntry(
+    override val name: String,
+    originalValueRaw: Option[String],
+    tunedValueRaw: Option[String],
+    definition: Option[TuningEntryDefinition] = None)
+  extends MemoryUnitTuningEntry(name, originalValueRaw, tunedValueRaw, definition) {
+
+  override def normalizeValue(propValue: String): String = {
+    RuntimeConfigParser.parseBytes(propValue)
+      .map(_.display)
+      .getOrElse(propValue)
+  }
+
+  override def formatOutput(propValue: String): String = {
+    if (propValue.matches("[0-9]+b")) {
+      super.formatOutput(propValue)
+    } else {
+      propValue
+    }
+  }
 }
 
 object TuningEntry extends Logging {

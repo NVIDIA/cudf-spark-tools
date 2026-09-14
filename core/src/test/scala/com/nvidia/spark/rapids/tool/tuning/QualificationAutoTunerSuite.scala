@@ -416,7 +416,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
             |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
             |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
             |- ${getEnforcedPropertyComment("spark.rapids.sql.batchSizeBytes")}
-            |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
             |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
             |- $shuffleManagerCommentForQualification
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
@@ -518,7 +517,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -664,7 +662,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -902,7 +899,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- ${getEnforcedPropertyComment("spark.rapids.sql.multiThreadedRead.numThreads")}
           |- ${getEnforcedPropertyComment("spark.shuffle.manager")}
@@ -976,7 +972,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -1047,7 +1042,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -1125,7 +1119,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -1474,7 +1467,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -1693,7 +1685,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- $shuffleManagerCommentForQualification
@@ -1790,7 +1781,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -1868,7 +1858,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
         |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
         |- 'spark.rapids.sql.batchSizeBytes' was not set.
-        |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
         |- 'spark.rapids.sql.enabled' was not set.
         |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
         |- 'spark.shuffle.manager' is not recommended because the Spark version on the GPU cluster is unknown during Qualification.
@@ -1973,7 +1962,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -2068,7 +2056,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -2244,7 +2231,6 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
          |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
          |- 'spark.rapids.sql.batchSizeBytes' was not set.
-         |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
          |- 'spark.rapids.sql.enabled' was not set.
          |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
          |- 'spark.shuffle.manager' is not recommended because the Spark version on the GPU cluster is unknown during Qualification.

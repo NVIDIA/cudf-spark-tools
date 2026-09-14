@@ -123,8 +123,8 @@ abstract class ProfilingAutoTunerSuiteBase extends BaseAutoTunerSuite {
  *    used for both source and target cluster properties.
  * 2. These tests will be migrated to use the new target cluster info format, which explicitly
  *    specifies target cluster shape and Spark properties.
- * 3. All new Profiling AutoTuner test cases should be added to [[ProfilingAutoTunerSuiteV2]]
- *    instead of this suite.
+ * 3. New tests should use the explicit target-cluster format in [[ProfilingAutoTunerSuiteV2]]
+ *    or a focused suite extending [[ProfilingAutoTunerSuiteBase]].
  *
  * TODO:
  * Migrate all tests in this suite to use the new target cluster properties format.
@@ -192,7 +192,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.rapids.sql.reader.multithreaded.combine.sizeBytes' was not set.
@@ -230,7 +229,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.executor.memory' should be set to 2g/core.
           |- 'spark.rapids.memory.pinnedPool.size' should be set to 2g.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' should be set to Min(4, (gpuMemory / 7500m)).
           |- 'spark.rapids.sql.enabled' should be true to enable SQL operations on the GPU.
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.enabled' should be enabled for better performance.
@@ -288,7 +286,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.advisoryPartitionSizeInBytes' was not set.
@@ -349,7 +346,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.advisoryPartitionSizeInBytes' was not set.
@@ -413,7 +409,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.advisoryPartitionSizeInBytes' was not set.
@@ -488,7 +483,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.rapids.sql.reader.multithreaded.combine.sizeBytes' was not set.
@@ -546,7 +540,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.executor.memory' should be set to 2g/core.
           |- 'spark.rapids.memory.pinnedPool.size' should be set to 2g.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' should be set to Min(4, (gpuMemory / 7500m)).
           |- 'spark.rapids.sql.enabled' should be true to enable SQL operations on the GPU.
           |- 'spark.shuffle.manager' was not set.
           |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
@@ -623,7 +616,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.rapids.sql.reader.multithreaded.combine.sizeBytes' was not set.
@@ -690,7 +682,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
           |- 'spark.rapids.sql.reader.multithreaded.combine.sizeBytes' was not set.
@@ -1532,83 +1523,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
       assert(autoTunerHelper.isPluginJarProbablyOutdated(pluginVersion, currentYearMonth) ===
         expected)
     }
-  }
-
-  // Helper that runs the AutoTuner without pre-setting `spark.rapids.sql.concurrentGpuTasks`
-  // so the default recommendation path is exercised. Returns the AutoTuner output string.
-  private def runConcurrentGpuTasksScenario(
-      rapidsJars: Seq[String],
-      enforcedProps: Map[String, String] = Map.empty,
-      preserveProps: List[String] = List.empty): String = {
-    val customProps = mutable.LinkedHashMap(
-      "spark.executor.cores" -> "16",
-      "spark.executor.memory" -> "122880MiB",
-      "spark.executor.memoryOverhead" -> "8396m",
-      "spark.rapids.memory.pinnedPool.size" -> "4096m",
-      "spark.rapids.shuffle.multiThreaded.reader.threads" -> "16",
-      "spark.rapids.shuffle.multiThreaded.writer.threads" -> "16",
-      "spark.rapids.sql.multiThreadedRead.numThreads" -> "20",
-      "spark.shuffle.manager" ->
-        s"com.nvidia.spark.rapids.spark$testSmVersion.RapidsShuffleManager",
-      "spark.sql.files.maxPartitionBytes" -> "512m",
-      "spark.task.resource.gpu.amount" -> "0.001")
-    val sparkProps = defaultDataprocProps.++(customProps)
-    val platform = if (enforcedProps.nonEmpty || preserveProps.nonEmpty) {
-      val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
-        enforcedSparkProperties = enforcedProps,
-        preserveSparkProperties = preserveProps
-      )
-      PlatformFactory.createInstance(PlatformNames.DATAPROC, Some(targetClusterInfo))
-    } else {
-      PlatformFactory.createInstance(PlatformNames.DATAPROC)
-    }
-    configureEventLogClusterInfoForTest(
-      platform,
-      numCores = 32,
-      numWorkers = 4,
-      gpuCount = 2,
-      sparkProperties = sparkProps.toMap
-    )
-    val autoTuner =
-      buildAutoTunerForTests(getGpuAppMockInfoProvider(
-        propsFromLog = sparkProps,
-        rapidsJars = rapidsJars), platform)
-    val (properties, comments) = autoTuner.getRecommendedProperties()
-    Profiler.getAutoTunerResultsAsString(properties, comments)
-  }
-
-  test("AutoTuner drops concurrentGpuTasks recommendation for plugin >= 25.06") {
-    val output = runConcurrentGpuTasksScenario(Seq("rapids-4-spark_2.12-25.06.0.jar"))
-    assert(!output.contains("spark.rapids.sql.concurrentGpuTasks"),
-      s"Expected no concurrentGpuTasks recommendation/comment, got:\n$output")
-  }
-
-  test("AutoTuner keeps concurrentGpuTasks recommendation for plugin < 25.06") {
-    val output = runConcurrentGpuTasksScenario(Seq("rapids-4-spark_2.12-25.04.0.jar"))
-    assert(output.contains("spark.rapids.sql.concurrentGpuTasks"),
-      s"Expected concurrentGpuTasks to be present, got:\n$output")
-  }
-
-  test("AutoTuner keeps concurrentGpuTasks recommendation when no plugin jar version found") {
-    val output = runConcurrentGpuTasksScenario(Seq.empty)
-    assert(output.contains("spark.rapids.sql.concurrentGpuTasks"),
-      s"Expected concurrentGpuTasks to be present, got:\n$output")
-  }
-
-  test("Target cluster enforced concurrentGpuTasks overrides plugin >= 25.06 drop") {
-    val output = runConcurrentGpuTasksScenario(
-      Seq("rapids-4-spark_2.12-25.08.0.jar"),
-      enforcedProps = Map("spark.rapids.sql.concurrentGpuTasks" -> "4"))
-    assert(output.contains("spark.rapids.sql.concurrentGpuTasks=4"),
-      s"Expected enforced concurrentGpuTasks=4 to be present, got:\n$output")
-  }
-
-  test("Target cluster preserve concurrentGpuTasks overrides plugin >= 25.06 drop") {
-    val output = runConcurrentGpuTasksScenario(
-      Seq("rapids-4-spark_2.12-25.08.0.jar"),
-      preserveProps = List("spark.rapids.sql.concurrentGpuTasks"))
-    assert(output.contains("spark.rapids.sql.concurrentGpuTasks"),
-      s"Expected preserved concurrentGpuTasks to be present, got:\n$output")
   }
 
   // Note: This test verifies that the AutoTuner comments about enabling the file cache
@@ -2666,7 +2580,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -2742,7 +2655,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -2817,7 +2729,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -2899,7 +2810,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -2969,7 +2879,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -3036,7 +2945,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -3577,7 +3485,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -3665,7 +3572,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
           |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
-          |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
           |- 'spark.rapids.sql.enabled' was not set.
           |- 'spark.rapids.sql.format.parquet.multithreaded.combine.waitTime' was not set.
           |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
@@ -3690,8 +3596,8 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
   // IMPORTANT NOTE:
   // 1. This test suite is deprecated as it uses the legacy worker info properties format,
   //    which is overloaded to be used for both source and target cluster properties.
-  // 2. All new Profiling AutoTuner test cases should be added to ProfilingAutoTunerSuiteV2
-  //    instead of this suite.
+  // 2. New tests should use the explicit target-cluster format in ProfilingAutoTunerSuiteV2
+  //    or in a focused suite extending ProfilingAutoTunerSuiteBase.
   //
   // TODO:
   // Migrate all tests in this suite to use the new target cluster properties format.

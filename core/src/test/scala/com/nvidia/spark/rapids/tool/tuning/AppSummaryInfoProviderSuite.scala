@@ -24,7 +24,8 @@ import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathPro
   PlatformFactory, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
 import com.nvidia.spark.rapids.tool.profiling.{AppInfoProfileResults, ApplicationSummaryInfo,
-  RapidsPropertyProfileResult, SingleAppSummaryInfoProvider, SQLPlanInfoProfileResult}
+  RapidsPropertyProfileResult, SingleAppSummaryInfoProvider, SQLPlanInfoProfileResult,
+  StageAggGpuMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.tuning.config.{ProfTuningConfigProvider, TuningConfigProvider}
 import org.scalatest.matchers.should.Matchers._
 
@@ -61,7 +62,9 @@ class AppSummaryInfoProviderSuite extends BaseNoSparkSuite {
   }
 
   private def emptySummary(
-      sqlPlanInfo: Seq[SQLPlanInfoProfileResult] = Seq.empty): ApplicationSummaryInfo = {
+      sqlPlanInfo: Seq[SQLPlanInfoProfileResult] = Seq.empty,
+      gpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = Seq.empty)
+      : ApplicationSummaryInfo = {
     val summarySparkProperties = sparkProperties.toSeq.map { case (key, value) =>
       RapidsPropertyProfileResult(key, Array(key, value))
     }
@@ -106,7 +109,8 @@ class AppSummaryInfoProviderSuite extends BaseNoSparkSuite {
       sqlCleanedAlignedIds = Seq.empty,
       sparkRapidsBuildInfo = Seq.empty,
       writeOpsInfo = Seq.empty,
-      sqlPlanInfo = sqlPlanInfo)
+      sqlPlanInfo = sqlPlanInfo,
+      gpuStageAggMetrics = gpuStageAggMetrics)
   }
 
   private def cacheSerializerRecommendation(
@@ -237,6 +241,37 @@ class AppSummaryInfoProviderSuite extends BaseNoSparkSuite {
       profProvider.hasSqlCacheEvidence shouldBe false
       cacheSerializerRecommendation(qualProvider, QualificationAutoTunerHelper) shouldBe None
       cacheSerializerRecommendation(profProvider, ProfilingAutoTunerHelper) shouldBe None
+    }
+  }
+
+  test("only profiling provider exposes GPU stage aggregate metrics") {
+    val footprint = StageAggGpuMetricsProfileResult(
+      stageId = 7,
+      numTasks = 4,
+      metricName = "gpuMaxTaskFootprint",
+      unit = "bytes",
+      total = None,
+      max = Some(1234L),
+      count = 3L,
+      min = Some(100L),
+      welfordSumSqDev = 25.0,
+      sampleTotal = Some(2700L))
+
+    new AppSummaryInfoBaseProvider().getGpuStageAggMetrics shouldBe empty
+
+    withMinimalEventLog { eventLog =>
+      val qualApp = createAppFromEventlog(eventLog)
+      val qualProvider = new QualAppSummaryInfoProvider(
+        qualApp, None, emptyAggMetrics, Seq.empty)
+
+      val hadoopConf = RapidsToolsConfUtil.newHadoopConf()
+      val eventLogInfo = EventLogPathProcessor.getEventLogInfo(eventLog, hadoopConf).head._1
+      val profApp = new ApplicationInfo(hadoopConf, eventLogInfo)
+      val profProvider = new SingleAppSummaryInfoProvider(
+        profApp, emptySummary(gpuStageAggMetrics = Seq(footprint)))
+
+      qualProvider.getGpuStageAggMetrics shouldBe empty
+      profProvider.getGpuStageAggMetrics shouldBe Seq(footprint)
     }
   }
 

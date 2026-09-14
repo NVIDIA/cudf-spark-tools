@@ -82,6 +82,25 @@ case class NodeInstanceMapKey(instanceType: String, gpuCount: Option[Int] = None
   }
 }
 
+/** Identifies the source of a target GPU device's total memory-capacity specification. */
+private[tool] sealed abstract class TargetGpuCapacitySource(val label: String)
+
+private[tool] object TargetGpuCapacitySource {
+  /** The target configuration explicitly supplied the capacity. */
+  case object ExplicitTargetConfig
+    extends TargetGpuCapacitySource("explicit target configuration")
+  /** The selected GPU device's catalog entry supplied the capacity. */
+  case object DeviceCatalog extends TargetGpuCapacitySource("device catalog")
+}
+
+/**
+ * Raw, unvalidated total memory capacity for one target GPU device, with its provenance.
+ * This is not current free GPU memory or the initialized RMM pool size.
+ */
+private[tool] case class TargetGpuDeviceMemoryCapacitySpec(
+    rawValue: String,
+    source: TargetGpuCapacitySource)
+
 // resource information and name of the CSP instance types, or for onprem its
 // the executor information since we can't recommend node types
 case class InstanceInfo(cores: Int, memoryMB: Long, name: String,
@@ -96,6 +115,19 @@ case class InstanceInfo(cores: Int, memoryMB: Long, name: String,
 }
 
 object InstanceInfo {
+  /**
+   * Returns an explicitly configured raw total-capacity specification. Syntax validation is left
+   * to the runtime-aware consumer, and the target configuration's `0m` sentinel means absent.
+   */
+  private[tool] def explicitTargetGpuDeviceMemoryCapacitySpec(
+      targetGpuMemory: Option[String]): Option[TargetGpuDeviceMemoryCapacitySpec] = {
+    // GpuWorkerProps uses "0m" as the no-argument sentinel. Preserve any other raw
+    // target value so the consumer can validate it with the runtime-compatible parser.
+    targetGpuMemory
+      .filter(value => value != null && value.nonEmpty && value != "0m")
+      .map(TargetGpuDeviceMemoryCapacitySpec(_, TargetGpuCapacitySource.ExplicitTargetConfig))
+  }
+
   def createDefaultInstance(cores: Int, memoryMB: Long,
       numGpus: Int, gpuDevice: GpuDevice): InstanceInfo = {
     InstanceInfo(cores, memoryMB, "N/A", numGpus, gpuDevice)
@@ -346,6 +378,25 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
 
   final def recommendedGpuDevice: GpuDevice = {
     recommendedWorkerNode.map(_.gpuDevice).getOrElse(defaultGpuDevice)
+  }
+
+  /**
+   * Returns the raw total memory capacity for the recommended target GPU device and its source.
+   * The value is unvalidated and must not be interpreted as free memory or an RMM pool size.
+   */
+  private[tool] final def recommendedTargetGpuDeviceMemoryCapacitySpec:
+      TargetGpuDeviceMemoryCapacitySpec = {
+    val explicitTargetMemory = targetCluster.flatMap { cluster =>
+      InstanceInfo.explicitTargetGpuDeviceMemoryCapacitySpec(
+        Option(cluster.getWorkerInfo.getGpu.getMemory))
+    }
+    explicitTargetMemory.orElse(recommendedWorkerNode.map { worker =>
+      TargetGpuDeviceMemoryCapacitySpec(
+        worker.gpuDevice.getMemory, TargetGpuCapacitySource.DeviceCatalog)
+    }).getOrElse {
+      TargetGpuDeviceMemoryCapacitySpec(
+        defaultGpuDevice.getMemory, TargetGpuCapacitySource.DeviceCatalog)
+    }
   }
 
   final def recommendedNumGpus: Int = {

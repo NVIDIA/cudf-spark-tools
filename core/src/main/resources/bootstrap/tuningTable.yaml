@@ -49,6 +49,8 @@
 # - modifiedBy:  Name of the plugin or rule that modifies this property
 # - comments:    Map of comment types to messages shown to users
 #   - missing:     Message when property is not set but should be
+#   - missingPolicy: Set to "omit" to suppress the missing-property comment. If absent or set to
+#                    "default", `missing` is used and falls back to "was not set."
 #   - updated:     Message when property exists but should be modified
 #   - persistent:  Message that always appears for this property
 #
@@ -318,14 +320,17 @@ tuningDefinitions:
       defaultUnit: Byte
   - label: spark.rapids.sql.concurrentGpuTasks
     description: >-
-      Set the number of tasks that can execute concurrently per GPU. Tasks may temporarily block when the number of
-      concurrent tasks in the executor exceeds this amount. Allowing too many concurrent tasks on the same GPU may
-      lead to GPU out of memory errors.
+      Sets the initial number of tasks per GPU. Modern plugin versions derive a permit-memory estimate from this seed
+      and can adjust it by stage. Disabling dynamic adjustment freezes that estimate rather than imposing a direct
+      task-count ceiling. Older plugin versions use fixed concurrency semantics. Setting the value too high can
+      increase the risk of GPU out of memory errors.
     enabled: true
     level: cluster
     category: tuning
     confType:
       name: int
+    comments:
+      missingPolicy: omit
   - label: spark.rapids.sql.format.parquet.multithreaded.combine.waitTime
     description: >-
       When using the multithreaded parquet reader with combine mode, how long to wait, in milliseconds,

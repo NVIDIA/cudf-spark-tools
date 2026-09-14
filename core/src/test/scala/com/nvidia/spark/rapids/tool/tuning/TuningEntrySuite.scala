@@ -17,14 +17,17 @@
 package com.nvidia.spark.rapids.tool.tuning
 
 import com.nvidia.spark.rapids.tool.ToolTestUtils
-import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, ProfTuningConfigProvider,
-  QualTuningConfigProvider, TuningConfigEntry, TuningConfigProvider, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.tuning.config.{ConfTypeEnum, MissingCommentPolicy,
+  ProfTuningConfigProvider, QualTuningConfigProvider, TuningConfigEntry, TuningConfigProvider,
+  TuningEntryDefinition}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 
 import org.apache.spark.sql.rapids.tool.InvalidMemoryUnitFormatException
 
 class TuningEntrySuite extends AnyFunSuite {
+  private val runtimeBatchSizeKey = GpuBatchAndConcurrencyKeys.BatchSizeBytes
+
   private def memoryDefinition(
       specialValues: Seq[String]): TuningEntryDefinition = {
     TuningEntryDefinition(
@@ -82,6 +85,7 @@ class TuningEntrySuite extends AnyFunSuite {
       .withUserProvidedConfig(Some(config))
       .build[ProfTuningConfigProvider]
 
+    provider.getUserProvidedDefault("READER_MULTITHREADED_COMBINE_THRESHOLD") shouldBe Some("32m")
     provider.isDefaultValueUserProvided("READER_MULTITHREADED_COMBINE_THRESHOLD") shouldBe true
   }
 
@@ -92,6 +96,60 @@ class TuningEntrySuite extends AnyFunSuite {
       .withUserProvidedConfig(Some(config))
       .build[QualTuningConfigProvider]
 
+    provider.getUserProvidedDefault("READER_MULTITHREADED_COMBINE_THRESHOLD") shouldBe Some("32m")
     provider.isDefaultValueUserProvided("READER_MULTITHREADED_COMBINE_THRESHOLD") shouldBe true
+  }
+
+  test("concurrent GPU tasks omits its missing-property comment") {
+    val definition = TuningEntryDefinition
+      .getEntryDefinition(GpuBatchAndConcurrencyKeys.ConcurrentGpuTasks).get
+
+    definition.getMissingCommentPolicy shouldBe MissingCommentPolicy.Omit
+  }
+
+  test("missing-property comments use the default policy when it is not configured") {
+    val definition = TuningEntryDefinition("test.property")
+
+    definition.getMissingCommentPolicy shouldBe MissingCommentPolicy.Default
+  }
+
+  test("unknown missing-comment policies are rejected") {
+    val definition = TuningEntryDefinition("test.property")
+    definition.getComments.put("missingPolicy", "unexpected")
+
+    val error = intercept[IllegalArgumentException] {
+      definition.getMissingCommentPolicy
+    }
+    error.getMessage shouldBe "Unknown missing comment policy: unexpected"
+  }
+
+  test("runtime byte entry accepts surrounding whitespace using Spark's parser") {
+    val definition = TuningEntryDefinition.getEntryDefinition(runtimeBatchSizeKey)
+    val entry = new RuntimeByteTuningEntry(
+      runtimeBatchSizeKey, Some(" 2G "), None, definition)
+
+    entry.getOriginalValue shouldBe Some("2g")
+  }
+
+  test("runtime byte entry accepts zero and retains invalid negative values") {
+    val definition = TuningEntryDefinition.getEntryDefinition(runtimeBatchSizeKey)
+    val entry = new RuntimeByteTuningEntry(
+      runtimeBatchSizeKey, Some("0"), Some("-1g"), definition)
+
+    entry.getOriginalValue shouldBe Some("0b")
+    entry.tunedValue shouldBe Some("-1g")
+  }
+
+  test("runtime byte entry retains invalid values and accepts a later valid target") {
+    val definition = TuningEntryDefinition.getEntryDefinition(runtimeBatchSizeKey)
+    val entry = new RuntimeByteTuningEntry(
+      runtimeBatchSizeKey, Some("1GiB"), Some("1.5g"), definition)
+
+    entry.getOriginalValue shouldBe Some("1GiB")
+    entry.tunedValue shouldBe Some("1.5g")
+
+    entry.setRecommendedValue(" 2G ")
+    entry.tunedValue shouldBe Some("2147483648b")
+    entry.getTuneValue() shouldBe "2g"
   }
 }

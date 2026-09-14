@@ -37,7 +37,7 @@ import scala.jdk.CollectionConverters._
  */
 abstract class TuningConfigProvider(
     rawConfig: TuningConfiguration,
-    userProvidedConfig: Option[TuningConfiguration]) {
+    private val userProvidedConfig: Option[TuningConfiguration]) {
 
   /**
    * Tool-specific configuration overrides. Subclasses must define which override list
@@ -70,12 +70,57 @@ abstract class TuningConfigProvider(
     tuningConfigsMap(key)
   }
 
-  /** Returns whether the user explicitly provided a default value for an entry. */
-  def isDefaultValueUserProvided(key: String): Boolean = {
-    userProvidedConfig.exists { config =>
-      (config.default.asScala ++ getUserProvidedToolOverrides(config).asScala)
-        .exists(entry => entry.name == key && entry.default.nonEmpty)
+  private def getEntryField(
+      entries: util.List[TuningConfigEntry],
+      key: String,
+      fieldValue: TuningConfigEntry => String): Option[String] = {
+    Option(entries).toSeq.flatMap(_.asScala)
+      .find(_.name == key)
+      .flatMap(entry => Option(fieldValue(entry)).filter(_.nonEmpty))
+  }
+
+  /**
+   * Returns the final field value only when its active value came from the user configuration.
+   * A user tool-specific field has highest precedence. A shipped tool-specific field masks the
+   * same field from a user default entry.
+   */
+  private def getActiveUserProvidedField(
+      key: String,
+      fieldValue: TuningConfigEntry => String): Option[String] = {
+    userProvidedConfig.flatMap { config =>
+      val userToolValue = getEntryField(
+        getUserProvidedToolOverrides(config), key, fieldValue)
+      val activeToolValue = getEntryField(toolOverrides, key, fieldValue)
+      val userDefaultValue = getEntryField(config.default, key, fieldValue)
+      val userOwnsActiveValue = userToolValue.isDefined ||
+        (activeToolValue.isEmpty && userDefaultValue.isDefined)
+      if (userOwnsActiveValue) {
+        Option(fieldValue(getEntry(key))).filter(_.nonEmpty)
+      } else {
+        None
+      }
     }
+  }
+
+  /** Returns the active default only when the user explicitly supplied it. */
+  def getUserProvidedDefault(key: String): Option[String] = {
+    getActiveUserProvidedField(key, _.default)
+  }
+
+  /** Returns whether the user explicitly supplied the active default value for an entry. */
+  def isDefaultValueUserProvided(key: String): Boolean = {
+    getUserProvidedDefault(key).isDefined
+  }
+
+  /**
+   * Returns the final maximum only when the active user configuration explicitly supplied it.
+   * A shipped maximum is intentionally not returned, even when it has the same value.
+   *
+   * @param key The configuration entry name
+   * @return The merged maximum when it came from the user configuration, otherwise None
+   */
+  def getUserProvidedMax(key: String): Option[String] = {
+    getActiveUserProvidedField(key, _.max)
   }
 
   /**

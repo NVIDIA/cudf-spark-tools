@@ -26,9 +26,9 @@ import scala.util.matching.Regex
 
 import com.nvidia.spark.rapids.tool._
 import com.nvidia.spark.rapids.tool.profiling._
-import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, ProfTuningConfigProvider,
-  PySparkMemoryRebalanceSource, PySparkMemoryTuningPolicy, TuningConfigProvider,
-  TuningConfiguration, TuningEntryDefinition}
+import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, MissingCommentPolicy,
+  ProfTuningConfigProvider, PySparkMemoryRebalanceSource, PySparkMemoryTuningPolicy,
+  TuningConfigProvider, TuningConfiguration, TuningEntryDefinition}
 import com.nvidia.spark.rapids.tool.tuning.plugins.TuningPluginManager
 import org.yaml.snakeyaml.constructor.ConstructorException
 
@@ -209,7 +209,6 @@ object SparkMaster {
  *       --conf spark.task.resource.gpu.amount=0.125
  *
  *       Comments:
- *       - 'spark.rapids.sql.concurrentGpuTasks' was not set.
  *       - 'spark.executor.memoryOverhead' was not set.
  *       - 'spark.rapids.memory.pinnedPool.size' was not set.
  *       - 'spark.sql.adaptive.enabled' should be enabled for better performance.
@@ -223,7 +222,6 @@ object SparkMaster {
  *      - 'spark.executor.memory' should be set to at least 2GB/core.
  *      - 'spark.executor.instances' should be set to (gpuCount * numWorkers).
  *      - 'spark.task.resource.gpu.amount' should be set to Max(1, (numCores / gpuCount)).
- *      - 'spark.rapids.sql.concurrentGpuTasks' should be set to Min(4, (gpuMemory / 7.5G)).
  *      - 'spark.rapids.memory.pinnedPool.size' should be set to 2048m.
  *      - 'spark.sql.adaptive.enabled' should be enabled for better performance.
  *
@@ -466,11 +464,28 @@ abstract class AutoTuner(
     baseMap.toMap
   }
 
+  /** Use runtime-compatible batch parsing only for profiling, where evidence needs this value. */
+  private def buildTuningEntry(
+      key: String,
+      originalValue: Option[String],
+      tunedValue: Option[String],
+      definition: Option[TuningEntryDefinition]): TuningEntryBase = {
+    if (autoTunerHelper == ProfilingAutoTunerHelper &&
+        key == GpuBatchAndConcurrencyKeys.BatchSizeBytes && definition.exists(_.isMemoryProperty)) {
+      new RuntimeByteTuningEntry(key, originalValue, tunedValue, definition)
+    } else if (autoTunerHelper == ProfilingAutoTunerHelper &&
+        SparkTaskSlotModel.TargetTaskResourceKeys.contains(key)) {
+      new RuntimeValidatedTuningEntry(key, originalValue, tunedValue, definition)
+    } else {
+      TuningEntry.build(key, originalValue, tunedValue, definition)
+    }
+  }
+
   def initRecommendations(): Unit = {
     finalTuningTable.keys.foreach { key =>
       // no need to add new records if they are missing from props
       getPropertyValueFromSource(key).foreach { propVal =>
-        val recommendationVal = TuningEntry.build(key, Option(propVal), None,
+        val recommendationVal = buildTuningEntry(key, Option(propVal), None,
           finalTuningTable.get(key))
         recommendations(key) = recommendationVal
       }
@@ -481,7 +496,7 @@ abstract class AutoTuner(
     limitedLogicRecommendations.foreach { key =>
       getPropertyValueFromSource(key).foreach { sourceValue =>
         val recomRecord = recommendations.getOrElseUpdate(key,
-          TuningEntry.build(key, Some(sourceValue), None, finalTuningTable.get(key)))
+          buildTuningEntry(key, Some(sourceValue), None, finalTuningTable.get(key)))
         recomRecord.setRecommendedValue(sourceValue)
       }
     }
@@ -490,7 +505,7 @@ abstract class AutoTuner(
     platform.userEnforcedRecommendations.foreach {
       case (key, value) =>
         val recomRecord = recommendations.getOrElseUpdate(key,
-          TuningEntry.build(key, getPropertyValueFromSource(key), None, finalTuningTable.get(key)))
+          buildTuningEntry(key, getPropertyValueFromSource(key), None, finalTuningTable.get(key)))
         recomRecord.setRecommendedValue(value)
         appendComment(getEnforcedPropertyComment(key))
     }
@@ -507,7 +522,7 @@ abstract class AutoTuner(
   private def markAsUnresolved(sparkProperty: String, fillInValue: Option[String] = None): Unit = {
     finalTuningTable.get(sparkProperty).foreach { tuningDef =>
       val recomRecord = recommendations.getOrElseUpdate(sparkProperty,
-        TuningEntry.build(sparkProperty, getPropertyValueFromSource(sparkProperty),
+        buildTuningEntry(sparkProperty, getPropertyValueFromSource(sparkProperty),
           None, Some(tuningDef)))
       recomRecord.markAsUnresolved(fillInValue)
     }
@@ -523,8 +538,12 @@ abstract class AutoTuner(
    * @param key the property set by the autotuner.
    */
   private def appendMissingComment(key: String): Unit = {
-    if (keysWithMissingComment.add(key)) {
-      val missingComment = finalTuningTable.get(key)
+    val tuningDefinition = finalTuningTable.get(key)
+    val missingCommentPolicy = tuningDefinition
+      .map(_.getMissingCommentPolicy)
+      .getOrElse(MissingCommentPolicy.default)
+    if (missingCommentPolicy != MissingCommentPolicy.Omit && keysWithMissingComment.add(key)) {
+      val missingComment = tuningDefinition
         .flatMap(_.getMissingComment())
         .getOrElse(s"was not set.")
       appendComment(key, missingComment)
@@ -603,7 +622,7 @@ abstract class AutoTuner(
       false
     } else {
       finalTuningTable.get(key).exists { definition =>
-        val prospectiveEntry = TuningEntry.build(
+        val prospectiveEntry = buildTuningEntry(
           key, getPropertyValue(key), None, Some(definition))
         prospectiveEntry.setRecommendedValue(s"${valueMB}m")
         shouldIncludeInFinalRecommendations(prospectiveEntry)
@@ -625,7 +644,7 @@ abstract class AutoTuner(
     }
     // Update the recommendation entry or update the existing one.
     val recomRecord = recommendations.getOrElseUpdate(key,
-      TuningEntry.build(key, getPropertyValue(key), None, finalTuningTable.get(key)))
+      buildTuningEntry(key, getPropertyValue(key), None, finalTuningTable.get(key)))
     // if the value is not null, then proceed to add the recommendation.
     Option(value).foreach { nonNullValue =>
       recomRecord.setRecommendedValue(nonNullValue)
@@ -709,7 +728,8 @@ abstract class AutoTuner(
       autoTunerHelper.recommendedClusterSizingStrategy(platform))
     platform.recommendedClusterInfo.foreach { gpuClusterRec =>
       // TODO: Should we skip recommendation if cores per executor is lower than a min value?
-      appendRecommendation("spark.executor.cores", gpuClusterRec.coresPerExecutor)
+      appendRecommendation(
+        SparkTaskSlotModel.Properties.ExecutorCores, gpuClusterRec.coresPerExecutor)
       if (gpuClusterRec.numExecutors > 0) {
         // Note: This may change later if dynamic allocation is enabled.
         appendRecommendation("spark.executor.instances", gpuClusterRec.numExecutors)
@@ -736,13 +756,392 @@ abstract class AutoTuner(
   }
 
   /**
-   * Recommendation for 'spark.rapids.sql.concurrentGpuTasks' based on gpu memory.
-   * Assumption - cluster properties were updated to have a default values if missing.
+   * Legacy pre-dynamic-admission estimate based on selected GPU device capacity and the
+   * configured tools memory-per-task value. This path retains the tools maximum, including its
+   * shipped max-4 default.
    */
-  private def calcGpuConcTasks(): Long = {
+  private def calculateLegacyConcurrentGpuTasks(): Long = {
     Math.min(configProvider.getEntry("CONC_GPU_TASKS").getMax.toLong,
       platform.recommendedGpuDevice.getGpuConcTasks(
         configProvider.getEntry("GPU_MEM_PER_TASK").getDefaultAsMemory(ByteUnit.MiB)))
+  }
+
+  /** Resolve a runtime property as the current controls will emit it in the target. */
+  private def getEmittedTargetRuntimeProperty(key: String): Option[String] = {
+    platform.getUserEnforcedSparkProperty(key) match {
+      case Some(value) => Some(value)
+      case None if limitedLogicRecommendations.contains(key) =>
+        getPropertyValueFromSource(key)
+      case None if skippedRecommendations.contains(key) => None
+      case None =>
+        recommendations.get(key).map(_.getTuneValue())
+          .orElse(getPropertyValueFromSource(key))
+    }
+  }
+
+  /**
+   * Resolve an effective runtime input for a target model. Contradictory skip and limited controls
+   * remain unresolved so a model cannot silently use the emitted preserved value or substitute a
+   * runtime default.
+   */
+  private def getModeledTargetRuntimeProperty(
+      key: String): Either[String, Option[String]] = {
+    if (platform.getUserEnforcedSparkProperty(key).isEmpty &&
+        skippedRecommendations.contains(key) && limitedLogicRecommendations.contains(key)) {
+      Left(s"'$key' has conflicting target controls: it is both skipped and " +
+        "preserved or caller-limited")
+    } else {
+      Right(getEmittedTargetRuntimeProperty(key))
+    }
+  }
+
+  /** Batch values used by final output and by conservative footprint compatibility checks. */
+  private case class TargetBatchResolution(
+      emitted: Option[GpuConcurrencySeed.TargetBatch],
+      footprintComparable: Option[GpuConcurrencySeed.TargetBatch])
+
+  /**
+   * Resolve the batch recommendation that will be appended after cluster calculations. Conflicting
+   * skip and limited controls still emit their source value, but are not safe for footprint reuse.
+   */
+  private def resolveTargetBatch: TargetBatchResolution = {
+    import GpuConcurrencySeed._
+
+    val batchSizeProperty = GpuBatchAndConcurrencyKeys.BatchSizeBytes
+    platform.getUserEnforcedSparkProperty(batchSizeProperty) match {
+      case Some(value) =>
+        val enforced = Some(TargetBatch(value, EnforcedBatch))
+        TargetBatchResolution(enforced, enforced)
+      case None =>
+        val source = getPropertyValueFromSource(batchSizeProperty)
+        val sourceOrigin = if (platform.isPropertyPreserved(batchSizeProperty)) {
+          PreservedBatch
+        } else {
+          LimitedBatch
+        }
+        if (skippedRecommendations.contains(batchSizeProperty) &&
+            limitedLogicRecommendations.contains(batchSizeProperty)) {
+          TargetBatchResolution(source.map(TargetBatch(_, sourceOrigin)), None)
+        } else if (skippedRecommendations.contains(batchSizeProperty)) {
+          TargetBatchResolution(None, None)
+        } else if (limitedLogicRecommendations.contains(batchSizeProperty)) {
+          val limited = source.map(TargetBatch(_, sourceOrigin))
+          TargetBatchResolution(limited, limited)
+        } else {
+          val recommended = Some(TargetBatch(
+            configProvider.getEntry("BATCH_SIZE_BYTES").getDefault, RecommendedBatch))
+          TargetBatchResolution(recommended, recommended)
+        }
+      }
+  }
+
+  /** Select the plugin-compatible model, then build its nominal target RMM pool. */
+  private def calculateNominalTargetRmmPool(
+      pluginVersion: String):
+      Either[String, RapidsRmmPoolModel.NominalRmmPool] = {
+    RapidsPluginCapabilities.rmmPoolSizingProfile(pluginVersion).flatMap {
+      calculateNominalTargetRmmPoolForProfile
+    }
+  }
+
+  /** Resolve prospective target values against the selected profile's plugin defaults. */
+  private def calculateNominalTargetRmmPoolForProfile(
+      profile: RapidsRmmPoolModel.RmmPoolSizingProfile):
+      Either[String, RapidsRmmPoolModel.NominalRmmPool] = {
+    import RapidsRmmPoolModel.{NominalRmmPoolInput, Properties => RmmProperties}
+    import RuntimeConfigParser._
+
+    val defaults = profile.runtimeDefaults
+
+    def runtimeValue(key: String, defaultValue: String): Either[String, String] = {
+      getModeledTargetRuntimeProperty(key).map(_.getOrElse(defaultValue))
+    }
+
+    def parsedRuntimeValue[T](
+        key: String,
+        defaultValue: String,
+        parser: String => Option[T]): Either[String, T] = {
+      runtimeValue(key, defaultValue).flatMap { rawValue =>
+        parser(rawValue).toRight(s"'$key' could not be resolved to a valid value")
+      }
+    }
+
+    val capacitySpec = platform.recommendedTargetGpuDeviceMemoryCapacitySpec
+    for {
+      capacity <- parsePositiveBytes(capacitySpec.rawValue)
+        .toRight("'target GPU device capacity' could not be resolved to a valid value")
+      allocFraction <- parsedRuntimeValue(
+        RmmProperties.AllocationFraction, defaults.allocationFraction, parseFraction)
+      maxAllocFraction <- parsedRuntimeValue(
+        RmmProperties.MaximumAllocationFraction, defaults.maximumAllocationFraction, parseFraction)
+      minAllocFraction <- parsedRuntimeValue(
+        RmmProperties.MinimumAllocationFraction, defaults.minimumAllocationFraction, parseFraction)
+      baseReserveBytes <- parsedRuntimeValue(
+        RmmProperties.BaseReserve, defaults.baseReserve, parseNonNegativeBytes)
+      uvmEnabled <- parsedRuntimeValue(
+        RmmProperties.UvmEnabled, defaults.uvmEnabled, parseBoolean)
+      rmmAllocatorMode <- runtimeValue(
+        RmmProperties.RmmAllocatorMode, defaults.rmmAllocatorMode)
+      shuffleMode <- runtimeValue(RmmProperties.ShuffleMode, defaults.shuffleMode)
+      ucxBounceBufferSize <- if (
+          profile.usesUcxBounceBufferReserve(rmmAllocatorMode, shuffleMode)) {
+        parsedRuntimeValue(
+          RmmProperties.UcxBounceBufferSize, defaults.ucxBounceBufferSize,
+          parseNonNegativeBytes)
+      } else {
+        Right(0L)
+      }
+      chunkedPackPoolSize <- parsedRuntimeValue(
+        RmmProperties.ChunkedPackPoolSize, defaults.chunkedPackPoolSize, parseNonNegativeBytes)
+      exactAllocation <- getModeledTargetRuntimeProperty(RmmProperties.ExactAllocation)
+      pool <- profile.calculateNominalPool(NominalRmmPoolInput(
+          deviceCapacityBytes = capacity.bytes,
+          capacitySource = capacitySpec.source,
+          allocFraction = allocFraction,
+          maxAllocFraction = maxAllocFraction,
+          minAllocFraction = minAllocFraction,
+          baseReserveBytes = baseReserveBytes,
+          rmmAllocatorMode = rmmAllocatorMode,
+          shuffleMode = shuffleMode,
+          ucxBounceBufferSizeBytes = ucxBounceBufferSize,
+          chunkedPackPoolSizeBytes = chunkedPackPoolSize,
+          exactAllocationConfigured = exactAllocation.isDefined,
+          uvmEnabled = uvmEnabled))
+    } yield pool
+  }
+
+  private def batchChangeComment(
+      changed: GpuConcurrencySeed.ChangedBatch): String = {
+    import GpuConcurrencySeed._
+    s"was not recommended from historical '$FootprintMetricName' because the " +
+      s"${changed.origin.label} target configuration changes " +
+      s"'${GpuBatchAndConcurrencyKeys.BatchSizeBytes}' from " +
+      s"${changed.source.display} to ${changed.target.display}. Batch-size tuning is " +
+      s"independent of this heuristic, and cross-batch footprint scaling is not modeled. " +
+      s"Re-profile with ${changed.target.display}, or preserve or enforce " +
+      s"${changed.source.display}, to enable the footprint-based recommendation."
+  }
+
+  private def unknownBatchComment: String = {
+    import GpuConcurrencySeed._
+    s"was not recommended from historical '$FootprintMetricName' because the source or " +
+      s"target '${GpuBatchAndConcurrencyKeys.BatchSizeBytes}' could not be resolved. " +
+      s"Set or preserve a known target batch " +
+      s"size that matches the profiled value, or re-profile with the intended target " +
+      s"configuration."
+  }
+
+  private def unsupportedPoolComment(reason: String): String = {
+    import GpuConcurrencySeed._
+    s"was not recommended from historical '$FootprintMetricName' because a nominal target " +
+      s"RMM pool could not be modeled: $reason. Set a valid target GPU device capacity and " +
+      s"ordinary discrete-GPU RMM settings, or rely on plugin runtime auto-tuning."
+  }
+
+  private def calculateTargetTaskSlotsPerGpu:
+      Either[String, SparkTaskSlotModel.TaskSlotsPerGpu] = {
+    import RuntimeConfigParser._
+    import SparkTaskSlotModel.{Properties => TaskProperties}
+
+    def parsedTargetValue[T](
+        key: String,
+        defaultValue: Option[String],
+        parser: String => Option[T],
+        expectedType: String): Either[String, T] = {
+      getModeledTargetRuntimeProperty(key).flatMap { targetValue =>
+        targetValue.orElse(defaultValue).flatMap(parser)
+          .toRight(s"'$key' could not be resolved to $expectedType")
+      }
+    }
+
+    for {
+      executorCores <- parsedTargetValue(
+        TaskProperties.ExecutorCores, None, parsePositiveInt, "a positive integer")
+      executorGpuAmount <- parsedTargetValue(
+        TaskProperties.ExecutorGpuAmount, None, parsePositiveExecutorResourceAmount,
+        "a positive integer")
+      taskCpus <- parsedTargetValue(
+        TaskProperties.TaskCpus, Some(SparkTaskSlotModel.SupportedRuntimeDefaults.TaskCpus),
+        parsePositiveInt, "a positive integer")
+      taskGpuAmount <- parsedTargetValue(
+        TaskProperties.TaskGpuAmount, None, parsePositiveDouble, "a positive number")
+      slots <- SparkTaskSlotModel.calculateTaskSlotsPerGpu(SparkTaskSlotModel.TargetTaskSlotInput(
+        executorCores = executorCores,
+        executorGpuAmount = executorGpuAmount,
+        taskCpus = taskCpus,
+        taskGpuAmount = taskGpuAmount))
+    } yield slots
+  }
+
+  private def unsupportedTaskSlotsComment(reason: String): String = {
+    import SparkTaskSlotModel.{Properties => TaskProperties}
+    s"was not recommended from historical '${GpuConcurrencySeed.FootprintMetricName}' because " +
+      s"effective target task slots per GPU could not be modeled: $reason. Set valid " +
+      s"'${TaskProperties.ExecutorCores}', '${TaskProperties.ExecutorGpuAmount}', " +
+      s"'${TaskProperties.TaskCpus}', and '${TaskProperties.TaskGpuAmount}' values for the " +
+      s"supported one-GPU-per-executor target, or rely on plugin runtime auto-tuning."
+  }
+
+  private def invalidExplicitToolCapComment(rawValue: String): String = {
+    import GpuConcurrencySeed._
+    s"was not recommended from historical '$FootprintMetricName' because the explicitly " +
+      s"supplied operator tuning maximum 'CONC_GPU_TASKS.max=$rawValue' is not a positive " +
+      s"integer. Correct or remove that maximum before using the footprint-based seed."
+  }
+
+  private def unresolvedRuntimeCapComment(reason: String): String = {
+    import GpuConcurrencySeed._
+    s"was not recommended from historical '$FootprintMetricName' because the prospective " +
+      s"plugin task-count ceiling could not be resolved: $reason. Set a valid integer value, " +
+      s"resolve conflicting target controls, or rely on plugin runtime auto-tuning."
+  }
+
+  private def footprintRecommendationComment(
+      evidence: GpuConcurrencySeed.FootprintEvidence,
+      pool: RapidsRmmPoolModel.NominalRmmPool,
+      taskSlots: SparkTaskSlotModel.TaskSlotsPerGpu,
+      result: GpuConcurrencySeed.Recommendation): String = {
+    def diagnostic(value: Option[Double]): String = {
+      value.map(v => ToolUtils.formatDoublePrecision(v, 2)).getOrElse("not available")
+    }
+
+    val optionalCaps = Seq(
+      result.configuredCountCap.map(v => s"plugin maximum $v"),
+      result.explicitToolCap.map(v => s"operator tuning maximum $v")).flatten
+    val permitSizeMiB =
+      RapidsGpuSemaphoreModel.AdmissionPermitSizeBytes /
+        ByteUnit.MiB.toBytes(1L)
+    val capText = (Seq(
+      s"target task slots ${result.taskSlotCap} (CPU cap ${taskSlots.cpuSlotCap} from " +
+        s"${taskSlots.input.executorCores} executor cores and " +
+        s"${taskSlots.input.taskCpus} CPU(s) per task; GPU cap ${taskSlots.gpuSlotCap} from " +
+        s"${taskSlots.input.taskGpuAmount} GPU per task)",
+      s"$permitSizeMiB MiB permit representation ${result.permitRepresentabilityCap}") ++
+      optionalCaps).mkString(", ")
+    val warning = if (result.footprintExceedsRmmPool) {
+      " WARN: The nominal target RMM pool is smaller than the historical single-task " +
+        "footprint, so seed 1 does not establish that the task will fit."
+    } else {
+      ""
+    }
+    val asyncAssumption = if (pool.input.rmmAllocatorMode.equalsIgnoreCase(
+        RapidsRmmPoolModel.RmmAllocatorModes.Async)) {
+      " The effective ASYNC allocator is assumed to remain effective on the target CUDA " +
+        "runtime and driver."
+    } else {
+      ""
+    }
+    s"was seeded at ${result.concurrentGpuTasks} from historical " +
+      s"'${GpuConcurrencySeed.FootprintMetricName}'. " +
+      s"Stage ${evidence.stageId} reported a maximum of ${evidence.maxBytes}b across " +
+      s"${evidence.sampleCount} task-attempt update(s), with CV ${diagnostic(evidence.cv)} " +
+      s"and max/mean ${diagnostic(evidence.maxOverMean)}. The unpadded nominal target RMM " +
+      s"pool is ${pool.rmmPoolBytes}b. The model treats ${pool.input.deviceCapacityBytes}b from " +
+      s"${pool.input.capacitySource.label} as both CUDA total and pre-startup free memory, " +
+      s"subtracts the ${pool.input.chunkedPackPoolSizeBytes}b chunked-pack allocation and " +
+      s"leaves ${pool.nominalFreeBytesBeforeReserve}b nominal free before the " +
+      s"${pool.input.baseReserveBytes}b base reserve. The effective reserve is " +
+      s"${pool.effectiveReserveBytes}b. The ${pool.input.rmmAllocatorMode} allocator with " +
+      s"${pool.input.shuffleMode} shuffle applies alloc/min/max fractions " +
+      s"${pool.input.allocFraction}/${pool.input.minAllocFraction}/" +
+      s"${pool.input.maxAllocFraction}, and truncates RMM values to " +
+      s"${pool.profileInfo.rmmAllocationAlignmentBytes}-byte alignment under the " +
+      s"${pool.profileInfo.id} compatibility profile. " +
+      s"The effective reserve includes ${pool.ucxReserveAdjustmentBytes}b from the plugin " +
+      s"pool-sizing " +
+      s"UCX adjustment, not the full UCX allocation. CUDA context, driver, and other future " +
+      s"startup use are not modeled.$asyncAssumption Its floor " +
+      s"quotient is ${result.rmmPoolToFootprintCandidate}, " +
+      s"with caps for $capText. This is a memory-admission seed, not a guarantee of observed " +
+      s"task concurrency or spill avoidance.$warning"
+  }
+
+  /** Apply historical footprint evidence only to plugin versions that support runtime tuning. */
+  private def recommendConcurrentGpuTasksFromFootprint(pluginVersion: String): Unit = {
+    import GpuConcurrencySeed._
+
+    val key = GpuBatchAndConcurrencyKeys.ConcurrentGpuTasks
+    def suppressRecommendation(): Unit = {
+      skippedRecommendations += key
+      recommendations.remove(key)
+    }
+
+    if (skippedRecommendations.contains(key) || limitedLogicRecommendations.contains(key)) {
+      suppressRecommendation()
+      return
+    }
+
+    selectFootprint(appInfoProvider.getGpuStageAggMetrics) match {
+      case None =>
+        // Preserve the current silent suppression when no usable modern-plugin evidence exists.
+        suppressRecommendation()
+      case Some(evidence) =>
+        compareBatches(
+          getPropertyValueFromSource(GpuBatchAndConcurrencyKeys.BatchSizeBytes),
+          resolveTargetBatch.footprintComparable) match {
+          case UnknownBatch =>
+            appendComment(key, unknownBatchComment)
+            suppressRecommendation()
+          case changed: ChangedBatch =>
+            appendComment(key, batchChangeComment(changed))
+            suppressRecommendation()
+          case _: CompatibleBatch =>
+            calculateNominalTargetRmmPool(pluginVersion) match {
+              case Left(reason) =>
+                appendComment(key, unsupportedPoolComment(reason))
+                suppressRecommendation()
+              case Right(pool) =>
+                calculateTargetTaskSlotsPerGpu match {
+                  case Left(reason) =>
+                    appendComment(key, unsupportedTaskSlotsComment(reason))
+                    suppressRecommendation()
+                  case Right(taskSlots) =>
+                    val explicitToolCapRaw =
+                      configProvider.getUserProvidedMax("CONC_GPU_TASKS")
+                    val explicitToolCap =
+                      explicitToolCapRaw.flatMap(RuntimeConfigParser.parsePositiveCount)
+                    (explicitToolCapRaw, explicitToolCap) match {
+                      case (Some(rawValue), None) =>
+                        appendComment(key, invalidExplicitToolCapComment(rawValue))
+                        suppressRecommendation()
+                      case _ =>
+                        val configuredCountCap = if (
+                            RapidsPluginCapabilities.supportsMaxConcurrentGpuTasks(
+                              Some(pluginVersion))) {
+                          getModeledTargetRuntimeProperty(
+                            GpuBatchAndConcurrencyKeys.MaxConcurrentGpuTasks).flatMap {
+                            case None => Right(None)
+                            case Some(rawValue) =>
+                              RuntimeConfigParser.parseInt(rawValue)
+                                .map(value => if (value > 0) Some(value.toLong) else None)
+                                .toRight(
+                                  s"'${GpuBatchAndConcurrencyKeys.MaxConcurrentGpuTasks}' " +
+                                    s"could not be resolved to a valid integer")
+                          }
+                        } else {
+                          Right(None)
+                        }
+                        configuredCountCap match {
+                          case Left(reason) =>
+                            appendComment(key, unresolvedRuntimeCapComment(reason))
+                            suppressRecommendation()
+                          case Right(countCap) =>
+                            calculateRecommendation(pool.rmmPoolBytes, evidence.maxBytes,
+                              taskSlots.effectiveSlots, countCap, explicitToolCap) match {
+                              case Left(reason) =>
+                                appendComment(key, unsupportedPoolComment(reason))
+                                suppressRecommendation()
+                              case Right(result) =>
+                                appendRecommendation(key, result.concurrentGpuTasks)
+                                appendComment(key,
+                                  footprintRecommendationComment(evidence, pool, taskSlots, result))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
   }
 
   /**
@@ -759,15 +1158,13 @@ abstract class AutoTuner(
   }
 
   /**
-   * Returns true when the application uses a cuDF plugin version that already
-   * auto-tunes `spark.rapids.sql.concurrentGpuTasks` at runtime, in which case
-   * the AutoTuner should drop its recommendation for that property.
+   * Returns the resolved plugin version only when that version dynamically tunes GPU memory
+   * admission. That branch suppresses the legacy formula and may emit a footprint-based seed.
    * Reference: https://github.com/NVIDIA/cudf-spark/pull/12374
    */
-  private def isConcurrentGpuTasksAutoTunedByPlugin: Boolean = {
-    getRapidsPluginJarVersion.exists { jarVer =>
-      ToolUtils.compareVersions(jarVer, autoTunerHelper.pluginVersionAutoConcurrentGpuTasks)
-        .exists(_ >= 0)
+  private def getAutoTunedConcurrentGpuTasksPluginVersion: Option[String] = {
+    getRapidsPluginJarVersion.filter { pluginVersion =>
+      RapidsPluginCapabilities.supportsAutoConcurrentGpuTasks(Some(pluginVersion))
     }
   }
 
@@ -889,7 +1286,7 @@ abstract class AutoTuner(
         getPropertyValue(key).contains(value)
       } else {
         getPropertyValue(key).contains(value) || finalTuningTable.get(key).exists { definition =>
-          val prospectiveEntry = TuningEntry.build(
+          val prospectiveEntry = buildTuningEntry(
             key, getPropertyValue(key), None, Some(definition))
           prospectiveEntry.setRecommendedValue(value)
           shouldIncludeInFinalRecommendations(prospectiveEntry)
@@ -1425,7 +1822,8 @@ abstract class AutoTuner(
     }
 
     // Get the original executor cores from the event log
-    val sourceExecCores = getPropertyValueFromSource("spark.executor.cores")
+    val sourceExecCores =
+      getPropertyValueFromSource(SparkTaskSlotModel.Properties.ExecutorCores)
       .map(_.toInt)
       .getOrElse(1)
 
@@ -1609,19 +2007,20 @@ abstract class AutoTuner(
       // Set to low value for the cuDF plugin as task parallelism will be honoured
       // by `spark.executor.cores`.
       recommendExecutorResourceGpuProps()
-      appendRecommendation("spark.task.resource.gpu.amount",
+      appendRecommendation(SparkTaskSlotModel.Properties.TaskGpuAmount,
         configProvider.getEntry("TASK_GPU_RESOURCE_AMT").getDefault.toDouble)
-      val concGpuTasksKey = "spark.rapids.sql.concurrentGpuTasks"
+      val concGpuTasksKey = GpuBatchAndConcurrencyKeys.ConcurrentGpuTasks
       // Target cluster `enforced` and `preserve` overrides take precedence; only drop the
       // recommendation when neither is set and the plugin already auto-tunes it.
-      if (!platform.isPropertyUserOverridden(concGpuTasksKey) &&
-          isConcurrentGpuTasksAutoTunedByPlugin) {
-        // Plugin version auto-tunes concurrent GPU tasks based on memory usage,
-        // so suppress the AutoTuner recommendation and the corresponding missing comment.
-        // Reference: https://github.com/NVIDIA/cudf-spark/pull/12374
-        skippedRecommendations += concGpuTasksKey
+      if (!platform.isPropertyUserOverridden(concGpuTasksKey)) {
+        getAutoTunedConcurrentGpuTasksPluginVersion match {
+          case Some(pluginVersion) =>
+            recommendConcurrentGpuTasksFromFootprint(pluginVersion)
+          case None =>
+            appendRecommendation(concGpuTasksKey, calculateLegacyConcurrentGpuTasks())
+        }
       } else {
-        appendRecommendation(concGpuTasksKey, calcGpuConcTasks())
+        appendRecommendation(concGpuTasksKey, calculateLegacyConcurrentGpuTasks())
       }
       val execCores = platform.recommendedClusterInfo.map(_.coresPerExecutor).getOrElse(1)
       val availableMemPerExec =
@@ -1714,7 +2113,7 @@ abstract class AutoTuner(
     } else {
       addDefaultComments()
     }
-    appendRecommendation("spark.rapids.sql.batchSizeBytes",
+    appendRecommendation(GpuBatchAndConcurrencyKeys.BatchSizeBytes,
       configProvider.getEntry("BATCH_SIZE_BYTES").getDefault)
     appendRecommendation("spark.locality.wait",
       configProvider.getEntry("LOCALITY_WAIT").getDefault)
@@ -1918,28 +2317,26 @@ abstract class AutoTuner(
       aqePartitionProperty.foreach { initialPartitionNumKey =>
         appInfoProvider.getMaxColumnarExchangeDataSizeBytes match {
           case Some(maxDataSize) =>
-            // Get GPU batch size (use actual value if set, otherwise use default)
-            val gpuBatchSize: Long = getPropertyValue("spark.rapids.sql.batchSizeBytes") match {
-              case Some(value) =>
-                // Parse the actual batch size value (could be with units like "2g", "1GB", etc.)
-                StringUtils.convertMemorySizeToBytes(value, Some(ByteUnit.BYTE))
-              case None =>
-                // Use default batch size from tuning configs
-                configProvider.getEntry("BATCH_SIZE_BYTES").getDefaultAsMemory(ByteUnit.BYTE)
-            }
-            // Calculate ratio of ColumnarExchange data to GPU batch size.
-            // Only increase finalPartitionValue since ColumnarExchange is GPU-only
-            // and doesn't capture CPU shuffle data.
-            val columnarExchangeRatio = (maxDataSize.toDouble / gpuBatchSize).ceil.toInt
-            if (columnarExchangeRatio > finalPartitionValue) {
-              recordShufflePartitionUpwardReason(
-                s"the GPU ColumnarExchange batch-size bound raised partitions to " +
-                  s"$columnarExchangeRatio")
-              appendComment(s"'$initialPartitionNumKey' adjusted from " +
-                s"$finalPartitionValue to $columnarExchangeRatio based on " +
-                s"ColumnarExchange data size (${maxDataSize} bytes) and " +
-                s"GPU batch size (${gpuBatchSize} bytes)")
-              finalPartitionValue = columnarExchangeRatio
+            // Use the same prospective target and runtime byte grammar as batch compatibility.
+            val gpuBatchSize = resolveTargetBatch.emitted
+              .flatMap(batch => RuntimeConfigParser.parsePositiveBytes(batch.rawValue))
+              .map(_.bytes)
+            gpuBatchSize.foreach { validGpuBatchSize =>
+              // Calculate ratio of ColumnarExchange data to GPU batch size.
+              // Only increase finalPartitionValue since ColumnarExchange is GPU-only
+              // and doesn't capture CPU shuffle data.
+              val columnarExchangeRatio =
+                (maxDataSize.toDouble / validGpuBatchSize).ceil.toInt
+              if (columnarExchangeRatio > finalPartitionValue) {
+                recordShufflePartitionUpwardReason(
+                  s"the GPU ColumnarExchange batch-size bound raised partitions to " +
+                    s"$columnarExchangeRatio")
+                appendComment(s"'$initialPartitionNumKey' adjusted from " +
+                  s"$finalPartitionValue to $columnarExchangeRatio based on " +
+                  s"ColumnarExchange data size (${maxDataSize} bytes) and " +
+                  s"GPU batch size (${validGpuBatchSize} bytes)")
+                finalPartitionValue = columnarExchangeRatio
+              }
             }
           case None =>
             // No ColumnarExchange data size metrics found, use original logic
@@ -2387,7 +2784,7 @@ abstract class AutoTuner(
    * - spark.executor.resource.gpu.vendor: recommended if k8s (On-Prem)
    */
   private def recommendExecutorResourceGpuProps(): Unit = {
-    val gpuAmountKey = "spark.executor.resource.gpu.amount"
+    val gpuAmountKey = SparkTaskSlotModel.Properties.ExecutorGpuAmount
     val gpuAmountValueOpt = getPropertyValue(gpuAmountKey)
     val isUnsetOrZero = gpuAmountValueOpt.forall { v =>
       v.trim.isEmpty || scala.util.Try(v.toLong).toOption.contains(0L)
@@ -2952,10 +3349,6 @@ trait AutoTunerHelper extends Logging {
     }
   }
 
-  // Starting with this plugin version, the cuDF plugin auto-tunes the number of
-  // concurrent GPU tasks based on memory usage (see spark-rapids#12374), so the
-  // AutoTuner should no longer recommend `spark.rapids.sql.concurrentGpuTasks`.
-  lazy val pluginVersionAutoConcurrentGpuTasks: String = "25.06.0"
   lazy val gpuKryoRegistratorClassName = "com.nvidia.spark.rapids.GpuKryoRegistrator"
   lazy val rapidsPluginClassName = "com.nvidia.spark.SQLPlugin"
   lazy val kubernetesGpuVendor = "nvidia.com"
@@ -3263,20 +3656,16 @@ trait AutoTunerCommentsWithTuningConfigs {
         configProvider.getEntry("PINNED_MEMORY").getDefault))
 
   protected val commentsForMissingProps: Map[String, String] = Map(
-    "spark.executor.cores" ->
+    SparkTaskSlotModel.Properties.ExecutorCores ->
       // TODO: This could be extended later to be platform specific.
-      generateMissingComment("spark.executor.cores",
+      generateMissingComment(SparkTaskSlotModel.Properties.ExecutorCores,
         configProvider.getEntry("CORES_PER_EXECUTOR").getDefault),
     "spark.executor.instances" ->
       generateMissingComment("spark.executor.instances",
         "(cpuCoresPerNode * numWorkers) / 'spark.executor.cores'"),
-    "spark.task.resource.gpu.amount" ->
-      generateMissingComment("spark.task.resource.gpu.amount",
+    SparkTaskSlotModel.Properties.TaskGpuAmount ->
+      generateMissingComment(SparkTaskSlotModel.Properties.TaskGpuAmount,
         configProvider.getEntry("TASK_GPU_RESOURCE_AMT").getDefault),
-    "spark.rapids.sql.concurrentGpuTasks" ->
-      generateMissingComment("spark.rapids.sql.concurrentGpuTasks",
-        s"Min(${configProvider.getEntry("CONC_GPU_TASKS").getMax.toLong}, " +
-          s"(gpuMemory / ${configProvider.getEntry("GPU_MEM_PER_TASK").getDefault}))"),
     "spark.rapids.sql.enabled" ->
       "'spark.rapids.sql.enabled' should be true to enable SQL operations on the GPU.",
     "spark.sql.adaptive.enabled" ->

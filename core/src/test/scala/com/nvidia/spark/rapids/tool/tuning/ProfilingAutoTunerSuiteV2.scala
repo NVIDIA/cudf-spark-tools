@@ -3810,4 +3810,53 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(latestSmVersion == "400db173")
   }
 
+  private def reserveSpillMemoryRecommendations(
+      enforcedSpill: Option[String] = None): Map[String, String] = {
+    val instanceMapKey = NodeInstanceMapKey("g2-standard-16")
+    val gpuInstance = PlatformInstanceTypes.DATAPROC_BY_INSTANCE_NAME(instanceMapKey)
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.instances" -> "2",
+      "spark.executor.resource.gpu.amount" -> "1",
+      "spark.rapids.sql.enabled" -> "true",
+      "spark.plugins" -> "com.nvidia.spark.SQLPlugin",
+      "spark.executor.memory" -> s"${gpuInstance.memoryMB}MiB")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = enforcedSpill
+        .map(value => Map("spark.rapids.memory.spillPool.size" -> value))
+        .getOrElse(Map.empty))
+    val platform = PlatformFactory.createInstance(
+      PlatformNames.DATAPROC, Some(targetClusterInfo))
+    configureEventLogClusterInfoForTest(
+      platform,
+      numCores = gpuInstance.cores,
+      numWorkers = 4,
+      gpuCount = gpuInstance.numGpus,
+      sparkProperties = sourceProps.toMap)
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(default = List(
+      TuningConfigEntry(name = "NON_EXECUTOR_MEM_FRACTION", default = "0.35"),
+      TuningConfigEntry(name = "RESERVE_SPILL_MEMORY", default = "false")))
+    val autoTuner = buildAutoTunerForTests(
+      infoProvider, platform, userProvidedTuningConfigs = Some(tuningConfigs))
+    autoTuner.getRecommendedProperties()._1
+      .map(property => property.name -> property.getTuneValue()).toMap
+  }
+
+  test("disabling spill reservation makes the full residual available to pinned memory") {
+    val recommendations = reserveSpillMemoryRecommendations()
+
+    assert(recommendations.get("spark.rapids.memory.pinnedPool.size").contains("6554m"))
+    assert(recommendations.get("spark.executor.memoryOverhead").contains("9830m"))
+  }
+
+  test("disabling spill reservation still reserves an explicitly enforced spill pool") {
+    val recommendations = reserveSpillMemoryRecommendations(enforcedSpill = Some("1g"))
+
+    assert(recommendations.get("spark.rapids.memory.pinnedPool.size").contains("5530m"))
+    assert(recommendations.get("spark.rapids.memory.spillPool.size").contains("1g"))
+    assert(recommendations.get("spark.executor.memoryOverhead").contains("9830m"))
+  }
+
 }

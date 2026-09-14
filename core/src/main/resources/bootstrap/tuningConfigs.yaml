@@ -182,6 +182,17 @@ default:
     default: 2g
     usedBy: spark.rapids.memory.spillPool.size
 
+  - name: RESERVE_SPILL_MEMORY
+    description: >-
+      When true, AutoTuner divides the residual executor-overhead budget equally between
+      inferred pinned memory and an implicit spill reserve. When false, it uses no implicit
+      spill reserve and makes the full residual eligible for pinned memory, subject to the
+      PINNED_MEMORY maximum. An explicitly preserved or enforced
+      spark.rapids.memory.spillPool.size value is always reserved. This policy does not affect
+      the host off-heap-limit sizing path.
+    default: "true"
+    usedBy: spark.rapids.memory.pinnedPool.size, spark.rapids.memory.spillPool.size
+
   - name: GPU_MEM_PER_TASK
     description: >-
       Amount of GPU memory to use per concurrent task (on a single GPU).

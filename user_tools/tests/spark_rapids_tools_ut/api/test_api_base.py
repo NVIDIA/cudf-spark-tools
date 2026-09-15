@@ -190,7 +190,6 @@ Comments:
 - 'spark.plugins' should be set to the class name required for the cuDF plugin.
   Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
 - 'spark.rapids.memory.pinnedPool.size' was not set.
-- 'spark.rapids.sql.concurrentGpuTasks' was not set.
 - 'spark.task.resource.gpu.amount' was not set.
 - Required jar for the NVIDIA cuDF plugin for Apache Spark is missing from the classpath entries.
   If the cuDF plugin jar is being bundled with your Spark distribution, this step is not needed.

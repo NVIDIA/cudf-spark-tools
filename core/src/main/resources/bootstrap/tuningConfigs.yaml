@@ -74,7 +74,9 @@
 default:
   - name: CONC_GPU_TASKS
     description: >-
-      Maximum number of concurrent GPU tasks that can run simultaneously on a single GPU
+      Maximum concurrent GPU tasks for the legacy device-memory-based calculation. The
+      shipped maximum does not cap a historical-footprint seed; on that path, only a maximum
+      explicitly supplied through user tuning configuration is applied as an operator cap.
     max: 4
     usedBy: spark.rapids.sql.concurrentGpuTasks
 
@@ -195,9 +197,11 @@ default:
 
   - name: GPU_MEM_PER_TASK
     description: >-
-      Amount of GPU memory to use per concurrent task (on a single GPU).
-      This estimate is based on T4s. This will be used to calculate the number of
-      concurrent GPU tasks.
+      Fixed GPU-memory budget per task for the legacy device-memory-based concurrency calculation.
+      Qualification uses this value. Profiling uses it for plugin versions before 25.06, when a
+      unique plugin version cannot be resolved, or when a preserve request without a source value
+      continues with the legacy recommendation. The shipped 7500m default is the legacy T4-based
+      assumption. The historical-footprint seed does not use it.
     default: 7500m
     usedBy: spark.rapids.sql.concurrentGpuTasks
 

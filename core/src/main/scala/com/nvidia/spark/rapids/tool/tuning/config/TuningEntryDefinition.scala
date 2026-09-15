@@ -83,6 +83,21 @@ object LevelEnum extends Enumeration {
   def default: Value = Job
 }
 
+/** Controls how AutoTuner comments when it recommends a property missing from the source. */
+object MissingCommentPolicy extends Enumeration {
+  val Default, Omit = Value
+
+  def fromString(s: String): Value = {
+    s.trim.toLowerCase match {
+      case "default" => Default
+      case "omit" => Omit
+      case _ => throw new IllegalArgumentException(s"Unknown missing comment policy: $s")
+    }
+  }
+
+  def default: Value = Default
+}
+
 /**
  * Represents the type information for a tuning entry configuration.
  * @param name The type name (Byte, String, Int, Time)
@@ -120,13 +135,13 @@ object ConfType {
  * @param confType A map containing the configuration type information with optional default unit
  *                 Example: { "name": "byte", "defaultUnit": "MiB" } or { "name": "string" }
  * @param specialValues Values that should bypass type-specific normalization and formatting.
- * @param comments The defaults comments to be loaded for the entry. It is a map to represent
- *                 three different types of comments:
+ * @param comments The default comments and missing-comment policy loaded for the entry:
  *                 1. "missing" to represent the default comment to be appended to the AutoTuner's
  *                    comment when the property is missing.
- *                 2. "persistent" to represent a comment that always shows up in the AutoTuner's
+ *                 2. "missingPolicy" to select the default behavior or omit that comment.
+ *                 3. "persistent" to represent a comment that always shows up in the AutoTuner's
  *                    output.
- *                 3. "updated" to represent a comment that shows when a property is being set by
+ *                 4. "updated" to represent a comment that shows when a property is being set by
  *                    the Autotuner.
  */
 class TuningEntryDefinition(
@@ -206,6 +221,12 @@ class TuningEntryDefinition(
 
   def getMissingComment(): Option[String] = {
     Option(comments.get("missing"))
+  }
+
+  def getMissingCommentPolicy: MissingCommentPolicy.Value = {
+    Option(comments.get("missingPolicy"))
+      .map(MissingCommentPolicy.fromString)
+      .getOrElse(MissingCommentPolicy.default)
   }
 
   def getPersistentComment(): Option[String] = {

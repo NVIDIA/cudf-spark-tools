@@ -147,6 +147,10 @@ class SingleAppSummaryInfoProvider(
     PySparkMemoryEvidence.fromApp(appInfo)
   }
 
+  override def getGpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = {
+    app.gpuStageAggMetrics
+  }
+
   private def findPropertyInProfPropertyResults(
       key: String,
       props: Seq[RapidsPropertyProfileResult]): Option[String] = {

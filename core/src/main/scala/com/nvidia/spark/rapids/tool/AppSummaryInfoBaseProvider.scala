@@ -22,7 +22,7 @@ import com.nvidia.spark.rapids.tool.profiling.{AppInfoColumnarExchangeMetrics,
   AppInfoJobStageAggMetricsVisitor, AppInfoPropertyGetter, AppInfoReadMetrics,
   AppInfoShuffleStageInputMetrics, AppInfoSqlTaskAggMetricsVisitor, AppInfoSQLTaskInputSizes,
   BaseProfilingAppSummaryInfoProvider, DataSourceProfileResult, ProfilerResult,
-  PySparkMemoryEvidence, SingleAppSummaryInfoProvider}
+  PySparkMemoryEvidence, SingleAppSummaryInfoProvider, StageAggGpuMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.tuning.QualAppSummaryInfoProvider
 
 import org.apache.spark.sql.rapids.tool.ToolUtils
@@ -67,6 +67,7 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
   override def getMaxColumnarExchangeDataSizeBytes: Option[Long] = None
   override def getClassPathEntries: Map[String, String] = Map[String, String]()
   def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
+  def getGpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = Seq.empty
   def hasSqlCacheEvidence: Boolean = false
 }
 

@@ -56,7 +56,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
     val hasSqlCache: Boolean = false,
     val shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
-      ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured))
+      ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured),
+    val gpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = Seq.empty)
     extends BaseProfilingAppSummaryInfoProvider {
   override def isAppInfoAvailable = true
   override def getMaxFileScanInput: Option[Double] =
@@ -81,6 +82,7 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = pySparkMemoryEvidence
   override def hasSqlCacheEvidence: Boolean = hasSqlCache
   override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = shuffleStageInputAnalysis
+  override def getGpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = gpuStageAggMetrics
 
   /**
    * Sets the spark master property in the properties map.
@@ -153,13 +155,15 @@ abstract class BaseAutoTunerSuite extends AnyFunSuite with BeforeAndAfterEach
       pySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty,
       hasSqlCache: Boolean = false,
       shuffleStageInputAnalysis: ShuffleStageInputAnalysis =
-        ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured)
+        ShuffleStageInputAnalysis.empty(ShuffleInputProvenance.Measured),
+      gpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = Seq.empty
   ): AppInfoProviderMockTest = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
       sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead,
       shuffleStagesWithPosSpilling, shuffleSkewStages, scanStagesWithGpuOom,
       gpuShuffleStagesWithContainerOom, maxColumnarExchangeDataSizeBytes,
-      maxFileScanInputOverride, pySparkMemoryEvidence, hasSqlCache, shuffleStageInputAnalysis)
+      maxFileScanInputOverride, pySparkMemoryEvidence, hasSqlCache, shuffleStageInputAnalysis,
+      gpuStageAggMetrics)
   }
 
   /**

@@ -193,7 +193,8 @@ class DatabricksCluster(ClusterBase):
     def _init_nodes(self):
         # assume that only one master node
         master_nodes_from_conf = self.props.get_value_silent('driver')
-        worker_nodes_from_conf = self.props.get_value_silent('executors')
+        # a zero-worker (single-node) cluster has no `executors` entry at all
+        worker_nodes_from_conf = self.props.get_value_silent('executors') or []
         num_workers = self.props.get_value_silent('num_workers')
         if num_workers is None and self.props.get_value_silent('autoscale') is not None:
             target_workers = self.props.get_value_silent('autoscale', 'target_workers')

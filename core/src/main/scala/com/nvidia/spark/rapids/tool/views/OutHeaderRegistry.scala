@@ -325,10 +325,13 @@ object OutHeaderRegistry {
         "status", "errorMessage",
         "sqlIds", "jobIds", "statementFile", "statementTruncated"),
     "StageAggGpuMetricsProfileResult" ->
-      Array("stageId", "numTasks", "metricName", "unit", "sum", "max", "avg"),
+      Array("stageId", "numTasks", "metricName", "unit", "sum", "max", "avg",
+        "sampleCount", "min", "stddev", "cv", "maxOverMean"),
     "SQLAggGpuMetricsProfileResult" ->
-      Array("sqlId", "metricName", "unit", "sum", "max", "avg"),
+      Array("sqlId", "metricName", "unit", "sum", "max", "avg",
+        "sampleCount", "min", "stddev", "cv", "maxOverMean"),
     "AppAggGpuMetricsProfileResult" ->
-      Array("appId", "metricName", "unit", "sum", "max", "avg")
+      Array("appId", "metricName", "unit", "sum", "max", "avg",
+        "sampleCount", "min", "stddev", "cv", "maxOverMean")
   ) // End of outputHeaders map initialization
 }

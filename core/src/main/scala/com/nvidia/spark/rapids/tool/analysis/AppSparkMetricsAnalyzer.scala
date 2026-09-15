@@ -441,32 +441,32 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
       val name = ai.infoRef.getName()
       val unit = unitForMetric(name)
       ai.getStageIds.foreach { stageId =>
-        ai.calculateAccStatsForStage(stageId).foreach { stats =>
+        ai.getRawStatsForStage(stageId).foreach { raw =>
           // Invariant: stages with GPU accumulators are tracked by stageManager
           // and therefore cached. The fallback to 0 is defensive for edge cases
           // (e.g. driver-side accumulators) where the stage is absent from the
           // task-metrics cache. It affects only the emitted numTasks column: the
-          // SQL/app rollups pool total/count and never read numTasks.
+          // SQL/app rollups pool sampleTotal and count, and never read numTasks.
           val numTasks = stageCache.get(stageId).map(_.numTasks).getOrElse {
             logWarning(s"GPU accumulator '$name' references stage $stageId which " +
               s"is not in the stage-task metrics cache; using numTasks = 0.")
             0
           }
-          // The row carries what the store holds -- the accumulated total and the number of
-          // tasks that reported the metric -- and derives the published sum and avg from them.
-          // `stats` has been through readjustTotalStats, which replaces total with max for a
-          // max-aggregated metric, so the unadjusted record is the only place the real sum
-          // survives, and that sum is the numerator every mean needs.
-          val rawStats = ai.getRawStatsForStage(stageId)
-          val max = Some(stats.max)
+          // The unadjusted record, because readjustTotalStats replaces total with max for a
+          // max-aggregated metric and this row publishes the total. A stage that reported no
+          // task sample has no extrema; 0 would be invented.
+          val max = raw.sampleMax
           val row = StageAggGpuMetricsProfileResult(
             stageId = stageId,
             numTasks = numTasks,
             metricName = name,
             unit = unit,
-            total = rawStats.map(_.total),
+            total = Some(raw.total),
             max = max,
-            count = rawStats.map(_.count).getOrElse(0L))
+            count = raw.count,
+            min = raw.sampleMin,
+            welfordSumSqDev = raw.welfordSumSqDev,
+            sampleTotal = Some(raw.sampleTotal))
           // Skip rows carrying no signal (both the published sum and max zero/absent).
           if (!(row.sum.forall(_ == 0L) && max.forall(_ == 0L))) {
             rows += row
@@ -478,37 +478,44 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
   }
 
   /**
-   * Rollup helper: groups stage-level GPU rows by metric name and reduces to
-   * (unit, sum, max, avg). sum adds the stage sums (None for max metrics); max is
-   * the largest stage max; avg divides the pooled stage totals by the pooled stage
-   * counts over the stages that recorded the metric. numTasks is intentionally not
+   * Rollup helper: groups stage-level GPU rows by metric name and reduces to a
+   * GpuMetricRollup. It adds the stage totals, takes the largest stage max and the smallest
+   * stage min, and pools count, sample total and deviation sum over the stages that recorded
+   * the metric. sum and avg are derived from those downstream. numTasks is intentionally not
    * propagated: see SQLAggGpuMetricsProfileResult / AppAggGpuMetricsProfileResult.
    */
   private def rollupGpuRows(
       rows: Seq[StageAggGpuMetricsProfileResult]
-  ): Seq[(String, String, Option[Long], Option[Long], Option[Long])] = {
+  ): Seq[GpuMetricRollup] = {
     rows.groupBy(_.metricName).map { case (metricName, group) =>
-      val unit = group.head.unit
-      val sumOpt: Option[Long] = {
-        val xs = group.flatMap(_.sum)
-        if (xs.isEmpty) None else Some(xs.sum)
-      }
       val maxOpt: Option[Long] = {
         val xs = group.flatMap(_.max)
         if (xs.isEmpty) None else Some(xs.max)
       }
-      // Pooled as sum-of-totals over sum-of-counts, not a weighted average of the stage
-      // averages. Two reasons: stage `avg` is already integer-truncated, so re-averaging
-      // truncates twice; and the correct weight is the number of tasks that reported the
-      // metric, not the stage's task count. GPU accumulables are frequently sparse -- spill
-      // and retry metrics land on a handful of tasks in a large stage -- so weighting by
-      // numTasks skews the result toward the stages that reported it least, without bound.
-      val avgOpt: Option[Long] = {
-        val reporting = group.filter(_.count > 0L)
-        val totalCount = reporting.map(_.count).sum
-        if (totalCount <= 0L) None else Some(reporting.flatMap(_.total).sum / totalCount)
+      val minOpt: Option[Long] = {
+        val xs = group.flatMap(_.min)
+        if (xs.isEmpty) None else Some(xs.min)
       }
-      (metricName, unit, sumOpt, maxOpt, avgOpt)
+      // The published total covers every row, including a stage that only reported at
+      // completion. The statistics below cover the reporting rows alone.
+      val totalOpt: Option[Long] = {
+        val xs = group.flatMap(_.total)
+        if (xs.isEmpty) None else Some(xs.sum)
+      }
+      // The weight is the reporting task count, not the stage task count.
+      val reporting = group.filter(_.count > 0L)
+      val pooledCount = reporting.map(_.count).sum
+      val pooledSampleTotal = reporting.flatMap(_.sampleTotal).sum
+      // Chan's form keeps the spread between stages that sat at different levels.
+      val pooledDev = reporting.foldLeft((0L, 0L, 0.0)) { case ((accCount, accTotal, accDev), r) =>
+        val merged = StatisticsMetrics.mergeSumSqDev(
+          accCount, accTotal, accDev, r.count, r.sampleTotal.getOrElse(0L), r.welfordSumSqDev)
+        (accCount + r.count, accTotal + r.sampleTotal.getOrElse(0L), merged)
+      }._3
+      val sampleOpt =
+        if (reporting.flatMap(_.sampleTotal).isEmpty) None else Some(pooledSampleTotal)
+      GpuMetricRollup(metricName, group.head.unit, totalOpt, maxOpt, pooledCount, minOpt,
+        pooledDev, sampleOpt)
     }.toSeq
   }
 
@@ -528,14 +535,17 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
     app.sqlIdToStages.toSeq.flatMap { case (sqlId, stageIds) =>
       val rowsForSql: Seq[StageAggGpuMetricsProfileResult] =
         stageIds.toSeq.flatMap(s => stageMap.getOrElse(s, Seq.empty))
-      rollupGpuRows(rowsForSql).map { case (metric, unit, sum, max, avg) =>
+      rollupGpuRows(rowsForSql).map { r =>
         SQLAggGpuMetricsProfileResult(
           sqlId = sqlId,
-          metricName = metric,
-          unit = unit,
-          sum = sum,
-          max = max,
-          avg = avg)
+          metricName = r.metricName,
+          unit = r.unit,
+          total = r.total,
+          max = r.max,
+          count = r.count,
+          min = r.min,
+          welfordSumSqDev = r.welfordSumSqDev,
+          sampleTotal = r.sampleTotal)
       }
     }.sortBy(r => (r.sqlId, r.metricName))
   }
@@ -552,21 +562,26 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
     if (stageRows.isEmpty) {
       return Seq.empty
     }
-    rollupGpuRows(stageRows).map { case (metric, unit, sum, max, avg) =>
+    rollupGpuRows(stageRows).map { r =>
       AppAggGpuMetricsProfileResult(
         appId = app.appId,
-        metricName = metric,
-        unit = unit,
-        sum = sum,
-        max = max,
-        avg = avg)
+        metricName = r.metricName,
+        unit = r.unit,
+        total = r.total,
+        max = r.max,
+        count = r.count,
+        min = r.min,
+        welfordSumSqDev = r.welfordSumSqDev,
+        sampleTotal = r.sampleTotal)
     }.sortBy(_.metricName)
   }
 }
 
-/**
- * Factory for creating the appropriate AppSparkMetricsAnalyzer based on the application type.
- */
+/** Pooled statistics for one metric across a set of stage rows. */
+private case class GpuMetricRollup(metricName: String, unit: String, total: Option[Long],
+    max: Option[Long], count: Long, min: Option[Long], welfordSumSqDev: Double,
+    sampleTotal: Option[Long])
+
 object AppSparkMetricsAnalyzer {
   /**
    * Creates an AppSparkMetricsAnalyzer instance appropriate for the given application.

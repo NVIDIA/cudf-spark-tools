@@ -844,7 +844,9 @@ abstract class DatabricksPlatform(gpuDevice: Option[GpuDevice],
   // TODO: Issue to automate this https://github.com/NVIDIA/cudf-spark-tools/issues/1676
   override val supportedShuffleManagerVersionMap: Array[(String, String)] = Array(
     "12.2" -> "332db",
-    "13.3" -> "341db"
+    "13.3" -> "341db",
+    "14.3" -> "350db143",
+    "17.3" -> "400db173"
   )
 
   override def createClusterInfo(coresPerExecutor: Int,

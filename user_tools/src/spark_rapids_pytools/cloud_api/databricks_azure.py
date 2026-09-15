@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# Copyright (c) 2023-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -244,7 +244,8 @@ class DatabricksAzureCluster(ClusterBase):
     def _init_nodes(self):
         # assume that only one driver node
         driver_nodes_from_conf = self.props.get_value_silent('driver')
-        worker_nodes_from_conf = self.props.get_value_silent('executors')
+        # a zero-worker (single-node) cluster has no `executors` entry at all
+        worker_nodes_from_conf = self.props.get_value_silent('executors') or []
         num_workers = self.props.get_value_silent('num_workers')
         if num_workers is None and self.props.get_value_silent('autoscale') is not None:
             target_workers = self.props.get_value_silent('autoscale', 'target_workers')

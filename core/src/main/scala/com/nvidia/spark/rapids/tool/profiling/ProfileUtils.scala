@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * Copyright (c) 2021-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,13 +31,6 @@ object ProfileUtils {
         .builder()
         .appName("Rapids Spark Qualification/Profiling Tool")
         .getOrCreate()
-  }
-
-  // Convert Option[Long] to String
-  def optionLongToString(in: Option[Long]): String = try {
-    in.get.toString
-  } catch {
-    case _: NoSuchElementException => ""
   }
 
   // Check if the job/stage is GPU mode is on

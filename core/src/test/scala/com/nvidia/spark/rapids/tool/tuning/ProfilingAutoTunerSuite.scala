@@ -57,6 +57,38 @@ abstract class ProfilingAutoTunerSuiteBase extends BaseAutoTunerSuite {
   }
 
   /**
+   * Helper method to verify that the recommended shuffle manager version matches the
+   * expected version.
+   */
+  protected def verifyRecommendedShuffleManagerVersion(
+                                                      autoTuner: AutoTuner,
+                                                      expectedSmVersion: String): Unit = {
+    autoTuner.getShuffleManagerClassName match {
+      case Right(smClassName) =>
+        assert(smClassName == ProfilingAutoTunerHelper
+          .buildShuffleManagerClassName(expectedSmVersion))
+      case Left(comment) =>
+        fail(s"Expected valid RapidsShuffleManager but got comment: $comment")
+    }
+  }
+
+  /**
+   * Helper method to verify that the shuffle manager version is not recommended
+   * for the unsupported Spark version.
+   */
+  protected def verifyUnsupportedSparkVersionForShuffleManager(
+                                                              autoTuner: AutoTuner,
+                                                              sparkVersion: String): Unit = {
+    autoTuner.getShuffleManagerClassName match {
+      case Right(smClassName) =>
+        fail(s"Expected error comment but got valid RapidsShuffleManager: $smClassName")
+      case Left(comment) =>
+        assert(comment == shuffleManagerCommentForUnsupportedVersion(sparkVersion,
+          autoTuner.platform))
+    }
+  }
+
+  /**
    * Helper method to extract the AutoTuner results from the profile log content
    * TODO: We should store the AutoTuner results in a separate file.
    */
@@ -2310,22 +2342,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  /**
-   * Helper method to verify that the recommended shuffle manager version matches the
-   * expected version.
-   */
-  private def verifyRecommendedShuffleManagerVersion(
-                                                      autoTuner: AutoTuner,
-                                                      expectedSmVersion: String): Unit = {
-    autoTuner.getShuffleManagerClassName match {
-      case Right(smClassName) =>
-        assert(smClassName == ProfilingAutoTunerHelper
-          .buildShuffleManagerClassName(expectedSmVersion))
-      case Left(comment) =>
-        fail(s"Expected valid RapidsShuffleManager but got comment: $comment")
-    }
-  }
-
   val dbPlatform: Platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS)
   dbPlatform.supportedShuffleManagerVersionMap.foreach { case (dbVersion, smVersion) =>
     test(s"test shuffle manager version for supported databricks version - $dbVersion") {
@@ -2365,22 +2381,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
     val autoTuner = buildAutoTunerForTests(infoProvider, PlatformFactory.createInstance())
     // Assert shuffle manager string for supported custom Spark v3.3.0
     verifyRecommendedShuffleManagerVersion(autoTuner, expectedSmVersion = "330")
-  }
-
-  /**
-   * Helper method to verify that the shuffle manager version is not recommended
-   * for the unsupported Spark version.
-   */
-  private def verifyUnsupportedSparkVersionForShuffleManager(
-                                                              autoTuner: AutoTuner,
-                                                              sparkVersion: String): Unit = {
-    autoTuner.getShuffleManagerClassName match {
-      case Right(smClassName) =>
-        fail(s"Expected error comment but got valid RapidsShuffleManager: $smClassName")
-      case Left(comment) =>
-        assert(comment == shuffleManagerCommentForUnsupportedVersion(sparkVersion,
-          autoTuner.platform))
-    }
   }
 
   test("test shuffle manager version for unsupported databricks version") {
@@ -3179,12 +3179,8 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
             |
             |Comments:
             |- 'spark.executor.instances' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
-            |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
             |- 'spark.rapids.sql.batchSizeBytes' was not set.
-            |- 'spark.rapids.sql.concurrentGpuTasks' was not set.
             |- 'spark.rapids.sql.enabled' was not set.
-            |- 'spark.rapids.sql.multiThreadedRead.numThreads' was not set.
             |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
             |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
             |- ${notEnoughMemCommentForKey("spark.executor.memory")}

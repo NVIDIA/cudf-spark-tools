@@ -157,7 +157,7 @@ class SingleAppSummaryInfoProvider(
   }
 
   override def getAllProperties: Map[String, String] = {
-    app.sparkProps.collect {
+    (app.sparkProps ++ app.rapidsProps).collect {
       case entry: RapidsPropertyProfileResult if entry.rows(1) != null =>
         entry
     }.map(r => r.key -> r.rows(1)).toMap

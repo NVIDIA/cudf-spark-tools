@@ -16,13 +16,17 @@
 
 package com.nvidia.spark.rapids.tool.qualification
 
+import java.nio.file.{Files, Paths}
+import java.time.LocalDateTime
+
 import com.nvidia.spark.rapids.BaseNoSparkSuite
-import com.nvidia.spark.rapids.tool.{PlatformNames, StatusReportCounts, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.qualification.checkers.{QToolOutFileCheckerImpl, QToolOutJsonFileCheckerImpl, QToolResultCoreChecker, QToolStatusChecker, QToolTestCtxtBuilder}
 import org.json4s.DefaultFormats
 import org.json4s.jackson.JsonMethods
 import org.scalatest.matchers.should.Matchers._
 
+import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{SourceClusterInfo, ToolUtils}
 import org.apache.spark.sql.rapids.tool.util.UTF8Source
 
@@ -353,6 +357,47 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
           .withTableLabel("perSqlCSVReport")
           .withExpectedLoc(expectedQualLoc(expectedLabel)))
       .build()
+  }
+
+  test("db event log rolling with a rolled file dated after the current file") {
+    // The rolled file names carry the rotation time; the current file has no stamp and is dated
+    // when the directory is read. A rolled stamp later than that moment (a rotation shortly
+    // before the run, read from a machine whose local clock is behind the stamp's zone) must
+    // still sort before the current file, or the events replay out of order and every SQL
+    // spanning the rotation loses its duration. The copy renames the rolled file to a
+    // far-future stamp and expects the same output as the original fixture.
+    val srcDir = Paths.get(qualEventLog("db_sim_eventlog"))
+    val expectedLabel = "db_eventlog_rolling"
+    TrampolineUtil.withTempDir { tempDir =>
+      Files.copy(srcDir.resolve("eventlog"), Paths.get(tempDir.getAbsolutePath, "eventlog"))
+      Files.copy(srcDir.resolve("eventlog-2021-06-15--15-00.gz"),
+        Paths.get(tempDir.getAbsolutePath, "eventlog-2099-12-31--23-59.gz"))
+      QToolTestCtxtBuilder(eventlogs = Array(tempDir.getAbsolutePath))
+        .withPerSQL()
+        .withChecker(
+          QToolStatusChecker("Check that the app should succeed")
+            .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
+        .withChecker(
+          QToolResultCoreChecker("check app count is valid and status is success")
+            .withExpectedSize(1)
+            .withSuccessCode())
+        .withChecker(
+          QToolOutFileCheckerImpl("check the core app summaries has valid data")
+            .withExpectedRows("expect only 1 row", 1)
+            .withExpectedLoc(expectedQualLoc(expectedLabel)))
+        .withChecker(
+          QToolOutFileCheckerImpl("Per-SQL table content")
+            .withTableLabel("perSqlCSVReport")
+            .withExpectedLoc(expectedQualLoc(expectedLabel)))
+        .build()
+    }
+  }
+
+  test("the undated current db event log is dated after every rolled file") {
+    val current = EventLogPathProcessor.getDBEventLogFileDate("eventlog")
+    val rolled = EventLogPathProcessor.getDBEventLogFileDate("eventlog-2099-12-31--23-59.gz")
+    assert(current == LocalDateTime.MAX)
+    assert(rolled.isBefore(current))
   }
 
   runConditionalTest("nds q86 with failure test",

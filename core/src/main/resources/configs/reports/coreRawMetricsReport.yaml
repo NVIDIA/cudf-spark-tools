@@ -875,8 +875,9 @@ reportDefinitions:
       - label: coreRawGpuStageLevelAggregatedTaskMetricsCSV
         description: >-
           GPU task metric aggregations at stage level. Long-format: one row per
-          (stageId, metricName). Discovered from configs/metrics/metricCatalog.yaml, plus the
-          legacy name prefixes gpu and perfio. and the literal
+          (stageId, metricName). A metric is reported when configs/metrics/metricCatalog.yaml
+          declares it in the GPU family, or, if the catalog does not declare it at all, when its
+          name carries the legacy gpu or perfio. prefix or is the literal
           multithreadReaderMaxParallelism, so a metric added after a tools release is still
           reported.
         fileName: gpu_stage_level_aggregated_task_metrics.csv
@@ -903,19 +904,55 @@ reportDefinitions:
           - name: sum
             dataType: Long
             description: >-
-              Total across tasks in the stage. Empty for max-aggregated metrics.
+              Total published for the stage. Task updates accumulate into it, and a stage
+              completion event raises it to its own value when that is larger, so a completion
+              value seen before the task updates is added to rather than replaced by them.
+              Empty for max-aggregated metrics.
           - name: max
             dataType: Double
             description: >-
-              Peak per-task value in the stage.
+              Largest value any reporting task attempt produced in the stage. Empty when no
+              attempt reported the metric.
           - name: avg
             dataType: Double
             description: >-
-              Arithmetic mean, over the tasks that reported this metric, of each task's
-              reported value. Computed once as total over count, so it is not the rolling
-              mean the accumulator store maintains. Populated for max-aggregated metrics
-              too; sum stays empty for those, because adding per-task peaks is meaningless
-              when the peaks never coexist.
+              Arithmetic mean, over the attempts that reported this metric, of each
+              attempt's reported value: their updates divided by sampleCount. Neither the
+              rolling mean the accumulator store maintains nor sum over sampleCount, since sum
+              also carries any value the stage completion event published. Populated for
+              max-aggregated metrics too; sum stays empty for those, because adding per-attempt
+              peaks is meaningless when the peaks never coexist. Rounded to 2 decimal places.
+          - name: sampleCount
+            dataType: Long
+            description: >-
+              Number of task attempts in the stage that reported this metric. At most numTasks
+              and often far below it, because a GPU accumulator only appears on attempts that
+              touched it. A retried task contributes one sample per attempt that reported.
+              avg, min, stddev, cv and maxOverMean describe those attempts; sum can
+              additionally carry a value the stage completion event published.
+          - name: min
+            dataType: Double
+            description: >-
+              Smallest value any reporting task attempt produced. Empty when no attempt
+              reported the metric.
+          - name: stddev
+            dataType: Double
+            description: >-
+              Sample standard deviation of the per-attempt values, over sampleCount minus one.
+              Empty below two reporting attempts, where dispersion is undefined. Rounded to 2
+              decimal places.
+          - name: cv
+            dataType: Double
+            description: >-
+              Coefficient of variation, stddev over avg. Dimensionless, so it compares across
+              metrics and across applications. Empty below two reporting attempts, and when avg
+              is zero.
+          - name: maxOverMean
+            dataType: Double
+            description: >-
+              Peak over avg. A value near 1 means the reporting attempts were alike; a large
+              value means one attempt dominated the stage. Empty when avg is zero or no attempt
+              reported the metric.
       - label: coreRawGpuSqlLevelAggregatedTaskMetricsCSV
         description: >-
           GPU task metric aggregations at SQL level. Rolls up stage-level GPU
@@ -946,14 +983,46 @@ reportDefinitions:
           - name: max
             dataType: Double
             description: >-
-              Max of stage maxes.
+              Largest of the stage maxima. Empty when no attempt reported the metric.
           - name: avg
             dataType: Double
             description: >-
-              Arithmetic mean over every task in the SQL that reported this metric, pooled
-              across stages as total over count rather than by re-averaging stage means.
-              Populated for max-aggregated metrics too; sum stays empty for those, because
-              adding per-task peaks is meaningless when the peaks never coexist.
+              Arithmetic mean over every attempt in the SQL that reported this metric: their
+              updates pooled across stages, divided by sampleCount, rather than a re-average of
+              stage means. Not sum over sampleCount, since sum also carries any value the stage
+              completion events published. Populated for max-aggregated metrics too; sum stays
+              empty for those, because adding per-attempt peaks is meaningless when the peaks never
+              coexist. Rounded to 2 decimal places.
+          - name: sampleCount
+            dataType: Long
+            description: >-
+              Number of task attempts across the SQL that reported this metric. A GPU
+              accumulator only appears on attempts that touched it, so this is often well below
+              the task count, and a retried task contributes one sample per reporting attempt.
+              avg, min, stddev, cv and maxOverMean describe those attempts; sum can additionally
+              carry a value the stage completion events published.
+          - name: min
+            dataType: Double
+            description: >-
+              Smallest value any reporting task attempt produced. Empty when no attempt
+              reported the metric.
+          - name: stddev
+            dataType: Double
+            description: >-
+              Sample standard deviation of the per-attempt values, pooled so that the spread
+              between stages counts toward it rather than being averaged away. It describes the
+              combined population: when stages run at different levels, the gap between them
+              widens it. Empty below two reporting attempts. Rounded to 2 decimal places.
+          - name: cv
+            dataType: Double
+            description: >-
+              Coefficient of variation, stddev over avg. Dimensionless, so it compares across
+              metrics and applications. Empty below two reporting attempts, and when avg is zero.
+          - name: maxOverMean
+            dataType: Double
+            description: >-
+              Peak over avg. Near 1 means the reporting attempts were alike; a large value means one
+              attempt dominated. Empty when avg is zero or no attempt reported the metric.
       - label: coreRawGpuAppLevelAggregatedTaskMetricsCSV
         description: >-
           GPU task metric aggregations at application level. One row per
@@ -984,14 +1053,47 @@ reportDefinitions:
           - name: max
             dataType: Double
             description: >-
-              Overall peak reading any task produced during the run.
+              Overall peak reading any task attempt produced during the run. Empty when no
+              attempt reported the metric.
           - name: avg
             dataType: Double
             description: >-
-              Arithmetic mean over every task in the app that reported this metric, pooled
-              across stages as total over count rather than by re-averaging stage means.
-              Populated for max-aggregated metrics too; sum stays empty for those, because
-              adding per-task peaks is meaningless when the peaks never coexist.
+              Arithmetic mean over every attempt in the app that reported this metric: their
+              updates pooled across stages, divided by sampleCount, rather than a re-average of
+              stage means. Not sum over sampleCount, since sum also carries any value the stage
+              completion events published. Populated for max-aggregated metrics too; sum stays
+              empty for those, because adding per-attempt peaks is meaningless when the peaks never
+              coexist. Rounded to 2 decimal places.
+          - name: sampleCount
+            dataType: Long
+            description: >-
+              Number of task attempts across the application that reported this metric. A GPU
+              accumulator only appears on attempts that touched it, so this is often well below
+              the task count, and a retried task contributes one sample per reporting attempt.
+              avg, min, stddev, cv and maxOverMean describe those attempts; sum can additionally
+              carry a value the stage completion events published.
+          - name: min
+            dataType: Double
+            description: >-
+              Smallest value any reporting task attempt produced. Empty when no attempt
+              reported the metric.
+          - name: stddev
+            dataType: Double
+            description: >-
+              Sample standard deviation of the per-attempt values, pooled so that the spread
+              between stages counts toward it rather than being averaged away. It describes the
+              combined population: when stages run at different levels, the gap between them
+              widens it. Empty below two reporting attempts. Rounded to 2 decimal places.
+          - name: cv
+            dataType: Double
+            description: >-
+              Coefficient of variation, stddev over avg. Dimensionless, so it compares across
+              metrics and applications. Empty below two reporting attempts, and when avg is zero.
+          - name: maxOverMean
+            dataType: Double
+            description: >-
+              Peak over avg. Near 1 means the reporting attempts were alike; a large value means one
+              attempt dominated. Empty when avg is zero or no attempt reported the metric.
       # AccumProfileResults
       - label: coreRawStageLevelAllMetricsCSV
         description: >-

@@ -1,6 +1,34 @@
 
 <br/>
 
+## Release [v26.08.2](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.08.2)
+Generated on 2026-09-15
+### Autotuner
+
+- Fix profiling AutoTuner RAPIDS property lookup ([#2152](https://github.com/NVIDIA/cudf-spark-tools/pull/2152))
+
+### API Change
+
+- Report per-stage distribution statistics for GPU task metrics ([#2146](https://github.com/NVIDIA/cudf-spark-tools/pull/2146))
+
+### Bug Fixes
+
+- Fix duration minimum for zero-task stages ([#2154](https://github.com/NVIDIA/cudf-spark-tools/pull/2154))
+
+### User Tools
+
+- Handle a zero-worker Databricks cluster in _init_nodes ([#2148](https://github.com/NVIDIA/cudf-spark-tools/pull/2148))
+
+### Core
+
+- Add spill-memory reservation control ([#2163](https://github.com/NVIDIA/cudf-spark-tools/pull/2163))
+- Read the current Databricks event log last in every time zone ([#2149](https://github.com/NVIDIA/cudf-spark-tools/pull/2149))
+- Add Databricks 14.3 and 17.3 to the AutoTuner shuffle manager map ([#2150](https://github.com/NVIDIA/cudf-spark-tools/pull/2150))
+- Weight stage duration average by task count ([#2147](https://github.com/NVIDIA/cudf-spark-tools/pull/2147))
+
+
+<br/>
+
 ## Release [v26.08.1](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.08.1)
 Generated on 2026-09-08
 - no changes

@@ -1092,6 +1092,18 @@ abstract class AutoTuner(
     notEnoughMemComment(minTotalExecMemRequired)
   }
 
+  private lazy val reserveSpillMemory: Boolean = {
+    val configuredValue = configProvider.getEntry("RESERVE_SPILL_MEMORY").getDefault.trim
+    configuredValue.toLowerCase match {
+      case "true" => true
+      case "false" => false
+      case _ =>
+        logWarning(s"Invalid value '$configuredValue' for tuning policy " +
+          "'RESERVE_SPILL_MEMORY'; using default 'true'")
+        true
+    }
+  }
+
   // scalastyle:off line.size.limit
   /**
    * Calculates recommended memory settings for a Spark executor container.
@@ -1197,11 +1209,16 @@ abstract class AutoTuner(
     val execMemLeft = totalMemMinusReserved - executorHeapMB - sparkOffHeapMemMB - pySparkMemMB
     val defaultPinnedMem = configProvider.getEntry("PINNED_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
     val defaultSpillMem = configProvider.getEntry("SPILL_MEMORY").getDefaultAsMemory(ByteUnit.MiB)
+    val spillFloor = if (reserveSpillMemory) {
+      defaultSpillMem
+    } else {
+      baselineMemorySettings.spillMem.getOrElse(0L)
+    }
     val minOverhead: Long = baselineMemorySettings.executorMemOverhead.getOrElse {
       if (useHostOffHeapLimitSizing) {
         executorMemOverhead
       } else {
-        executorMemOverhead + defaultPinnedMem + defaultSpillMem
+        executorMemOverhead + defaultPinnedMem + spillFloor
       }
     }
     logDebug(s"Memory calculations:  totalMemMinusReserved=$totalMemMinusReserved MB, " +
@@ -1226,21 +1243,28 @@ abstract class AutoTuner(
         0L // Not used for CSP platforms or when offHeapLimit is disabled
       }
 
-      // Pinned memory calculation - use new formula for onPrem, original logic for CSP
+      // The host off-heap-limit path is independent of spill-reservation policy. Otherwise,
+      // either retain the legacy equal split or make the residual (less explicit spill) available
+      // to pinned memory.
+      val pinnedMemCap = configProvider.getEntry("PINNED_MEMORY").getMaxAsMemory(ByteUnit.MiB)
       var pinnedMem = baselineMemorySettings.pinnedMem.getOrElse {
         if (useHostOffHeapLimitSizing && hostOffHeapLimitSizeMB > 0) {
           // Use new formula for onPrem platform
           calculatePinnedMemorySize(numExecutorCores, hostOffHeapLimitSizeMB)
+        } else if (reserveSpillMemory) {
+          Math.min(pinnedMemCap, (execMemLeft - executorMemOverhead) / 2)
         } else {
-          // Use original logic for CSP platforms or when host off-heap limit calculation fails
-          Math.min(configProvider.getEntry("PINNED_MEMORY").getMaxAsMemory(ByteUnit.MiB),
-            (execMemLeft - executorMemOverhead) / 2)
+          val explicitSpillMem = baselineMemorySettings.spillMem.getOrElse(0L)
+          Math.min(pinnedMemCap,
+            Math.max(0L, execMemLeft - executorMemOverhead - explicitSpillMem))
         }
       }
       // Spill storage is set to the pinned size by default. Its not guaranteed to use just pinned
       // memory though so the size worst case would be doesn't use any pinned memory and uses
       // all off heap memory.
-      var spillMem = baselineMemorySettings.spillMem.getOrElse(pinnedMem)
+      var spillMem = baselineMemorySettings.spillMem.getOrElse {
+        if (reserveSpillMemory) pinnedMem else 0L
+      }
       var finalExecutorMemOverhead = baselineMemorySettings.executorMemOverhead.getOrElse {
         if (useHostOffHeapLimitSizing) {
           executorMemOverhead
@@ -1265,11 +1289,11 @@ abstract class AutoTuner(
         }
         // Else update pinned and spill memory to use default values
         pinnedMem = defaultPinnedMem
-        spillMem = defaultSpillMem
+        spillMem = if (reserveSpillMemory) defaultSpillMem else 0L
         finalExecutorMemOverhead = if (useHostOffHeapLimitSizing) {
           executorMemOverhead
         } else {
-          executorMemOverhead + defaultPinnedMem + defaultSpillMem
+          executorMemOverhead + defaultPinnedMem + spillMem
         }
       }
       // Normal sizing includes pinned and spill pools in container overhead. Specialized sizing

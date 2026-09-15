@@ -11,6 +11,10 @@ Please refer to [Qualification tool documentation](https://docs.nvidia.com/spark
 and [Profiling tool documentation](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/overview.html)
 for more details on how to use the tools.
 
+## Developer documentation
+
+The [AutoTuner heuristics](docs/autotuner/README.md) documentation explains how individual recommendations resolve application evidence, prospective target configuration, and runtime capabilities.
+
 ## Build
 
 We use [Maven](https://maven.apache.org) for the build. Simply run as below command:

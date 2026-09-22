@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,8 +31,8 @@ import org.json4s.jackson.JsonMethods.parse
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution
 import org.apache.spark.sql.rapids.tool.{AppBase, UnsupportedMetricNameException}
+import org.apache.spark.sql.rapids.tool.util.stubs.{EnclosingClusterPolicy, SparkPlanInfo}
 import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanExtensions.UpStreamSparkPlanInfoOps
-import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanInfo
 import org.apache.spark.sql.rapids.tool.util.stubs.db.PhotonSparkPlanInfo
 
 
@@ -61,6 +61,9 @@ object PhotonOssOpMapper extends OssOpMapperFromFileTrait {
   /** Pattern matching Photon operators: "Photon" followed by any alphabetic characters */
   private val PHOTON_PATTERN: Regex = "Photon[A-Z][a-zA-Z]+".r
 
+  /** Photon operators that must be constructed outside an active enclosing cluster. */
+  private[tool] val CLUSTER_BOUNDARY_OPERATORS = Set("PhotonShuffleExchangeSource")
+
   /** Directory containing Photon operator mapping files */
   private val OPS_MAPPING_DIR = "parser/photon"
 
@@ -71,8 +74,22 @@ object PhotonOssOpMapper extends OssOpMapperFromFileTrait {
   override def mappingFilePath: String =
     Paths.get(OPS_MAPPING_DIR, DEFAULT_OPS_MAPPING_FILE).toString
 
+  private def findPhotonOperator(inputStr: String): Option[String] = {
+    PHOTON_PATTERN.findFirstIn(inputStr)
+  }
+
   /** Checks if a node name matches the Photon operator pattern */
-  def isPhotonNode(nodeName: String): Boolean = PHOTON_PATTERN.findFirstIn(nodeName).isDefined
+  def isPhotonNode(nodeName: String): Boolean = findPhotonOperator(nodeName).isDefined
+
+  override def enclosingClusterPolicy(
+      planInfo: execution.SparkPlanInfo): EnclosingClusterPolicy = {
+    findPhotonOperator(planInfo.nodeName) match {
+      case Some(operator) if CLUSTER_BOUNDARY_OPERATORS.contains(operator) =>
+        EnclosingClusterPolicy.Break
+      case _ =>
+        super.enclosingClusterPolicy(planInfo)
+    }
+  }
 
   /**
    * Creates a PhotonSparkPlanInfo preserving both Photon and OSS representations.
@@ -89,7 +106,8 @@ object PhotonOssOpMapper extends OssOpMapperFromFileTrait {
       sparkDesc = ossPlanDesc,
       children = planInfo.children.map(_.asPlatformAware(app)),
       metadata = planInfo.metadata,
-      metrics = planInfo.metrics)
+      metrics = planInfo.metrics,
+      enclosingClusterPolicy = enclosingClusterPolicy(planInfo))
   }
 
   /**

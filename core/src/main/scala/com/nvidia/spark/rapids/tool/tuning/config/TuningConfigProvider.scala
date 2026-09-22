@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,13 +35,19 @@ import scala.jdk.CollectionConverters._
  * @param rawConfig The raw tuning configuration loaded from YAML files, containing
  *                  default, qualification, and profiling configuration lists
  */
-abstract class TuningConfigProvider(rawConfig: TuningConfiguration) {
+abstract class TuningConfigProvider(
+    rawConfig: TuningConfiguration,
+    private val userProvidedConfig: Option[TuningConfiguration]) {
 
   /**
    * Tool-specific configuration overrides. Subclasses must define which override list
    * to use (qualification or profiling).
    */
   protected val toolOverrides: util.List[TuningConfigEntry]
+
+  /** Returns the tool-specific entries from a user-provided configuration. */
+  protected def getUserProvidedToolOverrides(
+      config: TuningConfiguration): util.List[TuningConfigEntry]
 
   /**
    * Cached lookup map for fast configuration entry retrieval by name.
@@ -62,6 +68,59 @@ abstract class TuningConfigProvider(rawConfig: TuningConfiguration) {
   @throws[java.util.NoSuchElementException]
   def getEntry(key: String): TuningConfigEntry = {
     tuningConfigsMap(key)
+  }
+
+  private def getEntryField(
+      entries: util.List[TuningConfigEntry],
+      key: String,
+      fieldValue: TuningConfigEntry => String): Option[String] = {
+    Option(entries).toSeq.flatMap(_.asScala)
+      .find(_.name == key)
+      .flatMap(entry => Option(fieldValue(entry)).filter(_.nonEmpty))
+  }
+
+  /**
+   * Returns the final field value only when its active value came from the user configuration.
+   * A user tool-specific field has highest precedence. A shipped tool-specific field masks the
+   * same field from a user default entry.
+   */
+  private def getActiveUserProvidedField(
+      key: String,
+      fieldValue: TuningConfigEntry => String): Option[String] = {
+    userProvidedConfig.flatMap { config =>
+      val userToolValue = getEntryField(
+        getUserProvidedToolOverrides(config), key, fieldValue)
+      val activeToolValue = getEntryField(toolOverrides, key, fieldValue)
+      val userDefaultValue = getEntryField(config.default, key, fieldValue)
+      val userOwnsActiveValue = userToolValue.isDefined ||
+        (activeToolValue.isEmpty && userDefaultValue.isDefined)
+      if (userOwnsActiveValue) {
+        Option(fieldValue(getEntry(key))).filter(_.nonEmpty)
+      } else {
+        None
+      }
+    }
+  }
+
+  /** Returns the active default only when the user explicitly supplied it. */
+  def getUserProvidedDefault(key: String): Option[String] = {
+    getActiveUserProvidedField(key, _.default)
+  }
+
+  /** Returns whether the user explicitly supplied the active default value for an entry. */
+  def isDefaultValueUserProvided(key: String): Boolean = {
+    getUserProvidedDefault(key).isDefined
+  }
+
+  /**
+   * Returns the final maximum only when the active user configuration explicitly supplied it.
+   * A shipped maximum is intentionally not returned, even when it has the same value.
+   *
+   * @param key The configuration entry name
+   * @return The merged maximum when it came from the user configuration, otherwise None
+   */
+  def getUserProvidedMax(key: String): Option[String] = {
+    getActiveUserProvidedField(key, _.max)
   }
 
   /**
@@ -98,10 +157,14 @@ abstract class TuningConfigProvider(rawConfig: TuningConfiguration) {
  *                  and profiling configuration lists
  */
 class ProfTuningConfigProvider(
-    rawConfig: TuningConfiguration
-) extends TuningConfigProvider(rawConfig) {
+    rawConfig: TuningConfiguration,
+    userProvidedConfig: Option[TuningConfiguration] = None
+) extends TuningConfigProvider(rawConfig, userProvidedConfig) {
   /** Returns the profiling-specific configuration overrides */
   override protected lazy val toolOverrides: util.List[TuningConfigEntry] = rawConfig.profiling
+
+  override protected def getUserProvidedToolOverrides(
+      config: TuningConfiguration): util.List[TuningConfigEntry] = config.profiling
 }
 
 /**
@@ -115,10 +178,14 @@ class ProfTuningConfigProvider(
  *                  and profiling configuration lists
  */
 class QualTuningConfigProvider(
-  rawConfig: TuningConfiguration
-) extends TuningConfigProvider(rawConfig) {
+    rawConfig: TuningConfiguration,
+    userProvidedConfig: Option[TuningConfiguration] = None
+) extends TuningConfigProvider(rawConfig, userProvidedConfig) {
   /** Returns the qualification-specific configuration overrides */
   override protected lazy val toolOverrides: util.List[TuningConfigEntry] = rawConfig.qualification
+
+  override protected def getUserProvidedToolOverrides(
+      config: TuningConfiguration): util.List[TuningConfigEntry] = config.qualification
 }
 
 /**
@@ -215,9 +282,9 @@ object TuningConfigProvider {
     def build[T <: TuningConfigProvider](implicit tag: scala.reflect.ClassTag[T]): T = {
       tag.runtimeClass match {
         case c if c == classOf[QualTuningConfigProvider] =>
-          new QualTuningConfigProvider(finalConfigs).asInstanceOf[T]
+          new QualTuningConfigProvider(finalConfigs, userProvidedConfig).asInstanceOf[T]
         case c if c == classOf[ProfTuningConfigProvider] =>
-          new ProfTuningConfigProvider(finalConfigs).asInstanceOf[T]
+          new ProfTuningConfigProvider(finalConfigs, userProvidedConfig).asInstanceOf[T]
         case _ =>
           throw new IllegalArgumentException(
             s"Unsupported TuningConfigProvider type: ${tag.runtimeClass.getName}. " +

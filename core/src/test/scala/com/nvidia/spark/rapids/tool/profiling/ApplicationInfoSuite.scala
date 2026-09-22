@@ -33,6 +33,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.sql.{SparkSession, TrampolineUtil}
 import org.apache.spark.sql.rapids.tool.UnsupportedSparkRuntimeException
+import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphCluster => ToolsSparkPlanGraphCluster}
 import org.apache.spark.sql.rapids.tool.profiling._
 import org.apache.spark.sql.rapids.tool.util.{FSUtils, SparkRuntime}
 
@@ -618,6 +619,57 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
     assert(lastRow.parent === "WholeStageCodegen (3)")
     assert(lastRow.child === "SerializeFromObject")
     assert(lastRow.childNodeID === 19)
+  }
+
+  test("test photon wholeStage mapping excludes shuffle sources") {
+    val args = Array(
+      "--platform",
+      PlatformNames.DATABRICKS_AWS,
+      s"$qualLogDir/nds_q88_photon_db_13_3.zstd")
+    val apps = ToolTestUtils.processProfileApps(args, sparkSession)
+    assert(apps.size == 1)
+
+    val wholeStageMapping = new CollectInformation(apps.toSeq).getWholeStageCodeGenMapping
+    val expectedWholeStageMapping = apps.flatMap { app =>
+      app.sqlManager.applyToAllPlanModels { planModel =>
+        planModel.getToolsPlanGraph.nodes.collect {
+          case cluster: ToolsSparkPlanGraphCluster =>
+            cluster.nodes.map { child =>
+              (planModel.id, cluster.id, cluster.name, child.name, child.id)
+            }
+        }.flatten
+      }.flatten
+    }.toSeq
+    val actualWholeStageMapping = wholeStageMapping.map { row =>
+      (row.sqlID, row.nodeID, row.parent, row.child, row.childNodeID)
+    }
+    def toMultiset(
+        rows: Seq[(Long, Long, String, String, Long)]): Map[
+          (Long, Long, String, String, Long), Int] = {
+      rows.groupBy(identity).map { case (row, copies) => row -> copies.size }
+    }
+    assert(toMultiset(actualWholeStageMapping) == toMultiset(expectedWholeStageMapping),
+      "profiling WholeStage mappings do not match graph cluster memberships")
+    val nodePlatformNames = apps.flatMap { app =>
+      app.sqlManager.applyToAllPlanModels { planModel =>
+        planModel.getToolsPlanGraph.allNodes.map { node =>
+          (planModel.id, node.id) -> node.platformName
+        }
+      }.flatten
+    }.toMap
+
+    assert(wholeStageMapping.size == 175,
+      s"expected 175 profiling WholeStage mappings, found ${wholeStageMapping.size}")
+    val unresolvedMappings = wholeStageMapping.filterNot { row =>
+      nodePlatformNames.contains((row.sqlID, row.childNodeID))
+    }
+    assert(unresolvedMappings.isEmpty,
+      s"profiling WholeStage mappings contain unresolved children: $unresolvedMappings")
+    val sourceMappings = wholeStageMapping.filter { row =>
+      nodePlatformNames.get((row.sqlID, row.childNodeID)).contains("PhotonShuffleExchangeSource")
+    }
+    assert(sourceMappings.isEmpty,
+      s"profiling WholeStage mappings contain Photon shuffle sources: $sourceMappings")
   }
 
 

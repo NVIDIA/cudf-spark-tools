@@ -36,6 +36,7 @@ def sanitize_string:
   gsub("/Workspace/Repos/\\.internal/[^ \\t\\r\\n\"]+"; "/Workspace/Repos/REDACTED")
   | gsub("abfss://[^ \\t\\r\\n\",)]+"; "abfss://REDACTED")
   | gsub("dbfs:/[^ \\t\\r\\n\",)]+"; "dbfs:/REDACTED")
+  | gsub("s3://[^ \\t\\r\\n\\\",)\\]]+"; "s3://dummy-s3-bucket/REDACTED")
   | gsub("https?://[^ \\t\\r\\n\",)]+"; "https://REDACTED")
   | gsub("([0-9]{1,3}\\.){3}[0-9]{1,3}"; "192.0.2.1")
   | gsub("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";

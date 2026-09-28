@@ -16,12 +16,13 @@
 
 package com.nvidia.spark.rapids.tool.profiling
 
-import java.io.File
+import java.io.{File, FileInputStream}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths, StandardOpenOption}
 
 import scala.collection.mutable.ArrayBuffer
 
+import com.github.luben.zstd.ZstdInputStream
 import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformFactory, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 import org.apache.hadoop.conf.Configuration
@@ -35,7 +36,7 @@ import org.apache.spark.sql.{SparkSession, TrampolineUtil}
 import org.apache.spark.sql.rapids.tool.UnsupportedSparkRuntimeException
 import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphCluster => ToolsSparkPlanGraphCluster}
 import org.apache.spark.sql.rapids.tool.profiling._
-import org.apache.spark.sql.rapids.tool.util.{FSUtils, SparkRuntime}
+import org.apache.spark.sql.rapids.tool.util.{FSUtils, SparkRuntime, UTF8Source}
 
 class ApplicationInfoSuite extends AnyFunSuite with Logging {
 
@@ -180,6 +181,32 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
     assert(app.getSkippedLinesCount == 3333L)
     assert(app.sqlIdToInfo.size == 25)
     assert(app.jobIdToInfo.size == 57)
+  }
+
+  test("Databricks 17.3 fixtures contain only synthetic S3 paths") {
+    val syntheticS3Path = "s3://dummy-s3-bucket/REDACTED"
+    val fixtures = Seq(
+      s"$qualLogDir/nds_q88_photon_db_17_3.zstd",
+      s"$logDir/nds_q88_gpu_db_17_3.zstd")
+
+    fixtures.foreach { fixture =>
+      val source = UTF8Source.fromInputStream(
+        new ZstdInputStream(new FileInputStream(fixture)))
+      try {
+        var foundSyntheticPath = false
+        source.getLines().foreach { line =>
+          if (line.contains(syntheticS3Path)) {
+            foundSyntheticPath = true
+          }
+          assert(!line.replace(syntheticS3Path, "").contains("s3://"),
+            s"found an unredacted S3 URI in ${new File(fixture).getName}")
+        }
+        assert(foundSyntheticPath,
+          s"expected synthetic S3 paths in ${new File(fixture).getName}")
+      } finally {
+        source.close()
+      }
+    }
   }
 
   test("test sql and resourceprofile eventlog") {

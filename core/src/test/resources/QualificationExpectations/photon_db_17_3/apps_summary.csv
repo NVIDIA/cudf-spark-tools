@@ -1,2 +1,2 @@
 App Name,App ID,Attempt ID,App Duration,Executor CPU Time Percent,SQL Ids with Failures,Unsupported Read File Formats and Types,Unsupported Write Data Format,Complex Types,Nested Complex Types,Potential Problems,Longest SQL Duration,SQL Stage Durations Sum,App Duration Estimated,Total Core Seconds
-"Databricks Shell",app-20260922002229-0000,1,215174,85.22,"","","","","","",66469,304857,true,12616
+"Databricks Shell",app-20260929185104-0000,1,748297,62.24,"","","UNKNOWN","","","",422652,772195,true,47077

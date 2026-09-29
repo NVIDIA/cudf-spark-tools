@@ -23,22 +23,21 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 import scala.collection.mutable.ArrayBuffer
 
 import com.github.luben.zstd.ZstdInputStream
+import com.nvidia.spark.rapids.BaseNoSparkSuite
 import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformFactory, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.IOUtils
-import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks._
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.sql.{SparkSession, TrampolineUtil}
-import org.apache.spark.sql.rapids.tool.UnsupportedSparkRuntimeException
+import org.apache.spark.sql.rapids.tool.{ToolUtils, UnsupportedSparkRuntimeException}
 import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphCluster => ToolsSparkPlanGraphCluster}
 import org.apache.spark.sql.rapids.tool.profiling._
 import org.apache.spark.sql.rapids.tool.util.{FSUtils, SparkRuntime, UTF8Source}
 
-class ApplicationInfoSuite extends AnyFunSuite with Logging {
+class ApplicationInfoSuite extends BaseNoSparkSuite {
 
   lazy val sparkSession: SparkSession = {
     SparkSession
@@ -152,7 +151,10 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
     assert(apps.head.attemptId == 1)
   }
 
-  test("profile Databricks 17.3 RAPIDS GPU eventlog") {
+  runConditionalTest(
+    "profile Databricks 17.3 RAPIDS GPU eventlog",
+    () => (ToolUtils.isSpark340OrLater(),
+      "DBR 17.3 event-log coverage requires Spark 3.4+")) {
     val eventLog = s"$logDir/nds_q88_gpu_db_17_3.zstd"
 
     TrampolineUtil.withTempDir { outputDir =>
@@ -186,7 +188,7 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
   test("Databricks 17.3 fixtures contain only synthetic S3 paths") {
     val syntheticS3Path = "s3://dummy-s3-bucket/REDACTED"
     val fixtures = Seq(
-      s"$qualLogDir/nds_q88_photon_db_17_3.zstd",
+      s"$qualLogDir/nds_merge_q4_photon_db_17_3.zstd",
       s"$logDir/nds_q88_gpu_db_17_3.zstd")
 
     fixtures.foreach { fixture =>

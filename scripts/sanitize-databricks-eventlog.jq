@@ -13,12 +13,12 @@
 # limitations under the License.
 #
 # Usage:
-#   jq --arg fixture_id db173-q88-fixture -c \
+#   jq --arg fixture_id db173-photon-merge-fixture -c \
 #     -f scripts/sanitize-databricks-eventlog.jq EVENTLOG \
 #     | zstd -19 -T0 -o SANITIZED_EVENTLOG.zstd
 #
-# This filter is shared by the DBR 17.3 Photon qualification fixture and the paired RAPIDS GPU
-# profiling fixture. It retains every event so the fixtures can detect event-parser drift.
+# This filter is shared by the DBR 17.3 Photon qualification fixture and the independent RAPIDS
+# GPU profiling fixture. It retains every event and redacts identifying fields in place.
 # Review every generated fixture for sensitive fields because future event types may require
 # additional sanitization rules.
 #
@@ -33,7 +33,7 @@
 # clusterAllTags, clusterId, and clusterName in addition to runtime-specific properties.
 
 def sanitize_string:
-  gsub("/Workspace/Repos/\\.internal/[^ \\t\\r\\n\"]+"; "/Workspace/Repos/REDACTED")
+  gsub("/Workspace/[^ \\t\\r\\n\"]+"; "/Workspace/REDACTED")
   | gsub("abfss://[^ \\t\\r\\n\",)]+"; "abfss://REDACTED")
   | gsub("dbfs:/[^ \\t\\r\\n\",)]+"; "dbfs:/REDACTED")
   | gsub("s3://[^ \\t\\r\\n\\\",)\\]]+"; "s3://dummy-s3-bucket/REDACTED")
@@ -114,7 +114,13 @@ elif .Event == "SparkListenerTaskEnd" then
   # checked-in event log below the repository's per-file size limit without changing its reports.
   | .["Task Info"].Accumulables |=
       map(del(.Metadata, .["Count Failed Values"], .Internal, .Value))
-elif .Event == "SparkListenerTaskStart" then
+  # Exception messages embed storage paths and request details that the URI rules cannot match.
+  | if .["Task End Reason"].Reason == "ExceptionFailure" then
+      .["Task End Reason"].Description = "REDACTED"
+      | .["Task End Reason"]["Full Stack Trace"] =
+          "\(.["Task End Reason"]["Class Name"]): REDACTED"
+    else . end
+elif (.Event == "SparkListenerTaskStart" or .Event == "SparkListenerTaskGettingResult") then
   .["Task Info"].Host = "executor.example.invalid"
 else
   .

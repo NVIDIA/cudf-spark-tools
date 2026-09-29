@@ -16,21 +16,17 @@
 
 package com.nvidia.spark.rapids.tool
 
-import java.io.{File, FileInputStream, FilenameFilter, FileNotFoundException}
+import java.io.{File, FilenameFilter, FileNotFoundException}
 
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import com.github.luben.zstd.ZstdInputStream
 import com.nvidia.spark.rapids.tool.profiling.ProfileArgs
 import com.nvidia.spark.rapids.tool.qualification.QualOutputWriter
 import com.nvidia.spark.rapids.tool.tuning._
 import com.nvidia.spark.rapids.tool.tuning.config.{TuningConfigEntry, TuningConfiguration, TuningEntryDefinition}
 import org.apache.hadoop.fs.Path
-import org.json4s.JString
-import org.json4s.jackson.JsonMethods
 import org.yaml.snakeyaml.{DumperOptions, Yaml}
 
 import org.apache.spark.internal.Logging
@@ -38,7 +34,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession, TrampolineUtil}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.rapids.tool.ClusterSummary
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
-import org.apache.spark.sql.rapids.tool.util.{RapidsToolsConfUtil, UTF8Source}
+import org.apache.spark.sql.rapids.tool.util.RapidsToolsConfUtil
 import org.apache.spark.sql.types._
 
 object ToolTestUtils extends Logging {
@@ -68,25 +64,6 @@ object ToolTestUtils extends Logging {
 
   def getTestResourcePath(file: String): String = {
     getTestResourceFile(file).getCanonicalPath
-  }
-
-  def countEventTypesInZstdLog(compressedEventLog: String): Map[String, Long] = {
-    val counts = mutable.Map.empty[String, Long].withDefaultValue(0L)
-    val source = UTF8Source.fromInputStream(
-      new ZstdInputStream(new FileInputStream(compressedEventLog)))
-    try {
-      source.getLines().foreach { line =>
-        val eventType = JsonMethods.parse(line) \ "Event" match {
-          case JString(value) => value
-          case _ =>
-            throw new IllegalArgumentException("Event-log line is missing its Event field")
-        }
-        counts.update(eventType, counts(eventType) + 1L)
-      }
-    } finally {
-      source.close()
-    }
-    counts.toMap
   }
 
   def runAndCollect(appName: String)

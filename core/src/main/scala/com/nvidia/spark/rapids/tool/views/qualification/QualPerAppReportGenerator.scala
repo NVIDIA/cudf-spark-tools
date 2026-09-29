@@ -163,7 +163,7 @@ class AppQualExecTable(
           if (info.duration.isDefined) info.duration.get.toString else zeroDurationStr,
           info.nodeId.toString,
           if (info.isSupported) booleanTrue else booleanFalse,
-          formatStr(info.stages.mkString(":")),
+          formatStr(info.stages.toSeq.sorted.mkString(":")),
           childrenExecsStr,
           nodeIdsStr,
           if (info.shouldRemove) booleanTrue else booleanFalse,

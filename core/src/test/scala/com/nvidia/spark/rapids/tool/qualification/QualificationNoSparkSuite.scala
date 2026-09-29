@@ -830,7 +830,7 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   // The fixture is an NDS Delta MERGE (merge.tpl query 4) whose write path uses Photon nodes that
   // databricks-13_3.json does not map (#2158). The expected set pins that gap; #2159 and a
   // PhotonClustering mapping should shrink it. Its Photon metric labels are parsed, but their
-  // meanings and units are not validated (follow-up: #TBD).
+  // meanings and units are not validated (#2175).
   runConditionalTest(
     "Databricks 17.3 Photon qualification baseline",
     () => (ToolUtils.isSpark340OrLater(),

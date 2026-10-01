@@ -307,6 +307,149 @@
           "value": "TNEW"
         }
       ]
+    },
+    {
+      "Expression": "ArrayAggregate",
+      "Context": "project",
+      "Params": "zero",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "ArrayAggregate",
+      "Context": "project",
+      "Params": "result",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "ArrayAggregate",
+      "Context": "project",
+      "Params": "finish",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "ArrayAggregate",
+      "Context": "project",
+      "Params": "merge",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "ArrayAggregate",
+      "Context": "project",
+      "Params": "argument",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "Hex",
+      "Context": "project",
+      "Params": "input",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "Hex",
+      "Context": "project",
+      "Params": "result",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "Sha2",
+      "Context": "project",
+      "Params": "input",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "Sha2",
+      "Context": "project",
+      "Params": "bitLength",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "Sha2",
+      "Context": "project",
+      "Params": "result",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "StringDecode",
+      "Context": "project",
+      "Params": "bin",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "StringDecode",
+      "Context": "project",
+      "Params": "charset",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
+    },
+    {
+      "Expression": "StringDecode",
+      "Context": "project",
+      "Params": "result",
+      "override": [
+        {
+          "key": "Supported",
+          "value": "TNEW"
+        }
+      ]
     }
   ],
   "supportedDataSource.csv": [

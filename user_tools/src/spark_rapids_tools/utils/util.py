@@ -123,10 +123,21 @@ def _normalize_file_uri(fpath: str) -> str:
     if not fpath.lower().startswith('file:'):
         return fpath
 
-    _, _, path_part = fpath.partition(':')
-    normalized_path = '/' + path_part.lstrip('/') if path_part else '/'
-    absolute_path = os.path.abspath(normalized_path)
-    return _local_path_to_file_uri(absolute_path)
+    rest = fpath[len('file:'):]
+    host = ''
+    if rest.startswith('//'):
+        # file://host/path. An empty host or localhost is this machine.
+        authority, separator, path = rest[2:].partition('/')
+        host = authority
+        path_part = f'/{path}' if separator else '/'
+    else:
+        path_part = '/' + rest.lstrip('/') if rest else '/'
+
+    absolute_path = os.path.abspath(path_part)
+    if host.lower() in ('', 'localhost'):
+        return _local_path_to_file_uri(absolute_path)
+    quoted = urllib.parse.quote(absolute_path, safe=_LOCAL_URI_SAFE_CHARS)
+    return f'file://{host}{quoted}'
 
 
 def _normalize_s3_uri(fpath: str, target_scheme: str = 's3') -> str:

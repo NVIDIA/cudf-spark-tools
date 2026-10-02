@@ -117,6 +117,31 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
     // The following entries are for open source DeltaLake
     "DeltaTableV2")
 
+  // Matches a TableSpec provider by the arguments around it, the end of the properties Map before
+  // and the options Map after: TableSpec(Map(...),Some(delta),Map(...),...). Scala 2.13 prints a
+  // Map with more than four entries as HashMap(...).
+  private val tableSpecProviderRegex = """\),\s*(Some\([^()]*\)|None),\s*\w*Map\(""".r
+
+  /**
+   * Checks whether the TableSpec in an AtomicCreateTableAsSelect or AtomicReplaceTableAsSelect
+   * description has the Delta provider. The provider case depends on the runtime, for example
+   * Some(delta) or Some(DELTA) on Databricks 17.3. A TableSpec whose provider cannot be read is
+   * not Delta. A description without a TableSpec falls back to looking for "delta" anywhere in
+   * the description.
+   */
+  def isDeltaTableProvider(nodeDesc: String): Boolean = {
+    val tableSpecStart = nodeDesc.indexOf("TableSpec(")
+    if (tableSpecStart < 0) {
+      nodeDesc.contains("delta")
+    } else {
+      // Query literals and property values are printed without quotes, so they can contain
+      // unbalanced parentheses or provider-shaped text. Both come before the target provider, so
+      // use the last match.
+      tableSpecProviderRegex.findAllMatchIn(nodeDesc.substring(tableSpecStart)).toSeq.lastOption
+        .exists(_.group(1).equalsIgnoreCase("Some(delta)"))
+    }
+  }
+
   def acceptsExclusiveWriteOp(nodeName: String): Boolean = {
     DeltaLakeOps.isExclusiveDeltaWriteOp(nodeName)
   }
@@ -138,7 +163,6 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
         // To decide whether they are supported or not, we need to check whether the TableSpec
         // second argument is "delta" provider. The sample below shows a table Spec with
         // Delta Provider. If the argument is none, we assume the provider is not Delta.
-        // For simplicity, we will match regex on "*delta*".
         //
         // AtomicReplaceTableAsSelectExec has a different format
         // AtomicReplaceTableAsSelect [num_affected_rows#ID_0L, num_inserted_rows#ID_1L],
@@ -148,7 +172,7 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
         // [replaceWhere=VAR_1 IN ('WHATEVER')], true,
         // org.apache.spark.sql.execution.datasources.
         // v2.DataSourceV2Strategy$$Lambda$XXXXX
-        node.desc.contains("delta")
+        isDeltaTableProvider(node.desc)
       } else {
         false
       }

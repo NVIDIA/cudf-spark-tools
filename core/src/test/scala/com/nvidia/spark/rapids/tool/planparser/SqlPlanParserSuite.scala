@@ -1711,6 +1711,66 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     }
   }
 
+  test("DeltaLake Op AtomicCreateTableAsSelect and AtomicReplaceTableAsSelect") {
+    // scalastyle:off line.size.limit
+    // Databricks 17.3 writes the provider in upper case.
+    val createNodeName = "AtomicCreateTableAsSelect"
+    val createNodeDesc =
+      "AtomicCreateTableAsSelect [num_affected_rows#500L, num_inserted_rows#501L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@bc65c8a, default.store_sales_clone, [identity(ss_sold_date_sk)], Project [ss_sold_time_sk#442, ss_item_sk#443, ss_sold_date_sk#464], TableSpec(Map(),Some(DELTA),Map(),Some(s3://bucket/store_sales_clone),None,None,None,false,false,Set(),None,None,None,None,List()), false"
+    val replaceNodeName = "AtomicReplaceTableAsSelect"
+    val replaceNodeDesc =
+      "AtomicReplaceTableAsSelect [num_affected_rows#1L, num_inserted_rows#2L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@XXXXX, DB.VAR_2, Union false, false, TableSpec(Map(delta.autoOptimize.optimizeWrite -> true, owner -> (user)),Some(delta),Map(),None,None,None,false,Set(),None,None,None), [replaceWhere=VAR_1 IN ('WHATEVER')], true"
+    // scalastyle:on line.size.limit
+    // Property values are printed without quotes, so their parentheses can nest at any depth or be
+    // unbalanced, and Scala 2.13 prints a Map with more than four entries as HashMap.
+    def withProperties(props: String): String =
+      createNodeDesc.replace("TableSpec(Map()", s"TableSpec($props")
+    // The query plan comes before the target TableSpec and can contain a TableSpec-shaped literal.
+    def withQueryLiteral(desc: String, literal: String): String =
+      desc.replace("Project [", s"Project [$literal AS note#1, ")
+    val createNodeDescs = Seq(
+      createNodeDesc,
+      withProperties("Map(owner -> ((user)))"),
+      withProperties("Map(comment -> price (USD)"),
+      withProperties("Map(comment -> hello))"),
+      withProperties("HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)"),
+      withProperties("Map(comment -> TableSpec(Map(),Some(parquet),Map()))"),
+      withQueryLiteral(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())"),
+      // A later argument can contain "TableSpec(".
+      createNodeDesc.replace("s3://bucket/store_sales_clone", "s3://bucket/TableSpec(foo)"))
+    (createNodeDescs.map((createNodeName, _)) :+ ((replaceNodeName, replaceNodeDesc))).foreach {
+      case (nodeName, nodeDesc) =>
+        testDeltaLakeOperator(nodeName, nodeDesc) { execInfo =>
+          execInfo.exec shouldEqual nodeName
+          execInfo.isSupported shouldBe true
+          execInfo.expr shouldEqual "Format: Delta"
+        }
+    }
+
+    // The provider decides the format even when "delta" appears elsewhere in the description,
+    // and a TableSpec whose provider cannot be read is not Delta.
+    val deltaNameDesc =
+      createNodeDesc.replace("default.store_sales_clone", "default.delta_store_sales")
+    Seq(
+      deltaNameDesc.replace("Some(DELTA)", "None"),
+      deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
+      deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
+        "TableSpec(Map(comment -> nested(foo(bar))),Some(parquet)"),
+      deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
+        "TableSpec(Map(comment -> TableSpec(Map(),Some(delta),Map())),Some(parquet)"),
+      withQueryLiteral(deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
+        "TableSpec(Map(),Some(delta),Map())"),
+      deltaNameDesc.substring(0, deltaNameDesc.indexOf("TableSpec(")) +
+        "TableSpec(Map(comment -> (cut off"
+    ).foreach { nodeDesc =>
+      testDeltaLakeOperator(createNodeName, nodeDesc) { execInfo =>
+        execInfo.exec shouldEqual s"$createNodeName unknown"
+        execInfo.isSupported shouldBe false
+        execInfo.expr shouldEqual "Format: unknown"
+      }
+    }
+  }
+
   test("BloomFilters are supported") {
     // BloomFilter was added in Spark 3.3.0, but we do not care about the version here because
     // we use one parser to rule all spark-versions.

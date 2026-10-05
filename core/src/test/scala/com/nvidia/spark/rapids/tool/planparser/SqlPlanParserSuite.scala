@@ -1714,63 +1714,52 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
   test("DeltaLake Op AtomicCreateTableAsSelect and AtomicReplaceTableAsSelect") {
     // scalastyle:off line.size.limit
     // Databricks 17.3 writes the provider in upper case.
-    val createNodeName = "AtomicCreateTableAsSelect"
     val createNodeDesc =
-      "AtomicCreateTableAsSelect [num_affected_rows#500L, num_inserted_rows#501L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@bc65c8a, default.store_sales_clone, [identity(ss_sold_date_sk)], Project [ss_sold_time_sk#442, ss_item_sk#443, ss_sold_date_sk#464], TableSpec(Map(),Some(DELTA),Map(),Some(s3://bucket/store_sales_clone),None,None,None,false,false,Set(),None,None,None,None,List()), false"
-    val replaceNodeName = "AtomicReplaceTableAsSelect"
+      "AtomicCreateTableAsSelect [num_affected_rows#500L, num_inserted_rows#501L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@bc65c8a, default.delta_store_sales, [identity(ss_sold_date_sk)], Project [ss_sold_time_sk#442, ss_item_sk#443, ss_sold_date_sk#464], TableSpec(Map(),Some(DELTA),Map(),Some(s3://bucket/store_sales),None,None,None,false,false,Set(),None,None,None,None,List()), false"
     val replaceNodeDesc =
       "AtomicReplaceTableAsSelect [num_affected_rows#1L, num_inserted_rows#2L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@XXXXX, DB.VAR_2, Union false, false, TableSpec(Map(delta.autoOptimize.optimizeWrite -> true, owner -> (user)),Some(delta),Map(),None,None,None,false,Set(),None,None,None), [replaceWhere=VAR_1 IN ('WHATEVER')], true"
     // scalastyle:on line.size.limit
-    // Property values are printed without quotes, so their parentheses can nest at any depth or be
-    // unbalanced, and Scala 2.13 prints a Map with more than four entries as HashMap.
+    // The table name contains "delta", so only the provider can decide the format.
+    val parquetDesc = createNodeDesc.replace("Some(DELTA)", "Some(parquet)")
     def withProperties(props: String): String =
       createNodeDesc.replace("TableSpec(Map()", s"TableSpec($props")
-    // The query plan comes before the target TableSpec and can contain a TableSpec-shaped literal.
-    def withQueryLiteral(desc: String, literal: String): String =
-      desc.replace("Project [", s"Project [$literal AS note#1, ")
-    val createNodeDescs = Seq(
-      createNodeDesc,
-      withProperties("Map(owner -> ((user)))"),
-      withProperties("Map(comment -> price (USD)"),
-      withProperties("Map(comment -> hello))"),
-      withProperties("HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)"),
-      // A later argument can contain "TableSpec(".
-      createNodeDesc.replace("s3://bucket/store_sales_clone", "s3://bucket/TableSpec(foo)"))
-    (createNodeDescs.map((createNodeName, _)) :+ ((replaceNodeName, replaceNodeDesc))).foreach {
-      case (nodeName, nodeDesc) =>
-        testDeltaLakeOperator(nodeName, nodeDesc) { execInfo =>
-          execInfo.exec shouldEqual nodeName
-          execInfo.isSupported shouldBe true
-          execInfo.expr shouldEqual "Format: Delta"
-        }
+    // Values are printed without quotes. Puts the text in the query, which comes before the
+    // TableSpec, and in a property, an option and the location.
+    def withText(desc: String, text: String): Seq[String] = Seq(
+      desc.replace("Project [", s"Project [$text AS note#1, "),
+      desc.replace("TableSpec(Map()", s"TableSpec(Map(comment -> $text)"),
+      desc.replace("),Map(),Some(s3", s"),Map(note -> $text),Some(s3"),
+      desc.replace("s3://bucket/store_sales", s"s3://bucket/$text"))
+    def nodeName(desc: String): String = desc.takeWhile(_ != ' ')
+
+    // Delta, including property values with nested or unbalanced parentheses, a Scala 2.13
+    // HashMap, and TableSpec text anywhere that has no provider or the same provider.
+    (Seq(createNodeDesc, replaceNodeDesc) ++
+      Seq("Map(owner -> ((user)))", "Map(comment -> price (USD)", "Map(comment -> hello))",
+        "HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)").map(withProperties) ++
+      withText(createNodeDesc, "TableSpec(foo)") ++
+      withText(createNodeDesc, "TableSpec(Map(),Some(delta),Map())")
+    ).foreach { desc =>
+      testDeltaLakeOperator(nodeName(desc), desc) { execInfo =>
+        execInfo.exec shouldEqual nodeName(desc)
+        execInfo.isSupported shouldBe true
+        execInfo.expr shouldEqual "Format: Delta"
+      }
     }
 
-    // The provider decides the format even when "delta" appears elsewhere in the description,
-    // and a TableSpec whose provider cannot be read is not Delta.
-    val deltaNameDesc =
-      createNodeDesc.replace("default.store_sales_clone", "default.delta_store_sales")
-    val parquetDesc = deltaNameDesc.replace("Some(DELTA)", "Some(parquet)")
-    // Provider-shaped text that disagrees with the provider makes the description ambiguous,
-    // because TableSpecs with different providers can print the same text. Such a write is not
-    // Delta, whatever its provider. The text can be in a property, the query, an option or the
-    // location.
-    def withConflictingText(desc: String, text: String): Seq[String] = Seq(
-      desc.replace("TableSpec(Map()", s"TableSpec(Map(comment -> $text)"),
-      withQueryLiteral(desc, text),
-      desc.replace("),Map(),Some(s3", s"),Map(note -> $text),Some(s3"),
-      desc.replace("s3://bucket/store_sales_clone", s"s3://bucket/$text"))
+    // Not Delta: another provider, no provider, or a cut-off TableSpec. TableSpec text with a
+    // conflicting provider is ambiguous, because TableSpecs with different providers can print the
+    // same text, so the write is not Delta whatever its provider.
     (Seq(
-      deltaNameDesc.replace("Some(DELTA)", "None"),
       parquetDesc,
-      deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
-        "TableSpec(Map(comment -> nested(foo(bar))),Some(parquet)"),
-      deltaNameDesc.substring(0, deltaNameDesc.indexOf("TableSpec(")) +
+      createNodeDesc.replace("Some(DELTA)", "None"),
+      createNodeDesc.substring(0, createNodeDesc.indexOf("TableSpec(")) +
         "TableSpec(Map(comment -> (cut off") ++
-      withConflictingText(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())") ++
-      withConflictingText(parquetDesc, "TableSpec(Map(),Some(delta),Map())")
-    ).foreach { nodeDesc =>
-      testDeltaLakeOperator(createNodeName, nodeDesc) { execInfo =>
-        execInfo.exec shouldEqual s"$createNodeName unknown"
+      withText(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())") ++
+      withText(parquetDesc, "TableSpec(Map(),Some(delta),Map())")
+    ).foreach { desc =>
+      testDeltaLakeOperator(nodeName(desc), desc) { execInfo =>
+        execInfo.exec shouldEqual s"${nodeName(desc)} unknown"
         execInfo.isSupported shouldBe false
         execInfo.expr shouldEqual "Format: unknown"
       }

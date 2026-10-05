@@ -1734,8 +1734,6 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
       withProperties("Map(comment -> price (USD)"),
       withProperties("Map(comment -> hello))"),
       withProperties("HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)"),
-      withProperties("Map(comment -> TableSpec(Map(),Some(parquet),Map()))"),
-      withQueryLiteral(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())"),
       // A later argument can contain "TableSpec(".
       createNodeDesc.replace("s3://bucket/store_sales_clone", "s3://bucket/TableSpec(foo)"))
     (createNodeDescs.map((createNodeName, _)) :+ ((replaceNodeName, replaceNodeDesc))).foreach {
@@ -1751,17 +1749,25 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     // and a TableSpec whose provider cannot be read is not Delta.
     val deltaNameDesc =
       createNodeDesc.replace("default.store_sales_clone", "default.delta_store_sales")
-    Seq(
+    val parquetDesc = deltaNameDesc.replace("Some(DELTA)", "Some(parquet)")
+    // Provider-shaped text that disagrees with the provider makes the description ambiguous,
+    // because TableSpecs with different providers can print the same text. Such a write is not
+    // Delta, whatever its provider. The text can be in a property, the query, an option or the
+    // location.
+    def withConflictingText(desc: String, text: String): Seq[String] = Seq(
+      desc.replace("TableSpec(Map()", s"TableSpec(Map(comment -> $text)"),
+      withQueryLiteral(desc, text),
+      desc.replace("),Map(),Some(s3", s"),Map(note -> $text),Some(s3"),
+      desc.replace("s3://bucket/store_sales_clone", s"s3://bucket/$text"))
+    (Seq(
       deltaNameDesc.replace("Some(DELTA)", "None"),
-      deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
+      parquetDesc,
       deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
         "TableSpec(Map(comment -> nested(foo(bar))),Some(parquet)"),
-      deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
-        "TableSpec(Map(comment -> TableSpec(Map(),Some(delta),Map())),Some(parquet)"),
-      withQueryLiteral(deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
-        "TableSpec(Map(),Some(delta),Map())"),
       deltaNameDesc.substring(0, deltaNameDesc.indexOf("TableSpec(")) +
-        "TableSpec(Map(comment -> (cut off"
+        "TableSpec(Map(comment -> (cut off") ++
+      withConflictingText(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())") ++
+      withConflictingText(parquetDesc, "TableSpec(Map(),Some(delta),Map())")
     ).foreach { nodeDesc =>
       testDeltaLakeOperator(createNodeName, nodeDesc) { execInfo =>
         execInfo.exec shouldEqual s"$createNodeName unknown"

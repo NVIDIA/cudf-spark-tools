@@ -134,11 +134,13 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
     if (tableSpecStart < 0) {
       nodeDesc.contains("delta")
     } else {
-      // Query literals and property values are printed without quotes, so they can contain
-      // unbalanced parentheses or provider-shaped text. Both come before the target provider, so
-      // use the last match.
-      tableSpecProviderRegex.findAllMatchIn(nodeDesc.substring(tableSpecStart)).toSeq.lastOption
-        .exists(_.group(1).equalsIgnoreCase("Some(delta)"))
+      // Property, option, location and comment values and query literals are printed without
+      // quotes, so they can contain unbalanced parentheses or provider-shaped text, and TableSpecs
+      // with different providers can print the same description. The target provider is always
+      // one of the matches, so the write is Delta only if every match is.
+      val providers = tableSpecProviderRegex.findAllMatchIn(nodeDesc.substring(tableSpecStart))
+        .map(_.group(1)).toSeq
+      providers.nonEmpty && providers.forall(_.equalsIgnoreCase("Some(delta)"))
     }
   }
 

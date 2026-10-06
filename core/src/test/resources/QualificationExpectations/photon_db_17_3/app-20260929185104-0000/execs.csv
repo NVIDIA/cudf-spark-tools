@@ -23,7 +23,7 @@ SQL ID,Exec Name,Expression Name,Exec Duration,SQL Node Id,Exec Is Supported,Exe
 21,"Execute CreateViewCommand","",0,0,false,"","","",false,true,"IgnorePerf"
 22,"Execute CreateViewCommand","",0,0,false,"","","",false,true,"IgnorePerf"
 23,"Execute CreateViewCommand","",0,0,false,"","","",false,true,"IgnorePerf"
-24,"AtomicCreateTableAsSelect unknown","Format: unknown",0,0,false,"","","",false,false,"Triage"
+24,"AtomicCreateTableAsSelect","Format: Delta",0,0,true,"","","",false,false,"NONE"
 25,"AppendDataExecV1","Format: Delta",0,0,true,"","","",false,false,"NONE"
 26,"Execute WriteIntoDeltaCommand","Format: Delta",0,0,true,"33","","",false,false,"NONE"
 26,"PhotonWriteStage","",0,1,false,"33","","",false,false,"Triage"

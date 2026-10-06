@@ -163,7 +163,7 @@ class AppQualExecTable(
           if (info.duration.isDefined) info.duration.get.toString else zeroDurationStr,
           info.nodeId.toString,
           if (info.isSupported) booleanTrue else booleanFalse,
-          formatStr(info.stages.mkString(":")),
+          formatStr(info.stages.toSeq.sorted.mkString(":")),
           childrenExecsStr,
           nodeIdsStr,
           if (info.shouldRemove) booleanTrue else booleanFalse,
@@ -278,7 +278,7 @@ class AppQualStagesTable(
     hadoopConf: Configuration) extends AppQualTable(tableMeta, rootDirectory, hadoopConf) {
   override def appendDataToWriter(fWriter: ToolTextFileWriter,
     rec: QualificationSummaryInfo): Unit = {
-    rec.stageInfo.foreach { sInfo =>
+    rec.stageInfo.sortBy(_.stageId).foreach { sInfo =>
       // scalastyle:off line.size.limit
       // P.S: Use raw because it offers better performance compared to sInterpolation.
       fWriter.writeLn(

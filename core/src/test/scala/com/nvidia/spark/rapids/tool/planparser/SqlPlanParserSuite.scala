@@ -1711,6 +1711,61 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     }
   }
 
+  test("DeltaLake Op AtomicCreateTableAsSelect and AtomicReplaceTableAsSelect") {
+    // scalastyle:off line.size.limit
+    // Databricks 17.3 writes the provider in upper case.
+    val createNodeDesc =
+      "AtomicCreateTableAsSelect [num_affected_rows#500L, num_inserted_rows#501L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@bc65c8a, default.delta_store_sales, [identity(ss_sold_date_sk)], Project [ss_sold_time_sk#442, ss_item_sk#443, ss_sold_date_sk#464], TableSpec(Map(),Some(DELTA),Map(),Some(s3://bucket/store_sales),None,None,None,false,false,Set(),None,None,None,None,List()), false"
+    val replaceNodeDesc =
+      "AtomicReplaceTableAsSelect [num_affected_rows#1L, num_inserted_rows#2L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@XXXXX, DB.VAR_2, Union false, false, TableSpec(Map(delta.autoOptimize.optimizeWrite -> true, owner -> (user)),Some(delta),Map(),None,None,None,false,Set(),None,None,None), [replaceWhere=VAR_1 IN ('WHATEVER')], true"
+    // scalastyle:on line.size.limit
+    // The table name contains "delta", so only the provider can decide the format.
+    val parquetDesc = createNodeDesc.replace("Some(DELTA)", "Some(parquet)")
+    def withProperties(props: String): String =
+      createNodeDesc.replace("TableSpec(Map()", s"TableSpec($props")
+    // Values are printed without quotes. Puts the text in the query, which comes before the
+    // TableSpec, and in a property, an option and the location.
+    def withText(desc: String, text: String): Seq[String] = Seq(
+      desc.replace("Project [", s"Project [$text AS note#1, "),
+      desc.replace("TableSpec(Map()", s"TableSpec(Map(comment -> $text)"),
+      desc.replace("),Map(),Some(s3", s"),Map(note -> $text),Some(s3"),
+      desc.replace("s3://bucket/store_sales", s"s3://bucket/$text"))
+    def nodeName(desc: String): String = desc.takeWhile(_ != ' ')
+
+    // Delta, including property values with nested or unbalanced parentheses, a Scala 2.13
+    // HashMap, and TableSpec text anywhere that has no provider or the same provider.
+    (Seq(createNodeDesc, replaceNodeDesc) ++
+      Seq("Map(owner -> ((user)))", "Map(comment -> price (USD)", "Map(comment -> hello))",
+        "HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)").map(withProperties) ++
+      withText(createNodeDesc, "TableSpec(foo)") ++
+      withText(createNodeDesc, "TableSpec(Map(),Some(delta),Map())")
+    ).foreach { desc =>
+      testDeltaLakeOperator(nodeName(desc), desc) { execInfo =>
+        execInfo.exec shouldEqual nodeName(desc)
+        execInfo.isSupported shouldBe true
+        execInfo.expr shouldEqual "Format: Delta"
+      }
+    }
+
+    // Not Delta: another provider, no provider, or a cut-off TableSpec. TableSpec text with a
+    // conflicting provider is ambiguous, because TableSpecs with different providers can print the
+    // same text, so the write is not Delta whatever its provider.
+    (Seq(
+      parquetDesc,
+      createNodeDesc.replace("Some(DELTA)", "None"),
+      createNodeDesc.substring(0, createNodeDesc.indexOf("TableSpec(")) +
+        "TableSpec(Map(comment -> (cut off") ++
+      withText(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())") ++
+      withText(parquetDesc, "TableSpec(Map(),Some(delta),Map())")
+    ).foreach { desc =>
+      testDeltaLakeOperator(nodeName(desc), desc) { execInfo =>
+        execInfo.exec shouldEqual s"${nodeName(desc)} unknown"
+        execInfo.isSupported shouldBe false
+        execInfo.expr shouldEqual "Format: unknown"
+      }
+    }
+  }
+
   test("BloomFilters are supported") {
     // BloomFilter was added in Spark 3.3.0, but we do not care about the version here because
     // we use one parser to rule all spark-versions.

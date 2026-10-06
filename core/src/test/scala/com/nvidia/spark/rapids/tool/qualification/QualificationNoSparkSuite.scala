@@ -114,6 +114,44 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
       s"found stage-disjoint cluster-child relations: ${disjointRelations.mkString(",")}")
   }
 
+  /**
+   * Qualifies a single Photon event log and compares its app summary, per-SQL and exec reports
+   * with the goldens under `expectedLabel`. `verifyExecRows` receives the generated exec rows.
+   */
+  private def photonQualTestBuilder(
+      eventLog: String,
+      expectedLabel: String,
+      platform: String,
+      execCheckDescr: String,
+      verifyExecRows: Seq[Map[String, String]] => Unit): QToolTestCtxtBuilder = {
+    QToolTestCtxtBuilder(eventlogs = Array(eventLog))
+      .withPlatform(platform)
+      .withPerSQL()
+      .withChecker(
+        QToolStatusChecker("1 SUCCESS, 0 FAILURE, 0 SKIPPED, 0 UNKNOWN")
+          .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
+      .withChecker(
+        QToolOutFileCheckerImpl("check the core app summaries has nested types")
+          .withExpectedRows("expect only 1 row", 1)
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+      .withChecker(
+        QToolOutFileCheckerImpl("Per-SQL table content")
+          .withTableLabel("perSqlCSVReport")
+          .withExpectedLoc(expectedQualLoc(expectedLabel))
+          .withRunCondition(
+            () => {
+              (ToolUtils.isSpark340OrLater(),
+                "Skip file comparisons for Spark [-, 3.4[ because root sqlID is not a valid field")
+            }))
+      .withChecker(
+        QToolOutFileCheckerImpl("Execs table content")
+          .withTableLabel("execCSVReport")
+          .withContentVisitor(execCheckDescr, csvContainer => {
+            verifyExecRows(csvContainer.csvRows)
+          })
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+  }
+
   /** Parse udf_report.json and return (udfs list, metrics option). */
   private def readUdfReport(jsonFile: java.io.File)
       : (Seq[Map[String, Any]], Option[Map[String, Any]]) = {
@@ -784,31 +822,39 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
       s"qualification stage summaries changed raw per-stage task durations: " +
         changedStageTaskTimes)
 
-    QToolTestCtxtBuilder(eventlogs = logFiles)
-      .withPlatform(PlatformNames.DATABRICKS_AWS)
-      .withPerSQL()
+    photonQualTestBuilder(logFiles.head, expectedLabel, PlatformNames.DATABRICKS_AWS,
+      "Photon exec topology", verifyPhotonExecTopology)
+      .build()
+  }
+
+  // The fixture is an NDS Delta MERGE (merge.tpl query 4) whose write path uses Photon nodes that
+  // databricks-13_3.json does not map (#2158). The expected set pins that gap; #2159 and a
+  // PhotonClustering mapping should shrink it. Its Photon metric labels are parsed, but their
+  // meanings and units are not validated (#2175).
+  runConditionalTest(
+    "Databricks 17.3 Photon qualification baseline",
+    () => (ToolUtils.isSpark340OrLater(),
+      "DBR 17.3 event-log coverage requires Spark 3.4+")) {
+    val logFile = qualEventLog("nds_merge_q4_photon_db_17_3.zstd")
+    val expectedLabel = "photon_db_17_3"
+
+    val app = createAppFromEventlog(logFile, PlatformNames.DATABRICKS_AZURE)
+    assert(app.dbPlugin.isPhotonEnabled, "expected DBR 17.3 event log to enable Photon")
+    assert(app.sparkVersion == "17.3.x-photon-scala2.13",
+      s"unexpected DBR version: ${app.sparkVersion}")
+
+    val expectedUnmappedPhotonOps = Set(
+      "PhotonClustering", "PhotonColumnarToRow", "PhotonParquetWriter", "PhotonWriteStage")
+    photonQualTestBuilder(logFile, expectedLabel, PlatformNames.DATABRICKS_AZURE,
+      "Photon operators without an OSS mapping", rows => {
+        // An unmapped Photon node keeps its Photon name as the exec name.
+        val unmappedPhotonOps = rows.map(_("Exec Name")).filter(_.startsWith("Photon")).toSet
+        assert(unmappedPhotonOps == expectedUnmappedPhotonOps,
+          s"unexpected unmapped Photon operators: $unmappedPhotonOps")
+      })
       .withChecker(
-        QToolStatusChecker("1 SUCCESS, 0 FAILURE, 0 SKIPPED, 0 UNKNOWN")
-          .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
-      .withChecker(
-        QToolOutFileCheckerImpl("check the core app summaries has nested types")
-          .withExpectedRows("expect only 1 row", 1)
-          .withExpectedLoc(expectedQualLoc(expectedLabel)))
-      .withChecker(
-        QToolOutFileCheckerImpl("Per-SQL table content")
-          .withTableLabel("perSqlCSVReport")
-          .withExpectedLoc(expectedQualLoc(expectedLabel))
-          .withRunCondition(
-            () => {
-              (ToolUtils.isSpark340OrLater(),
-                "Skip file comparisons for Spark [-, 3.4[ because root sqlID is not a valid field")
-            }))
-      .withChecker(
-        QToolOutFileCheckerImpl("Execs table content")
-          .withTableLabel("execCSVReport")
-          .withContentVisitor("Photon exec topology", csvContainer => {
-            verifyPhotonExecTopology(csvContainer.csvRows)
-          })
+        QToolOutFileCheckerImpl("Stages table content")
+          .withTableLabel("stagesCSVReport")
           .withExpectedLoc(expectedQualLoc(expectedLabel)))
       .build()
   }

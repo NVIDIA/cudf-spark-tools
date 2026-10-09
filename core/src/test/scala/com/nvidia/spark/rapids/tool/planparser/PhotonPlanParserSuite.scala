@@ -94,7 +94,8 @@ class PhotonPlanParserSuite extends BasePlanParserSuite {
     "PhotonMetadataSubquery" -> "Subquery",
     "PhotonRuntimeFilterSource" -> "Subquery",
     "PhotonRange" -> "Range",
-    "PhotonJsonScan" -> "Scan"
+    "PhotonJsonScan" -> "Scan",
+    "PhotonClustering" -> "Sort"
   )
 
   test("Photon operators from Databricks 15.4 and 17.3 map to their Spark equivalents") {

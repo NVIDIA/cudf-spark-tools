@@ -25,13 +25,13 @@ Root SQL ID,SQL ID,SQL Description,SQL DF Duration,GPU Opportunity
 "23",23,"\nfilename = ""/Workspace/REDACTED",25,25
 "24",24,"merge_setup",117131,117131
 "24",25,"merge_setup",142,142
-"24",26,"merge_setup",109177,10917
+"24",26,"merge_setup",109177,109177
 "27",27,"merge_setup",83,83
 "28",28,"merge",422652,422652
 "28",29,"merge - MERGE operation - MERGE operation - materialize source",87205,21801
 "28",30,"merge - MERGE operation - MERGE operation - scanning files for matches",89091,54599
 "28",31,"merge - MERGE operation - MERGE operation - Rewriting 2164 files and writing modified and inserted d",1168,450
-"28",32,"merge - MERGE operation - MERGE operation - Rewriting 2164 files and writing modified and inserted d",229890,140953
+"28",32,"merge - MERGE operation - MERGE operation - Rewriting 2164 files and writing modified and inserted d",229890,204628
 "28",33,"merge - MERGE operation - MERGE operation - Rewriting 2164 files and writing modified and inserted d",138,138
 "28",34,"merge - MERGE operation - MERGE operation - Rewriting 2164 files and writing modified and inserted d",30,30
 "28",35,"merge - MERGE operation",1028,334
@@ -41,11 +41,11 @@ Root SQL ID,SQL ID,SQL Description,SQL DF Duration,GPU Opportunity
 "28",39,"merge - MERGE operation",2927,11
 "40",40,"merge",33,33
 "41",41,"merge_cleanup",1784,1784
-"28",42,"merge - MERGE operation",532,181
+"28",42,"merge - MERGE operation",532,182
 "43",43,"merge_cleanup",28,28
-"28",44,"(Batch 1 [ Processing Files ((1 - 7) / 7) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",4216,1054
-"28",45,"(Batch 2 [ Processing Files ((8 - 14) / 14) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",4258,1064
-"28",46,"(Batch 3 [ Processing Files ((15 - 21) / 21) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",4247,1061
-"28",47,"(Batch 4 [ Processing Files ((22 - 28) / 28) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",3728,932
-"28",48,"(Batch 5 [ Processing Files ((29 - 35) / 35) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",3475,868
-"28",49,"(Batch 6 [ Processing Files ((36 - 37) / 37) ]) Optimizing 1 files in s3://dummy-s3-bucket/REDACTED",2639,659
+"28",44,"(Batch 1 [ Processing Files ((1 - 7) / 7) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",4216,4216
+"28",45,"(Batch 2 [ Processing Files ((8 - 14) / 14) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",4258,4258
+"28",46,"(Batch 3 [ Processing Files ((15 - 21) / 21) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",4247,4247
+"28",47,"(Batch 4 [ Processing Files ((22 - 28) / 28) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",3728,3728
+"28",48,"(Batch 5 [ Processing Files ((29 - 35) / 35) ]) Optimizing 7 files in s3://dummy-s3-bucket/REDACTED",3475,3475
+"28",49,"(Batch 6 [ Processing Files ((36 - 37) / 37) ]) Optimizing 1 files in s3://dummy-s3-bucket/REDACTED",2639,2639

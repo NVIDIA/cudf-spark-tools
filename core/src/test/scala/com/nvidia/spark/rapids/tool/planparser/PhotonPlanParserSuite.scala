@@ -50,8 +50,9 @@ class PhotonPlanParserSuite extends BasePlanParserSuite {
    * - The conversion applies to regular operators (e.g., PhotonProject -> Project),
    *   Photon-specific parsers (e.g., PhotonBroadcastNestedLoopJoin -> BroadcastNestedLoopJoin),
    *   and cluster operators (e.g., PhotonShuffleMapStage -> WholeStageCodegen)
+   * - Photon stage wrappers retain their duration and child-based support and speedup calculations
    */
-  test("Operator in photon is parsed as Spark equivalent") {
+  test("Photon operators and stage wrappers are parsed with Spark semantics") {
     val eventLog = s"$qualLogDir/nds_q88_photon_db_13_3.zstd"
     val pluginTypeChecker = new PluginTypeChecker()
     val app = createAppFromEventlog(eventLog, platformName = PlatformNames.DATABRICKS_AWS)
@@ -67,6 +68,19 @@ class PhotonPlanParserSuite extends BasePlanParserSuite {
         s"Failed to find Spark operator $sparkName for Photon operator $photonName")
       assert(!photonOpExists,
         s"Failed to parse Photon operator $photonName as Spark operator $sparkName")
+    }
+    val photonStageExecs = parsedPlans.flatMap(_.execInfo).filter { exec =>
+      exec.expr == "PhotonShuffleMapStage" || exec.expr == "PhotonResultStage"
+    }.toSeq
+    assert(photonStageExecs.size == 40)
+    assert(photonStageExecs.forall(_.exec == "WholeStageCodegen"))
+    assert(photonStageExecs.forall(_.duration.nonEmpty))
+    assert(photonStageExecs.forall(_.children.exists(_.nonEmpty)))
+    photonStageExecs.foreach { stageExec =>
+      val children = stageExec.children.get
+      assert(stageExec.isSupported == children.exists(_.isSupported))
+      assert(stageExec.speedupFactor == SQLPlanParser.averageSpeedup(
+        children.filterNot(_.shouldRemove).map(_.speedupFactor)))
     }
   }
 

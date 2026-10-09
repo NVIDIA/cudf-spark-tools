@@ -461,8 +461,9 @@ object EventLogPathProcessor extends Logging {
     }
     val fileParts = eventLogFileName.split("--")
     if (fileParts.size < 2) {
-      // assume this is the current log and we want that one to be read last
-      LocalDateTime.now()
+      // the undated current log is always the newest; a local-zone now() compared against the
+      // UTC stamps of the rolled files sorted it first for hours after a rotation west of UTC
+      LocalDateTime.MAX
     } else {
       val date = fileParts(0).split("-")
       val day = Integer.parseInt(date(3))

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,37 @@ package org.apache.spark.sql.rapids.tool.util.stubs
 
 import org.apache.spark.sql.execution.metric.SQLMetricInfo
 import org.apache.spark.sql.rapids.tool.annotation.ToolsReflection
+
+
+/**
+ * Carries a platform mapper's decision about whether a node inherits membership in an execution
+ * cluster that is already open while the shared plan graph is being built.
+ *
+ * Platform nodes are first mapped to canonical Spark names. If graph traversal is currently
+ * inside a `WholeStageCodegen`-like cluster, [[EnclosingClusterPolicy.Inherit]] keeps that parent
+ * cluster active while the canonical-name rules handle the node. [[EnclosingClusterPolicy.Break]]
+ * clears only the incoming cluster context before applying those same rules. The node is therefore
+ * not recorded as a child of the parent cluster, but it or its descendants may still open their
+ * own clusters through normal canonical-name dispatch.
+ *
+ * For example, a `PhotonShuffleMapStage` maps to `WholeStageCodegen` and opens a cluster. Its
+ * `PhotonShuffleExchangeSink` is fused work within that stage and inherits the cluster. A
+ * `PhotonShuffleExchangeSource` reads another stage's output, so it breaks the enclosing cluster
+ * and is not scored as fused work in the shuffle-map stage.
+ *
+ * This policy does not decide whether a node is a cluster. The canonical mapped name remains the
+ * authority for that decision.
+ */
+sealed trait EnclosingClusterPolicy
+
+
+object EnclosingClusterPolicy {
+  /** Keep any active parent cluster while canonical-name dispatch handles this node. */
+  case object Inherit extends EnclosingClusterPolicy
+
+  /** Clear any active parent cluster before canonical-name dispatch handles this node. */
+  case object Break extends EnclosingClusterPolicy
+}
 
 /**
  * Represents execution plan information with platform awareness capabilities.
@@ -44,6 +75,10 @@ class SparkPlanInfo(
     val children: Seq[SparkPlanInfo],
     val metadata: Map[String, String],
     val metrics: Seq[SQLMetricInfo]) extends PlatformAwarePlanTrait {
+
+  /** Native Spark nodes keep the graph builder's current cluster context. */
+  def enclosingClusterPolicy: EnclosingClusterPolicy = EnclosingClusterPolicy.Inherit
+
   /**
    * Computes hash code based on the simple string representation.
    * The simpleString hashCode is sufficient to distinguish different plans within a plan tree.
@@ -113,6 +148,7 @@ class SparkPlanInfo(
  * @param children Child execution plan nodes
  * @param metadata Additional metadata associated with the plan node
  * @param metrics SQL metrics collected for this plan node
+ * @param enclosingClusterPolicy How this node interacts with an active enclosing cluster
  */
 class PWSparkPlanInfo(
     actualName: String,
@@ -121,7 +157,8 @@ class PWSparkPlanInfo(
     sparkDesc: String,
     children: Seq[SparkPlanInfo],
     metadata: Map[String, String],
-    metrics: Seq[SQLMetricInfo]
+    metrics: Seq[SQLMetricInfo],
+    override val enclosingClusterPolicy: EnclosingClusterPolicy
 ) extends SparkPlanInfo(sparkName, sparkDesc, children, metadata, metrics)
   with PlatformAwarePlanTrait {
   /**

@@ -16,14 +16,21 @@
 
 package com.nvidia.spark.rapids.tool.qualification
 
+import java.nio.file.{Files, Paths}
+import java.time.LocalDateTime
+
 import com.nvidia.spark.rapids.BaseNoSparkSuite
-import com.nvidia.spark.rapids.tool.{PlatformNames, StatusReportCounts, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformNames, StatusReportCounts, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.analysis.AppSQLPlanAnalyzer
 import com.nvidia.spark.rapids.tool.qualification.checkers.{QToolOutFileCheckerImpl, QToolOutJsonFileCheckerImpl, QToolResultCoreChecker, QToolStatusChecker, QToolTestCtxtBuilder}
+import com.nvidia.spark.rapids.tool.views.QualSQLCodeGenView
 import org.json4s.DefaultFormats
 import org.json4s.jackson.JsonMethods
 import org.scalatest.matchers.should.Matchers._
 
+import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{SourceClusterInfo, ToolUtils}
+import org.apache.spark.sql.rapids.tool.plangraph.SparkPlanGraphCluster
 import org.apache.spark.sql.rapids.tool.util.UTF8Source
 
 
@@ -39,6 +46,111 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   def qualEventLog(fileName: String): String = s"$qualLogDir/$fileName"
   def expectedQualLoc(dirName: String): String = s"$expRoot/$dirName"
   def profEventLog(fileName: String): String = s"$profLogDir/$fileName"
+
+  private def verifyPhotonExecTopology(rows: Seq[Map[String, String]]): Unit = {
+    type NodeKey = (String, String)
+
+    def nodeKey(row: Map[String, String]): NodeKey =
+      (row("SQL ID"), row("SQL Node Id"))
+
+    def splitValues(value: String): Seq[String] =
+      if (value.isEmpty) Seq.empty else value.split(":", -1).toSeq
+
+    val rowsByNode = rows.groupBy(nodeKey)
+    val clusters = rows.filter(_("Exec Name") == "WholeStageCodegen")
+    val shuffleWrappers = clusters.filter(_("Expression Name") == "PhotonShuffleMapStage")
+    val sources = rows.filter(_("Expression Name") == "PhotonShuffleExchangeSource")
+    val sinks = rows.filter(_("Expression Name") == "PhotonShuffleExchangeSink")
+
+    assert(rows.size == 297, s"expected 297 Photon exec rows, found ${rows.size}")
+    assert(rowsByNode.size == 297,
+      s"expected 297 unique Photon (SQL ID, SQL Node Id) keys, found ${rowsByNode.size}")
+    assert(clusters.size == 41, s"expected 41 Photon clusters, found ${clusters.size}")
+    assert(shuffleWrappers.size == 39,
+      s"expected 39 Photon shuffle wrappers, found ${shuffleWrappers.size}")
+    assert(sources.size == 39, s"expected 39 Photon shuffle sources, found ${sources.size}")
+    assert(sinks.size == 39, s"expected 39 Photon shuffle sinks, found ${sinks.size}")
+
+    val emptyClusters = clusters.filter(row => splitValues(row("Exec Children Node Ids")).isEmpty)
+    assert(emptyClusters.isEmpty,
+      s"found clusters with no children: ${emptyClusters.map(nodeKey).mkString(",")}")
+
+    val childRelations = clusters.flatMap { cluster =>
+      splitValues(cluster("Exec Children Node Ids")).map { childId =>
+        (nodeKey(cluster), (cluster("SQL ID"), childId))
+      }
+    }
+    val ownershipCounts = childRelations.groupBy(_._2).map { case (key, relations) =>
+      key -> relations.size
+    }
+    val sourceKeys = sources.map(nodeKey).toSet
+    val ownedSources = sourceKeys.intersect(ownershipCounts.keySet)
+    assert(ownedSources.isEmpty,
+      s"found Photon shuffle sources owned by clusters: ${ownedSources.toSeq.sorted.mkString(",")}")
+
+    val incorrectlyOwnedSinks = sinks.map(nodeKey).filter { key =>
+      ownershipCounts.getOrElse(key, 0) != 1
+    }
+    assert(incorrectlyOwnedSinks.isEmpty,
+      s"found Photon shuffle sinks without exactly one owner: " +
+        incorrectlyOwnedSinks.mkString(","))
+
+    val unresolvedRelations = childRelations.filterNot { case (_, childKey) =>
+      rowsByNode.get(childKey).exists(_.size == 1)
+    }
+    assert(unresolvedRelations.isEmpty,
+      s"found unresolved cluster-child relations: ${unresolvedRelations.mkString(",")}")
+
+    val uniqueRowsByNode = rows.map(row => nodeKey(row) -> row).toMap
+    val disjointRelations = childRelations.filter { case (clusterKey, childKey) =>
+      val clusterStages =
+        splitValues(uniqueRowsByNode(clusterKey)("Exec Stages")).filter(_.nonEmpty).toSet
+      val childStages =
+        splitValues(uniqueRowsByNode(childKey)("Exec Stages")).filter(_.nonEmpty).toSet
+      clusterStages.nonEmpty && childStages.nonEmpty &&
+        clusterStages.intersect(childStages).isEmpty
+    }
+    assert(disjointRelations.isEmpty,
+      s"found stage-disjoint cluster-child relations: ${disjointRelations.mkString(",")}")
+  }
+
+  /**
+   * Qualifies a single Photon event log and compares its app summary, per-SQL and exec reports
+   * with the goldens under `expectedLabel`. `verifyExecRows` receives the generated exec rows.
+   */
+  private def photonQualTestBuilder(
+      eventLog: String,
+      expectedLabel: String,
+      platform: String,
+      execCheckDescr: String,
+      verifyExecRows: Seq[Map[String, String]] => Unit): QToolTestCtxtBuilder = {
+    QToolTestCtxtBuilder(eventlogs = Array(eventLog))
+      .withPlatform(platform)
+      .withPerSQL()
+      .withChecker(
+        QToolStatusChecker("1 SUCCESS, 0 FAILURE, 0 SKIPPED, 0 UNKNOWN")
+          .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
+      .withChecker(
+        QToolOutFileCheckerImpl("check the core app summaries has nested types")
+          .withExpectedRows("expect only 1 row", 1)
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+      .withChecker(
+        QToolOutFileCheckerImpl("Per-SQL table content")
+          .withTableLabel("perSqlCSVReport")
+          .withExpectedLoc(expectedQualLoc(expectedLabel))
+          .withRunCondition(
+            () => {
+              (ToolUtils.isSpark340OrLater(),
+                "Skip file comparisons for Spark [-, 3.4[ because root sqlID is not a valid field")
+            }))
+      .withChecker(
+        QToolOutFileCheckerImpl("Execs table content")
+          .withTableLabel("execCSVReport")
+          .withContentVisitor(execCheckDescr, csvContainer => {
+            verifyExecRows(csvContainer.csvRows)
+          })
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+  }
 
   /** Parse udf_report.json and return (udfs list, metrics option). */
   private def readUdfReport(jsonFile: java.io.File)
@@ -355,6 +467,47 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
       .build()
   }
 
+  test("db event log rolling with a rolled file dated after the current file") {
+    // The rolled file names carry the rotation time; the current file has no stamp and is dated
+    // when the directory is read. A rolled stamp later than that moment (a rotation shortly
+    // before the run, read from a machine whose local clock is behind the stamp's zone) must
+    // still sort before the current file, or the events replay out of order and every SQL
+    // spanning the rotation loses its duration. The copy renames the rolled file to a
+    // far-future stamp and expects the same output as the original fixture.
+    val srcDir = Paths.get(qualEventLog("db_sim_eventlog"))
+    val expectedLabel = "db_eventlog_rolling"
+    TrampolineUtil.withTempDir { tempDir =>
+      Files.copy(srcDir.resolve("eventlog"), Paths.get(tempDir.getAbsolutePath, "eventlog"))
+      Files.copy(srcDir.resolve("eventlog-2021-06-15--15-00.gz"),
+        Paths.get(tempDir.getAbsolutePath, "eventlog-2099-12-31--23-59.gz"))
+      QToolTestCtxtBuilder(eventlogs = Array(tempDir.getAbsolutePath))
+        .withPerSQL()
+        .withChecker(
+          QToolStatusChecker("Check that the app should succeed")
+            .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
+        .withChecker(
+          QToolResultCoreChecker("check app count is valid and status is success")
+            .withExpectedSize(1)
+            .withSuccessCode())
+        .withChecker(
+          QToolOutFileCheckerImpl("check the core app summaries has valid data")
+            .withExpectedRows("expect only 1 row", 1)
+            .withExpectedLoc(expectedQualLoc(expectedLabel)))
+        .withChecker(
+          QToolOutFileCheckerImpl("Per-SQL table content")
+            .withTableLabel("perSqlCSVReport")
+            .withExpectedLoc(expectedQualLoc(expectedLabel)))
+        .build()
+    }
+  }
+
+  test("the undated current db event log is dated after every rolled file") {
+    val current = EventLogPathProcessor.getDBEventLogFileDate("eventlog")
+    val rolled = EventLogPathProcessor.getDBEventLogFileDate("eventlog-2099-12-31--23-59.gz")
+    assert(current == LocalDateTime.MAX)
+    assert(rolled.isBefore(current))
+  }
+
   runConditionalTest("nds q86 with failure test",
     shouldSkipFailedLogsForSpark) {
     val logFiles = Array(qualEventLog("nds_q86_fail_test"))
@@ -583,28 +736,125 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   test("support for photon eventlog") {
     val logFiles = Array(qualEventLog("nds_q88_photon_db_13_3.zstd"))
     val expectedLabel = "photon_db_13_3"
-    QToolTestCtxtBuilder(eventlogs = logFiles)
-      .withPlatform(PlatformNames.DATABRICKS_AWS)
-      .withPerSQL()
+
+    val app = createAppFromEventlog(logFiles.head, PlatformNames.DATABRICKS_AWS)
+    val wholeStageMapping = QualSQLCodeGenView.getRawViewFromSqlProcessor(AppSQLPlanAnalyzer(app))
+    val expectedWholeStageMapping = app.sqlManager.applyToAllPlanModels { planModel =>
+      planModel.getToolsPlanGraph.nodes.collect {
+        case cluster: SparkPlanGraphCluster =>
+          cluster.nodes.map { child =>
+            (planModel.id, cluster.id, cluster.name, child.name, child.id)
+          }
+      }.flatten
+    }.flatten.toSeq
+    val actualWholeStageMapping = wholeStageMapping.map { row =>
+      (row.sqlID, row.nodeID, row.parent, row.child, row.childNodeID)
+    }
+    def toMultiset(
+        rows: Seq[(Long, Long, String, String, Long)]): Map[
+          (Long, Long, String, String, Long), Int] = {
+      rows.groupBy(identity).map { case (row, copies) => row -> copies.size }
+    }
+    assert(toMultiset(actualWholeStageMapping) == toMultiset(expectedWholeStageMapping),
+      "qualification WholeStage mappings do not match graph cluster memberships")
+    val nodePlatformNames = app.sqlManager.applyToAllPlanModels { planModel =>
+      planModel.getToolsPlanGraph.allNodes.map { node =>
+        (planModel.id, node.id) -> node.platformName
+      }
+    }.flatten.toMap
+    assert(wholeStageMapping.size == 175,
+      s"expected 175 qualification WholeStage mappings, found ${wholeStageMapping.size}")
+    val unresolvedMappings = wholeStageMapping.filterNot { row =>
+      nodePlatformNames.contains((row.sqlID, row.childNodeID))
+    }
+    assert(unresolvedMappings.isEmpty,
+      s"qualification WholeStage mappings contain unresolved children: $unresolvedMappings")
+    val sourceMappings = wholeStageMapping.filter { row =>
+      nodePlatformNames.get((row.sqlID, row.childNodeID)).contains("PhotonShuffleExchangeSource")
+    }
+    assert(sourceMappings.isEmpty,
+      s"qualification WholeStage mappings contain Photon shuffle sources: $sourceMappings")
+
+    val summary = app.aggregateStats().getOrElse {
+      fail("expected Photon qualification summary")
+    }
+    val sql26Execs = summary.planInfo.filter(_.sqlID == 26L).flatMap(_.execInfo)
+    assert(sql26Execs.size == 96,
+      s"expected 96 top-level SQL 26 execs, found ${sql26Execs.size}")
+    assert(sql26Execs.count(_.isSupported) == 93)
+    assert(sql26Execs.count(!_.isSupported) == 3)
+
+    val flattenedByStage = summary.planInfo.flatMap(_.execInfo).flatMap { exec =>
+      val flattened = if (exec.isClusterNode) {
+        exec.children.getOrElse(Seq.empty)
+      } else {
+        exec.children.getOrElse(Seq.empty) :+ exec
+      }
+      exec.stages.toSeq.flatMap(stageId => flattened.map(stageId -> _))
+    }
+    val flattenedStageCounts = flattenedByStage.groupBy(_._1).map {
+      case (stageId, stageExecs) => stageId -> stageExecs.size
+    }
+    assert(flattenedByStage.size == 230)
+    assert(flattenedByStage.count(!_._2.shouldRemove) == 171)
+    assert(flattenedStageCounts(44) == 27)
+    val wrapperStageIds = Seq(46, 48, 50, 52, 54, 56, 58)
+    wrapperStageIds.foreach { stageId =>
+      assert(flattenedStageCounts(stageId) == 11)
+    }
+
+    val stageSummaries = summary.stageInfo.groupBy(_.stageId).map {
+      case (stageId, attempts) =>
+        assert(attempts.map(_.stageTaskTime).distinct.size == 1,
+          s"stage $stageId has inconsistent task durations: $attempts")
+        assert(attempts.forall(_.unsupportedTaskDur == 0),
+          s"stage $stageId has nonzero unsupported task duration: $attempts")
+        stageId -> attempts.head.stageTaskTime
+    }
+    assert(stageSummaries.values.sum == 3858136L)
+    val rawStageTaskTimes = app.stageIdToTaskEndSum.map { case (stageId, stageSummary) =>
+      stageId.toInt -> stageSummary.totalTaskDuration
+    }.toMap
+    val changedStageTaskTimes = stageSummaries.filterNot { case (stageId, taskDuration) =>
+      rawStageTaskTimes.get(stageId).contains(taskDuration)
+    }
+    assert(changedStageTaskTimes.isEmpty,
+      s"qualification stage summaries changed raw per-stage task durations: " +
+        changedStageTaskTimes)
+
+    photonQualTestBuilder(logFiles.head, expectedLabel, PlatformNames.DATABRICKS_AWS,
+      "Photon exec topology", verifyPhotonExecTopology)
+      .build()
+  }
+
+  // The fixture is an NDS Delta MERGE (merge.tpl query 4) whose write path uses Photon nodes that
+  // databricks-13_3.json does not map (#2158). The expected set pins that gap; #2159 and a
+  // PhotonClustering mapping should shrink it. Its Photon metric labels are parsed, but their
+  // meanings and units are not validated (#2175).
+  runConditionalTest(
+    "Databricks 17.3 Photon qualification baseline",
+    () => (ToolUtils.isSpark340OrLater(),
+      "DBR 17.3 event-log coverage requires Spark 3.4+")) {
+    val logFile = qualEventLog("nds_merge_q4_photon_db_17_3.zstd")
+    val expectedLabel = "photon_db_17_3"
+
+    val app = createAppFromEventlog(logFile, PlatformNames.DATABRICKS_AZURE)
+    assert(app.dbPlugin.isPhotonEnabled, "expected DBR 17.3 event log to enable Photon")
+    assert(app.sparkVersion == "17.3.x-photon-scala2.13",
+      s"unexpected DBR version: ${app.sparkVersion}")
+
+    val expectedUnmappedPhotonOps = Set(
+      "PhotonClustering", "PhotonColumnarToRow", "PhotonParquetWriter", "PhotonWriteStage")
+    photonQualTestBuilder(logFile, expectedLabel, PlatformNames.DATABRICKS_AZURE,
+      "Photon operators without an OSS mapping", rows => {
+        // An unmapped Photon node keeps its Photon name as the exec name.
+        val unmappedPhotonOps = rows.map(_("Exec Name")).filter(_.startsWith("Photon")).toSet
+        assert(unmappedPhotonOps == expectedUnmappedPhotonOps,
+          s"unexpected unmapped Photon operators: $unmappedPhotonOps")
+      })
       .withChecker(
-        QToolStatusChecker("1 SUCCESS, 0 FAILURE, 0 SKIPPED, 0 UNKNOWN")
-          .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
-      .withChecker(
-        QToolOutFileCheckerImpl("check the core app summaries has nested types")
-          .withExpectedRows("expect only 1 row", 1)
-          .withExpectedLoc(expectedQualLoc(expectedLabel)))
-      .withChecker(
-        QToolOutFileCheckerImpl("Per-SQL table content")
-          .withTableLabel("perSqlCSVReport")
-          .withExpectedLoc(expectedQualLoc(expectedLabel))
-          .withRunCondition(
-            () => {
-              (ToolUtils.isSpark340OrLater(),
-                "Skip file comparisons for Spark [-, 3.4[ because root sqlID is not a valid field")
-            }))
-      .withChecker(
-        QToolOutFileCheckerImpl("Execs table content")
-          .withTableLabel("execCSVReport")
+        QToolOutFileCheckerImpl("Stages table content")
+          .withTableLabel("stagesCSVReport")
           .withExpectedLoc(expectedQualLoc(expectedLabel)))
       .build()
   }

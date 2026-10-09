@@ -17,7 +17,8 @@
 package org.apache.spark.sql.rapids.tool.util.stubs.rapids
 
 import org.apache.spark.sql.execution.metric.SQLMetricInfo
-import org.apache.spark.sql.rapids.tool.util.stubs.{PWSparkPlanInfo, SparkPlanInfo}
+import org.apache.spark.sql.rapids.tool.util.stubs.{EnclosingClusterPolicy, PWSparkPlanInfo,
+  SparkPlanInfo}
 
 /**
  * Represents execution plan information for NVIDIA RAPIDS GPU-accelerated Spark nodes.
@@ -34,6 +35,7 @@ import org.apache.spark.sql.rapids.tool.util.stubs.{PWSparkPlanInfo, SparkPlanIn
  * @param children   Child execution plan nodes in the plan tree
  * @param metadata   Additional metadata associated with the RAPIDS plan node
  * @param metrics    SQL metrics collected for this RAPIDS plan node
+ * @param enclosingClusterPolicy How this node interacts with an active enclosing cluster
  */
 case class RAPIDSSparkPlanInfo(
     actualName: String,
@@ -42,8 +44,10 @@ case class RAPIDSSparkPlanInfo(
     sparkDesc: String,
     override val children: Seq[SparkPlanInfo],
     override val metadata: Map[String, String],
-    override val metrics: Seq[SQLMetricInfo]
+    override val metrics: Seq[SQLMetricInfo],
+    override val enclosingClusterPolicy: EnclosingClusterPolicy
 ) extends PWSparkPlanInfo(
-  actualName, actualDesc, sparkName, sparkDesc, children, metadata, metrics) {
+  actualName, actualDesc, sparkName, sparkDesc, children, metadata, metrics,
+  enclosingClusterPolicy) {
 
 }

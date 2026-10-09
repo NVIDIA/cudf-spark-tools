@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@ import org.apache.spark.sql.execution
 import org.apache.spark.sql.rapids.tool.AppBase
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
 import org.apache.spark.sql.rapids.tool.util.UTF8Source
+import org.apache.spark.sql.rapids.tool.util.stubs.{EnclosingClusterPolicy, SparkPlanInfo}
 import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanExtensions.UpStreamSparkPlanInfoOps
-import org.apache.spark.sql.rapids.tool.util.stubs.SparkPlanInfo
 import org.apache.spark.sql.rapids.tool.util.stubs.rapids.RAPIDSSparkPlanInfo
 
 
@@ -122,6 +122,21 @@ trait OssOpMapperTrait {
    */
   def mapPlanDataToOss(planInfo: org.apache.spark.sql.execution.SparkPlanInfo): (String, String) = {
     (mapContentToOss(planInfo.nodeName), mapContentToOss(planInfo.simpleString))
+  }
+
+  /**
+   * Determines how the converted node interacts with an active enclosing execution cluster.
+   * Platform mappers should override this only when the canonical Spark name cannot distinguish
+   * whether the materialized operator belongs to its parent execution cluster.
+   * A mapper returning a policy other than Inherit must construct a PWSparkPlanInfo subtype so
+   * that the policy survives conversion.
+   *
+   * @param planInfo The upstream Spark plan node to classify
+   * @return The policy to carry into shared graph construction
+   */
+  def enclosingClusterPolicy(
+      planInfo: org.apache.spark.sql.execution.SparkPlanInfo): EnclosingClusterPolicy = {
+    EnclosingClusterPolicy.Inherit
   }
 
   /**
@@ -352,7 +367,8 @@ object GpuOssOpMapper extends OssOpMapperTrait {
       sparkDesc = ossPlanDesc,
       children = planInfo.children.map(_.asPlatformAware(app)),
       metadata = planInfo.metadata,
-      metrics = planInfo.metrics)
+      metrics = planInfo.metrics,
+      enclosingClusterPolicy = enclosingClusterPolicy(planInfo))
   }
 
   /**

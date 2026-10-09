@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,8 @@
 package org.apache.spark.sql.rapids.tool.util.stubs.auron
 
 import org.apache.spark.sql.execution.metric.SQLMetricInfo
-import org.apache.spark.sql.rapids.tool.util.stubs.{PWSparkPlanInfo, SparkPlanInfo}
+import org.apache.spark.sql.rapids.tool.util.stubs.{EnclosingClusterPolicy, PWSparkPlanInfo,
+  SparkPlanInfo}
 
 /**
  * Represents execution plan information for Auron engine nodes.
@@ -29,6 +30,7 @@ import org.apache.spark.sql.rapids.tool.util.stubs.{PWSparkPlanInfo, SparkPlanIn
  * @param children   Child execution plan nodes in the plan tree
  * @param metadata   Additional metadata associated with the Auron plan node
  * @param metrics    SQL metrics collected for this Auron plan node
+ * @param enclosingClusterPolicy How this node interacts with an active enclosing cluster
  */
 case class AuronSparkPlanInfo(
     actualName: String,
@@ -37,8 +39,10 @@ case class AuronSparkPlanInfo(
     sparkDesc: String,
     override val children: Seq[SparkPlanInfo],
     override val metadata: Map[String, String],
-    override val metrics: Seq[SQLMetricInfo]
+    override val metrics: Seq[SQLMetricInfo],
+    override val enclosingClusterPolicy: EnclosingClusterPolicy
 ) extends PWSparkPlanInfo(
-  actualName, actualDesc, sparkName, sparkDesc, children, metadata, metrics) {
+  actualName, actualDesc, sparkName, sparkDesc, children, metadata, metrics,
+  enclosingClusterPolicy) {
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,7 +140,8 @@ case class QToolTestCtxtBuilder(
       }
       // create the test context passing the output dire and the eventlogs
       val testCtxt = QToolTestCtxt(evLogProvider.eventlogs, absPath, buildArgs())
-      testCtxt.fire(checkBuilders.map(_.build()))
+      val defaultCheckers = Seq(QToolExecsInvariantChecker())
+      testCtxt.fire((defaultCheckers ++ checkBuilders).map(_.build()))
     } finally {
       // cleanup workDirectories if needed
       _selfManagedWorkDir.foreach { _ =>

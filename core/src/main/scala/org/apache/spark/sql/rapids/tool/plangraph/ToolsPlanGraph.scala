@@ -23,7 +23,9 @@ import scala.collection.mutable
 import org.apache.spark.sql.rapids.tool.AccumToStageRetriever
 import org.apache.spark.sql.rapids.tool.annotation.ToolsReflection
 import org.apache.spark.sql.rapids.tool.store.AccumNameRef
-import org.apache.spark.sql.rapids.tool.util.stubs.{GraphReflectionAPI, GraphReflectionAPIHelper, PlatformAwarePlanTrait, SparkPlanInfo}
+import org.apache.spark.sql.rapids.tool.util.stubs.{
+  EnclosingClusterPolicy, GraphReflectionAPI, GraphReflectionAPIHelper, PlatformAwarePlanTrait,
+  SparkPlanInfo}
 
 
 /**
@@ -728,6 +730,13 @@ object ToolsPlanGraph {
       parent: SparkPlanGraphNode,
       subgraph: SparkPlanGraphCluster,
       exchanges: mutable.HashMap[SparkPlanInfo, SparkPlanGraphNode]): Unit = {
+    // This must precede canonical dispatch because ReusedSubquery forwards the active subgraph.
+    if (planInfo.enclosingClusterPolicy == EnclosingClusterPolicy.Break && subgraph != null) {
+      buildSparkPlanGraphNode(
+        planInfo, nodeIdGenerator, nodes, edges, parent, null, exchanges)
+      return
+    }
+
     processPlanInfo(planInfo.nodeName) match {
       case name if name.startsWith("WholeStageCodegen") =>
         val metrics = planInfo.metrics.map { metric =>

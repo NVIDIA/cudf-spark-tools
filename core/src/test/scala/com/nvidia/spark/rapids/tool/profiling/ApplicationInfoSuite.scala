@@ -16,27 +16,28 @@
 
 package com.nvidia.spark.rapids.tool.profiling
 
-import java.io.File
+import java.io.{File, FileInputStream}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths, StandardOpenOption}
 
 import scala.collection.mutable.ArrayBuffer
 
-import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformNames, StatusReportCounts, ToolTestUtils}
+import com.github.luben.zstd.ZstdInputStream
+import com.nvidia.spark.rapids.BaseNoSparkSuite
+import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformFactory, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.IOUtils
-import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks._
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.sql.{SparkSession, TrampolineUtil}
-import org.apache.spark.sql.rapids.tool.UnsupportedSparkRuntimeException
+import org.apache.spark.sql.rapids.tool.{ToolUtils, UnsupportedSparkRuntimeException}
+import org.apache.spark.sql.rapids.tool.plangraph.{SparkPlanGraphCluster => ToolsSparkPlanGraphCluster}
 import org.apache.spark.sql.rapids.tool.profiling._
-import org.apache.spark.sql.rapids.tool.util.{FSUtils, SparkRuntime}
+import org.apache.spark.sql.rapids.tool.util.{FSUtils, SparkRuntime, UTF8Source}
 
-class ApplicationInfoSuite extends AnyFunSuite with Logging {
+class ApplicationInfoSuite extends BaseNoSparkSuite {
 
   lazy val sparkSession: SparkSession = {
     SparkSession
@@ -148,6 +149,66 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
 
     // assert attemptID
     assert(apps.head.attemptId == 1)
+  }
+
+  runConditionalTest(
+    "profile Databricks 17.3 RAPIDS GPU eventlog",
+    () => (ToolUtils.isSpark340OrLater(),
+      "DBR 17.3 event-log coverage requires Spark 3.4+")) {
+    val eventLog = s"$logDir/nds_q88_gpu_db_17_3.zstd"
+
+    TrampolineUtil.withTempDir { outputDir =>
+      val appArgs = new ProfileArgs(Array(
+        "--platform", PlatformNames.DATABRICKS_AZURE,
+        "--output-directory", outputDir.getAbsolutePath,
+        eventLog))
+      val (exit, _) = ProfileMain.mainInternal(appArgs)
+      assert(exit == 0)
+    }
+
+    val eventLogInfo = EventLogPathProcessor.getEventLogInfo(eventLog, hadoopConf)
+    assert(eventLogInfo.size == 1)
+    val app = new ApplicationInfo(
+      hadoopConf,
+      eventLogInfo.head._1,
+      PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE))
+
+    assert(app.sparkVersion == "17.3.x-gpu-ml-scala2.13")
+    assert(app.gpuMode, "expected the RAPIDS plugin to be detected")
+    assert(!app.dbPlugin.isPhotonEnabled, "expected the GPU capture to use STANDARD runtime")
+    assert(app.getSparkRuntime == SparkRuntime.SPARK_RAPIDS)
+    assert(app.sparkRapidsBuildInfo.sparkRapidsBuildInfo.nonEmpty)
+    assert(app.getTotalLines == 7022L)
+    assert(app.getProcessedLinesCount == 3689L)
+    assert(app.getSkippedLinesCount == 3333L)
+    assert(app.sqlIdToInfo.size == 25)
+    assert(app.jobIdToInfo.size == 57)
+  }
+
+  test("Databricks 17.3 fixtures contain only synthetic S3 paths") {
+    val syntheticS3Path = "s3://dummy-s3-bucket/REDACTED"
+    val fixtures = Seq(
+      s"$qualLogDir/nds_merge_q4_photon_db_17_3.zstd",
+      s"$logDir/nds_q88_gpu_db_17_3.zstd")
+
+    fixtures.foreach { fixture =>
+      val source = UTF8Source.fromInputStream(
+        new ZstdInputStream(new FileInputStream(fixture)))
+      try {
+        var foundSyntheticPath = false
+        source.getLines().foreach { line =>
+          if (line.contains(syntheticS3Path)) {
+            foundSyntheticPath = true
+          }
+          assert(!line.replace(syntheticS3Path, "").contains("s3://"),
+            s"found an unredacted S3 URI in ${new File(fixture).getName}")
+        }
+        assert(foundSyntheticPath,
+          s"expected synthetic S3 paths in ${new File(fixture).getName}")
+      } finally {
+        source.close()
+      }
+    }
   }
 
   test("test sql and resourceprofile eventlog") {
@@ -618,6 +679,57 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
     assert(lastRow.parent === "WholeStageCodegen (3)")
     assert(lastRow.child === "SerializeFromObject")
     assert(lastRow.childNodeID === 19)
+  }
+
+  test("test photon wholeStage mapping excludes shuffle sources") {
+    val args = Array(
+      "--platform",
+      PlatformNames.DATABRICKS_AWS,
+      s"$qualLogDir/nds_q88_photon_db_13_3.zstd")
+    val apps = ToolTestUtils.processProfileApps(args, sparkSession)
+    assert(apps.size == 1)
+
+    val wholeStageMapping = new CollectInformation(apps.toSeq).getWholeStageCodeGenMapping
+    val expectedWholeStageMapping = apps.flatMap { app =>
+      app.sqlManager.applyToAllPlanModels { planModel =>
+        planModel.getToolsPlanGraph.nodes.collect {
+          case cluster: ToolsSparkPlanGraphCluster =>
+            cluster.nodes.map { child =>
+              (planModel.id, cluster.id, cluster.name, child.name, child.id)
+            }
+        }.flatten
+      }.flatten
+    }.toSeq
+    val actualWholeStageMapping = wholeStageMapping.map { row =>
+      (row.sqlID, row.nodeID, row.parent, row.child, row.childNodeID)
+    }
+    def toMultiset(
+        rows: Seq[(Long, Long, String, String, Long)]): Map[
+          (Long, Long, String, String, Long), Int] = {
+      rows.groupBy(identity).map { case (row, copies) => row -> copies.size }
+    }
+    assert(toMultiset(actualWholeStageMapping) == toMultiset(expectedWholeStageMapping),
+      "profiling WholeStage mappings do not match graph cluster memberships")
+    val nodePlatformNames = apps.flatMap { app =>
+      app.sqlManager.applyToAllPlanModels { planModel =>
+        planModel.getToolsPlanGraph.allNodes.map { node =>
+          (planModel.id, node.id) -> node.platformName
+        }
+      }.flatten
+    }.toMap
+
+    assert(wholeStageMapping.size == 175,
+      s"expected 175 profiling WholeStage mappings, found ${wholeStageMapping.size}")
+    val unresolvedMappings = wholeStageMapping.filterNot { row =>
+      nodePlatformNames.contains((row.sqlID, row.childNodeID))
+    }
+    assert(unresolvedMappings.isEmpty,
+      s"profiling WholeStage mappings contain unresolved children: $unresolvedMappings")
+    val sourceMappings = wholeStageMapping.filter { row =>
+      nodePlatformNames.get((row.sqlID, row.childNodeID)).contains("PhotonShuffleExchangeSource")
+    }
+    assert(sourceMappings.isEmpty,
+      s"profiling WholeStage mappings contain Photon shuffle sources: $sourceMappings")
   }
 
 

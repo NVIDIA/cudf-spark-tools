@@ -828,9 +828,9 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   }
 
   // The fixture is an NDS Delta MERGE (merge.tpl query 4) whose write path uses Photon nodes that
-  // databricks-13_3.json does not map (#2158). The expected set pins that gap; #2159 and a
-  // PhotonClustering mapping should shrink it. Its Photon metric labels are parsed, but their
-  // meanings and units are not validated (#2175).
+  // databricks-13_3.json did not map before #2159 (#2158). Every Photon node in it now has a
+  // mapping, so the expected set of unmapped operators is empty. Its Photon metric labels are
+  // parsed, but their meanings and units are not validated (#2175).
   runConditionalTest(
     "Databricks 17.3 Photon qualification baseline",
     () => (ToolUtils.isSpark340OrLater(),
@@ -843,8 +843,7 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
     assert(app.sparkVersion == "17.3.x-photon-scala2.13",
       s"unexpected DBR version: ${app.sparkVersion}")
 
-    val expectedUnmappedPhotonOps = Set(
-      "PhotonClustering", "PhotonColumnarToRow", "PhotonParquetWriter", "PhotonWriteStage")
+    val expectedUnmappedPhotonOps = Set.empty[String]
     photonQualTestBuilder(logFile, expectedLabel, PlatformNames.DATABRICKS_AZURE,
       "Photon operators without an OSS mapping", rows => {
         // An unmapped Photon node keeps its Photon name as the exec name.

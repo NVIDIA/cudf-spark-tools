@@ -17,6 +17,7 @@
 package com.nvidia.spark.rapids.tool.planparser
 
 import com.nvidia.spark.rapids.tool.PlatformNames
+import com.nvidia.spark.rapids.tool.planparser.db.PhotonOssOpMapper
 import com.nvidia.spark.rapids.tool.qualification.PluginTypeChecker
 
 
@@ -81,5 +82,31 @@ class PhotonPlanParserSuite extends BasePlanParserSuite {
       assert(stageExec.speedupFactor == SQLPlanParser.averageSpeedup(
         children.filterNot(_.shouldRemove).map(_.speedupFactor)))
     }
+  }
+
+  // Photon nodes that appear in Databricks 15.4 and 17.3 plans and not in the 13.3 log above.
+  // Each expected value is written out, so a wrong or missing entry in the mapping file fails
+  // here rather than passing through the generic parser as an unsupported exec.
+  val photonOpTestCasesNewerRuntimes: Seq[(String, String)] = Seq(
+    "PhotonWriteStage" -> "WholeStageCodegen",
+    "PhotonParquetWriter" -> "WriteFiles",
+    "PhotonColumnarToRow" -> "ColumnarToRow",
+    "PhotonMetadataSubquery" -> "Subquery",
+    "PhotonRuntimeFilterSource" -> "Subquery",
+    "PhotonRange" -> "Range",
+    "PhotonJsonScan" -> "Scan",
+    "PhotonClustering" -> "Sort"
+  )
+
+  test("Photon operators from Databricks 15.4 and 17.3 map to their Spark equivalents") {
+    photonOpTestCasesNewerRuntimes.foreach { case (photonName, sparkName) =>
+      assert(PhotonOssOpMapper.mapContentToOss(photonName) == sparkName,
+        s"$photonName should map to $sparkName")
+    }
+    // The scan keeps its format suffix, as PhotonScan does, so the read parser sees "Scan json".
+    assert(PhotonOssOpMapper.mapContentToOss("PhotonJsonScan json") == "Scan json")
+    // A Photon node with no entry is left as it is; that is what the generic parser then reports
+    // as unsupported.
+    assert(PhotonOssOpMapper.mapContentToOss("PhotonNotARealNode") == "PhotonNotARealNode")
   }
 }

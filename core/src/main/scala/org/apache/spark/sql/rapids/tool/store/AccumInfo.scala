@@ -201,8 +201,16 @@ class AccumInfo(val infoRef: AccumMetaRef) {
       }
       val mergedSumSqDev = StatisticsMetrics.mergeSumSqDev(
         a.count, a.sampleTotal, a.welfordSumSqDev, b.count, b.sampleTotal, b.welfordSumSqDev)
+      // A stage completion without task samples carries a placeholder minimum.
+      val minValue = if (a.count == 0L) {
+        b.min
+      } else if (b.count == 0L) {
+        a.min
+      } else {
+        Math.min(a.min, b.min)
+      }
       StatisticsMetrics(
-        Math.min(a.min, b.min),
+        minValue,
         medianValue,
         Math.max(a.max, b.max),
         totalCount,

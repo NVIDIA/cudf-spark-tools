@@ -1859,36 +1859,54 @@ abstract class AutoTuner(
       }
     }
 
-    // Handle initialExecutors and executor.instances together
+    // Spark starts with max(minExecutors, initialExecutors, executor.instances), so
+    // initialExecutors and executor.instances are coordinated. A protected (enforced or
+    // preserved) value of one property wins over the adjustable value of the other.
     // Ref: https://spark.apache.org/docs/3.5.7/configuration.html#dynamic-allocation
+    // A protected zero takes no part: zero recommendations are skipped, so it could not
+    // replace the adjustable value or cap minExecutors, and would leave the source value.
+    def protectedValue(property: String): Option[Int] = {
+      if (ignoreRecommendation(property)) {
+        recommendations.get(property).flatMap(_.tunedValue).map(_.toInt).filter(_ > 0)
+      } else {
+        None
+      }
+    }
+    protectedValue("spark.dynamicAllocation.initialExecutors").foreach { initial =>
+      appendRecommendation("spark.executor.instances", initial.toLong)
+    }
     adjustedValue("spark.dynamicAllocation.initialExecutors").foreach { v =>
-      // First, find the max recommended value for executor instances
-      // as max of executor.instances, initialExecutors, and minExecutors
-      // This handles if there are any enforced values for either of the
-      // above properties.
-      val recInstanceValues: Seq[Int] = Seq(
-        recommendations.get("spark.executor.instances"),
-        recommendations.get("spark.dynamicAllocation.initialExecutors"),
-        recommendations.get("spark.dynamicAllocation.minExecutors")
-      ).flatMap(_.flatMap(_.tunedValue).map(_.toInt))
-      val recInstancesOpt = if (recInstanceValues.nonEmpty) Some(recInstanceValues.max) else None
-      // Use the max of the adjusted value and the recommended value
-      // of executor instances to avoid reducing the number of executors.
-      val valueToUse = recInstancesOpt match {
-        case Some(recInst) if recInst > v =>
-          recInst
-        case _ =>
+      val valueToUse = protectedValue("spark.executor.instances").getOrElse {
+        // First, find the max recommended value for executor instances
+        // as max of executor.instances, initialExecutors, and minExecutors
+        // This handles if there are any enforced values for either of the
+        // above properties.
+        val recInstanceValues: Seq[Int] = Seq(
+          recommendations.get("spark.executor.instances"),
+          recommendations.get("spark.dynamicAllocation.initialExecutors"),
+          recommendations.get("spark.dynamicAllocation.minExecutors")
+        ).flatMap(_.flatMap(_.tunedValue).map(_.toInt))
+        // Use the max of the adjusted value and the recommended value
+        // of executor instances to avoid reducing the number of executors.
+        if (recInstanceValues.nonEmpty && recInstanceValues.max > v) {
+          recInstanceValues.max
+        } else {
           // Track this only if the selected value is the adjusted value.
           markAsAdjustedProperty("spark.dynamicAllocation.initialExecutors", v)
           v
+        }
       }
       appendRecommendation("spark.dynamicAllocation.initialExecutors", valueToUse.toLong)
       // Set spark.executor.instances to match initialExecutors to maintain consistency.
       appendRecommendation("spark.executor.instances", valueToUse.toLong)
     }
 
-    // Simpler logic for min and max executors
-    adjustedValue("spark.dynamicAllocation.minExecutors").foreach { v =>
+    // Simpler logic for min and max executors. An adjustable minExecutors is capped to the
+    // protected startup values, otherwise it would raise the startup they set.
+    val protectedStartup = Seq("spark.dynamicAllocation.initialExecutors",
+      "spark.executor.instances").flatMap(protectedValue)
+    adjustedValue("spark.dynamicAllocation.minExecutors").foreach { scaled =>
+      val v = if (protectedStartup.isEmpty) scaled else math.min(scaled, protectedStartup.max)
       markAsAdjustedProperty("spark.dynamicAllocation.minExecutors", v)
       appendRecommendation("spark.dynamicAllocation.minExecutors", v)
     }
@@ -1903,6 +1921,24 @@ abstract class AutoTuner(
     // while maxExecutors was independently scaled down by the core ratio.
     enforceDynamicAllocationInvariants()
 
+    // Protected values are kept as given. If one of them is below the resulting startup,
+    // explain which property determines it (a protected minExecutors can be that property).
+    val minProp = "spark.dynamicAllocation.minExecutors"
+    val startupProps = Seq(minProp, "spark.dynamicAllocation.initialExecutors",
+      "spark.executor.instances")
+    val protectedProps = startupProps.flatMap(p => protectedValue(p).map(p -> _))
+    val startupValues = startupProps.flatMap(p => getPropertyValue(p).map(v => p -> v.toInt))
+    if (protectedProps.nonEmpty) {
+      val (startupProp, startup) = startupValues.maxBy(_._2)
+      if (protectedProps.exists { case (p, v) => p != minProp && v < startup }) {
+        val listed = protectedProps.map { case (p, v) => s"'$p' ($v)" }.mkString(", ")
+        appendComment(
+          s"""Protected $listed were left unchanged.
+             |Spark starts with max(minExecutors, initialExecutors, executor.instances) = $startup,
+             |determined by '$startupProp'.""".stripMargin.replaceAll("\n", "\n  "))
+      }
+    }
+
     if (adjustedProperties.nonEmpty) {
       appendComment(commentForDynamicAllocationAdjustment(adjustedProperties.toList,
         sourceExecCores, gpuExecCores))
@@ -1912,6 +1948,9 @@ abstract class AutoTuner(
   /**
    * Enforces Spark's dynamic allocation invariant:
    *   minExecutors <= initialExecutors <= maxExecutors
+   *
+   * Also bounds the recommended executor.instances to [minExecutors, maxExecutors], even when
+   * no initialExecutors is recommended.
    *
    * This is necessary because initialExecutors may be boosted to match executor.instances
    * (from cluster sizing), while maxExecutors is independently scaled by the core ratio,
@@ -1981,6 +2020,17 @@ abstract class AutoTuner(
         trackAdjustment(
           "spark.executor.instances", initial, min)
       case _ =>
+    }
+
+    // The blocks above only touch executor.instances when initialExecutors is recommended.
+    // Bound it by min/max regardless, as Spark derives the initial executor count from it.
+    getRecValue("spark.executor.instances").foreach { instances =>
+      val atLeastMin = adjustedMinOpt.fold(instances)(math.max(instances, _))
+      val bounded = maxOpt.fold(atLeastMin)(math.min(atLeastMin, _))
+      if (bounded != instances) {
+        appendRecommendation("spark.executor.instances", bounded.toLong)
+        trackAdjustment("spark.executor.instances", instances, bounded)
+      }
     }
 
     if (adjusted.nonEmpty) {

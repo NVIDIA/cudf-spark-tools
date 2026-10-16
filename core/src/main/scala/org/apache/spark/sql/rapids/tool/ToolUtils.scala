@@ -342,6 +342,7 @@ object ExecHelper {
     "GenerateBloomFilter",      // Exclusive on AWS. Ignore it as metrics cannot be evaluated.
     "ReusedExchange",           // reusedExchange should not be added to speedups
     "ColumnarToRow",            // for now, assume everything is columnar
+    "RowToColumnar",            // the reverse transition, e.g. Photon's PhotonRowToColumnar
     // Our customer-integration team requested this to be added to the list of execs to be removed.
     "ResultQueryStage",
     // AdaptiveSparkPlan is not a real exec. It is a wrapper for the whole plan.

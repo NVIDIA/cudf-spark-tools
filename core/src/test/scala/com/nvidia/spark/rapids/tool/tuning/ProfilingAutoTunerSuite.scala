@@ -1468,7 +1468,6 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |Spark Properties:
           |--conf spark.dataproc.enhanced.execution.enabled=false
           |--conf spark.dataproc.enhanced.optimizer.enabled=false
-          |--conf spark.executor.instances=8
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0

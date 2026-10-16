@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.planparser.db.DBVersionExtractor
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence,
   RecommendedCommentResult, ShuffleStageInputAnalysis}
@@ -2146,9 +2146,13 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     // With user-enforced cores=11 and source total cores = 11 * 148 = 1628
     // Recommended executors = 1628 / 11 = 148
     // Without the fix (using default 12 cores), it would be 1628 / 12 = 135
-    // This is the key assertion - executor.instances=148 proves cores=11 was used
-    assert(autoTunerOutput.contains("spark.executor.instances=148"),
-      s"Expected spark.executor.instances=148 with enforced cores=11, but got:\n$autoTunerOutput")
+    // This is the key assertion - 148 executors proves cores=11 was used. It is checked on the
+    // recommended cluster since executor.instances is not recommended with dynamic allocation
+    // when the source does not set it.
+    assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(148),
+      s"Expected 148 recommended executors with enforced cores=11, but got:\n$autoTunerOutput")
+    assert(!autoTunerOutput.contains("spark.executor.instances="),
+      s"Expected no spark.executor.instances with dynamic allocation, but got:\n$autoTunerOutput")
     // Note: spark.executor.cores may not appear in output if source already has same value
   }
 
@@ -2305,11 +2309,10 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  // With a target cluster, ConstantGpuCountStrategy re-slices cores (8 -> 16).
-  // Core ratio = 8/16 = 0.5, so DA values are halved.
-  // initialExecutors is boosted to max(floor(8*0.5), executor.instances=18) = 18.
-  // maxExecutors = floor(18*0.5) = 9. Violation: initial(18) > max(9), capped to 9.
-  test("dynamic allocation enforces invariant with target cluster") {
+  // With a target cluster, ConstantGpuCountStrategy re-slices cores (8 -> 16) but keeps the
+  // executor (GPU) count, so the DA values are not scaled by the core ratio (scale = 1.0).
+  // executor.instances is not set in the source, so it is not recommended.
+  test("dynamic allocation keeps executor counts with constant GPU count strategy") {
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
@@ -2345,20 +2348,32 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
     val autoTuner = buildAutoTunerForTests(
       infoProvider, platform, Some(Yarn))
+    // Use showOnlyUpdatedProps = false so that DA values left unchanged from source
+    // (min/max) are still present to assert on.
     val (properties, comments) =
-      autoTuner.getRecommendedProperties()
-    assertDynamicAllocationRecommendations(properties, comments,
-      DynamicAllocationInfo(
-        enabled = true, max = "9", min = "2",
-        initial = "9"))
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val recommendedProps = properties.map(p => p.name -> p.getTuneValue()).toMap
+
+    def assertProp(name: String, expected: String): Unit =
+      assert(recommendedProps.get(name).contains(expected),
+        s"$name: expected $expected, got ${recommendedProps.get(name)}")
+
+    assertProp("spark.executor.cores", "16")
+    assertProp("spark.dynamicAllocation.minExecutors", "4")
+    assertProp("spark.dynamicAllocation.initialExecutors", "8")
+    assertProp("spark.dynamicAllocation.maxExecutors", "18")
+    assert(!recommendedProps.contains("spark.executor.instances"))
+    assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(18))
+    assert(!comments.exists(_.comment.contains("based on cores ratio")),
+      "DA properties should not be scaled by the core ratio with ConstantGpuCountStrategy")
   }
 
   // Issue #2053: when spark.executor.cores is in the target cluster `preserve` list,
   // the preserved source value (8) must be the sizing baseline, NOT re-sliced to the
-  // platform default (16). Same scenario as "dynamic allocation enforces invariant with
-  // target cluster" above, but with preserve. Core ratio = 8/8 = 1.0, so source DA is not
-  // scaled; initialExecutors is still boosted to match executor.instances=18.
-  // Expected: cores=8, instances=18, DA min=4 / initial=18 / max=18.
+  // platform default (16). Same scenario as "dynamic allocation keeps executor counts with
+  // constant GPU count strategy" above, but with preserve. Source DA is not scaled and
+  // executor.instances is not recommended since the source does not set it.
+  // Expected: cores=8, 18 recommended executors, DA min=4 / initial=8 / max=18.
   test("preserved spark.executor.cores is respected by cluster sizing and dynamic allocation") {
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
@@ -2405,9 +2420,9 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         s"$name: expected $expected, got ${recommendedProps.get(name)}")
 
     assertProp("spark.executor.cores", "8")
-    assertProp("spark.executor.instances", "18")
+    assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(18))
     assertProp("spark.dynamicAllocation.minExecutors", "4")
-    assertProp("spark.dynamicAllocation.initialExecutors", "18")
+    assertProp("spark.dynamicAllocation.initialExecutors", "8")
     assertProp("spark.dynamicAllocation.maxExecutors", "18")
   }
 
@@ -2594,7 +2609,6 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val expectedResults =
       s"""|
           |Spark Properties:
-          |--conf spark.dynamicAllocation.initialExecutors=18
           |--conf spark.executor.memory=16g
           |--conf spark.executor.memoryOverhead=50g
           |--conf spark.executor.resource.gpu.vendor=nvidia.com

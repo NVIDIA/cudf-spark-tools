@@ -1,6 +1,20 @@
 
 <br/>
 
+## Release [v26.10.0](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.10.0)
+Generated on 2026-10-30
+### Core
+
+- Make cluster sizing configurable and align onprem qualification defaults ([#2205](https://github.com/NVIDIA/cudf-spark-tools/pull/2205))
+- Sync supported ops with RAPIDS plugin as of 2026-10-22 ([#2184](https://github.com/NVIDIA/cudf-spark-tools/pull/2184))
+
+### Miscellaneous
+
+- Pin Python unit CI to Ubuntu 24.04 ([#2208](https://github.com/NVIDIA/cudf-spark-tools/pull/2208))
+
+
+<br/>
+
 ## Release [v26.08.4](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.08.4)
 Generated on 2026-10-23
 ### User Tools

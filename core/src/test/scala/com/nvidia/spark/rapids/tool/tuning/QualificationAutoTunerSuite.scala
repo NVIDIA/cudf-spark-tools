@@ -2219,6 +2219,27 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     recClusterInfo.dynamicAllocationInitialExecutors shouldBe "1"
   }
 
+  // An excluded executor.instances is not emitted, so its source value (20 CPU executors) neither
+  // raises maxExecutors nor sets the starting count: minExecutors and initialExecutors 2 -> 1 and
+  // maxExecutors 8 -> 4, rather than maxExecutors and initialExecutors both raised to 20.
+  test("dynamic allocation ignores the source value of an excluded executor.instances") {
+    val (tuned, comments, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.executor.instances" -> "20",
+        "spark.dynamicAllocation.minExecutors" -> "2",
+        "spark.dynamicAllocation.initialExecutors" -> "2",
+        "spark.dynamicAllocation.maxExecutors" -> "8"),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.executor.instances")))
+
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("4")
+    tuned.get("spark.executor.instances") shouldBe None
+    comments.mkString("\n") should not include "to enforce"
+    recClusterInfo.dynamicAllocationInitialExecutors shouldBe "1"
+    recClusterInfo.dynamicAllocationMaxExecutors shouldBe "4"
+  }
+
   // minExecutors is rounded down, but the starting count uses it rounded up so the application
   // starts with at least the source cores: minExecutors 3 -> floor(1.5) = 1, while
   // initialExecutors and executor.instances are ceil(1.5) = 2.

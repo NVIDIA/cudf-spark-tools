@@ -2118,6 +2118,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     // kept even though maxExecutors sits below it.
     recClusterInfo.numExecutors shouldBe 12
     comments.mkString("\n") should not include "Sized the recommended cluster"
+    // The enforced cluster size is replaced by the starting count, so it is not a conflict
+    comments.mkString("\n") should not include "Could not enforce"
   }
 
   // A scaled minExecutors above the size of the target cluster is capped to it through
@@ -2616,6 +2618,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
           |  'spark.dynamicAllocation.initialExecutors' adjusted from 6 to 14; 'spark.executor.instances' adjusted from 10 to 14.
           |- Set 'spark.driver.extraJavaOptions=-XX:-UseTransparentHugePages' to disable Transparent Huge Pages (THP) for EMR. This recommendation does not preserve existing driver JVM options; append any additional options manually. To view the source extraJavaOptions, please refer to spark_properties.csv in the tool output.
           |- Set 'spark.executor.extraJavaOptions=-XX:-UseTransparentHugePages' to disable Transparent Huge Pages (THP) for EMR. This recommendation does not preserve existing executor JVM options; append any additional options manually. To view the source extraJavaOptions, please refer to spark_properties.csv in the tool output.
+          |- Sized the recommended cluster from 10 up to 14 executors, the number
+          |  of executors the application starts with under dynamic allocation.
           |- ${classPathComments("rapids.shuffle.jars")}
           |- $additionalSparkPluginsComment
           |- ${commentForDynamicAllocationAdjustment(List("spark.dynamicAllocation.initialExecutors", "spark.executor.instances"), 8, 16)}

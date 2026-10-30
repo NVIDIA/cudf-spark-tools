@@ -59,7 +59,7 @@ Spark rejects `minExecutors > maxExecutors` and, on YARN and Kubernetes, a start
 2. `minExecutors` is capped to `maxExecutors`.
 3. `initialExecutors` and `executor.instances` are kept within `[minExecutors, maxExecutors]`. A missing `minExecutors` counts as 0.
 
-Rule 3 does not lower an enforced or preserved value.
+Rule 3 does not lower an enforced or preserved value, and it does not raise one to `minExecutors`, since Spark starts with the largest of them rather than rejecting a lower value.
 
 ## Starting executor count
 
@@ -79,7 +79,7 @@ The starting count is the largest of:
 | Enforced, positive | Not counted; it is the target cluster size. |
 | Excluded | Not counted, since it is not emitted. |
 
-The recommended cluster summary reports the tuned `minExecutors` and `maxExecutors` and the starting count as its initial executors. Properties without a recommendation keep their source value.
+The recommended cluster is capped to `maxExecutors` and raised to the starting count if the workload sizing left it smaller, unless an enforced `executor.instances` gives the cluster size. The recommended cluster summary reports the tuned `minExecutors` and `maxExecutors` and the starting count as its initial executors. Properties without a recommendation keep their source value.
 
 ## Boundaries and limitations
 

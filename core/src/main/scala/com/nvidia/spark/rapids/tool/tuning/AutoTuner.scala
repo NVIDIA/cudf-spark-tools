@@ -2025,7 +2025,8 @@ abstract class AutoTuner(
    *
    * The executor count of the cluster is sized from the workload, so it can land above the
    * maxExecutors the application can reach. Since the extra executors would stay idle for the
-   * whole run, the cluster is capped to maxExecutors and its worker node count recomputed with
+   * whole run, the cluster is capped to maxExecutors. It is raised to the starting executor count
+   * if the sizing left it smaller, and its worker node count recomputed with
    * [[Platform.workerNodeCountFor]], the same helper that sized it in the first place.
    */
   private def syncDynamicAllocationToRecommendedCluster(): Unit = {
@@ -2045,10 +2046,20 @@ abstract class AutoTuner(
       recommendedIntValue("spark.dynamicAllocation.maxExecutors").filter(_ > 0)
     }
     platform.recommendedClusterInfo = platform.recommendedClusterInfo.map { info =>
-      val numExecutors = maxExecutorsCap.fold(info.numExecutors)(math.min(info.numExecutors, _))
+      val cappedExecutors =
+        maxExecutorsCap.fold(info.numExecutors)(math.min(info.numExecutors, _))
+      // The cluster must also hold the executors the application starts with. Like the cap, this
+      // only applies to a cluster size we derived ourselves.
+      val numExecutors = if (targetClusterExecutors.isDefined || effectiveInitial.isEmpty) {
+        cappedExecutors
+      } else {
+        math.max(cappedExecutors, effectiveInitial.max)
+      }
       val numWorkerNodes = platform.workerNodeCountFor(numExecutors, info.numGpusPerNode)
-      if (numExecutors != info.numExecutors) {
+      if (numExecutors < info.numExecutors) {
         appendComment(commentForClusterSizedToMaxExecutors(info.numExecutors, numExecutors))
+      } else if (numExecutors > info.numExecutors) {
+        appendComment(commentForClusterSizedToStartingExecutors(info.numExecutors, numExecutors))
       }
       info.copy(
         numExecutors = numExecutors,
@@ -2129,10 +2140,19 @@ abstract class AutoTuner(
 
     // Keep initialExecutors and executor.instances within [minExecutors, maxExecutors]. A missing
     // minExecutors uses Spark's default of 0, so it does not block the cap to maxExecutors.
+    // Only a changeable value is raised to minExecutors (see below).
     val minOpt = getRecValue("spark.dynamicAllocation.minExecutors")
-    Seq("spark.dynamicAllocation.initialExecutors", "spark.executor.instances").foreach { prop =>
+    // An enforced executor.instances that is the size of the target cluster is replaced by the
+    // starting count (see targetClusterExecutors), so it is not checked against the bounds.
+    val boundedProps = Seq("spark.dynamicAllocation.initialExecutors") ++
+      Seq("spark.executor.instances").filter(_ => targetClusterExecutors.isEmpty)
+    boundedProps.foreach { prop =>
       getRecValue(prop).foreach { value =>
-        val bounded = math.max(minOpt.getOrElse(0), math.min(maxOpt.getOrElse(value), value))
+        // Spark does not reject a starting value below minExecutors, it starts with the largest of
+        // them. So the lower bound only applies to a value that can be changed, and an enforced or
+        // preserved one is not reported as a violation.
+        val lowerBound = if (ignoreRecommendation(prop)) 0 else minOpt.getOrElse(0)
+        val bounded = math.max(lowerBound, math.min(maxOpt.getOrElse(value), value))
         if (bounded != value) {
           adjust(prop, value, bounded)
         }
@@ -3817,6 +3837,13 @@ trait AutoTunerStaticComments {
        |Sized the recommended cluster from $fromExecutors down to $toExecutors executors, the
        |'spark.dynamicAllocation.maxExecutors' the application can reach. A larger cluster would
        |stay partly idle for the whole run.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForClusterSizedToStartingExecutors(fromExecutors: Int, toExecutors: Int): String = {
+    s"""
+       |Sized the recommended cluster from $fromExecutors up to $toExecutors executors, the number
+       |of executors the application starts with under dynamic allocation.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 

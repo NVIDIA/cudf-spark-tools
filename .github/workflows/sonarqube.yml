@@ -13,18 +13,25 @@
 # limitations under the License.
 
 # A workflow to run SonarQube analysis for rapids tools
-name: SonarQube PR analysis
+name: SonarQube analysis
 
 on:
   pull_request:
     branches: [dev]
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to scan (for example, dev or release/26.10)
+        required: true
+        default: dev
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: sonarqube-pr-${{ github.event.pull_request.number }}
+  group: sonarqube-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.branch }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +44,7 @@ jobs:
       - name: Checkout code
         uses: NVIDIA/spark-rapids-common/checkout@main
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || format('refs/heads/{0}', inputs.branch) }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -63,8 +70,8 @@ jobs:
           fi
           echo "SonarQube version: $version"
 
-      - name: Read project version
-        id: version
+      - name: Read project metadata
+        id: metadata
         shell: bash
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
@@ -76,8 +83,10 @@ jobs:
               raise SystemExit("Missing core/pom.xml project.version")
           print("value=" + version.strip())
           PY
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: SonarQube analysis
+      - name: SonarQube PR analysis
+        if: github.event_name == 'pull_request'
         uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -86,8 +95,22 @@ jobs:
           args: >-
             -Dsonar.projectKey=GPUSW_SPMD_spark-rapids_cudf-spark-tools
             -Dsonar.projectName=cudf-spark-tools
-            -Dsonar.projectVersion=${{ steps.version.outputs.value }}
+            -Dsonar.projectVersion=${{ steps.metadata.outputs.value }}
             -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
             -Dsonar.pullrequest.branch=${{ github.head_ref }}
             -Dsonar.pullrequest.base=${{ github.base_ref }}
-            -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}
+            -Dsonar.scm.revision=${{ steps.metadata.outputs.revision }}
+
+      - name: SonarQube branch analysis
+        if: github.event_name == 'workflow_dispatch'
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          scannerVersion: 8.3.0.16463
+          args: >-
+            -Dsonar.projectKey=GPUSW_SPMD_spark-rapids_cudf-spark-tools
+            -Dsonar.projectName=cudf-spark-tools
+            -Dsonar.projectVersion=${{ steps.metadata.outputs.value }}
+            -Dsonar.branch.name=${{ inputs.branch }}
+            -Dsonar.scm.revision=${{ steps.metadata.outputs.revision }}

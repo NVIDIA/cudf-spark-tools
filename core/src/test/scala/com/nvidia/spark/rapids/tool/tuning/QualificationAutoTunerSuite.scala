@@ -2202,6 +2202,23 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     recClusterInfo.dynamicAllocationMinExecutors shouldBe "0"
   }
 
+  // A source executor.instances of 0 (e.g. --num-executors 0) is kept as 0 rather than falling
+  // back to the cluster sizing (10 executors), so the starting count comes from minExecutors:
+  // minExecutors 2 -> 1 and maxExecutors 40 -> 20, so the application starts with 1 executor.
+  test("dynamic allocation keeps a source executor.instances of 0") {
+    val (tuned, _, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.executor.instances" -> "0",
+        "spark.dynamicAllocation.minExecutors" -> "2",
+        "spark.dynamicAllocation.maxExecutors" -> "40"),
+      ToolTestUtils.buildTargetClusterInfo())
+
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("20")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("1")
+    tuned.get("spark.executor.instances") shouldBe Some("1")
+    recClusterInfo.dynamicAllocationInitialExecutors shouldBe "1"
+  }
+
   // minExecutors is rounded down, but the starting count uses it rounded up so the application
   // starts with at least the source cores: minExecutors 3 -> floor(1.5) = 1, while
   // initialExecutors and executor.instances are ceil(1.5) = 2.

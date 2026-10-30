@@ -1910,7 +1910,9 @@ abstract class AutoTuner(
         adjustedValue(prop, roundUp = true) match {
           case Some(v) =>
             markAsAdjustedProperty(prop, v)
-            appendRecommendation(prop, v)
+            // Use the String overload, since the numeric one skips a value of 0 and would keep
+            // the executor.instances from the cluster sizing
+            appendRecommendation(prop, v.toString)
           case None =>
             recommendations.remove(prop)
         }

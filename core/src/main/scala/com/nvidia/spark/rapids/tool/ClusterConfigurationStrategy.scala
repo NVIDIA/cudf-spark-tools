@@ -47,6 +47,7 @@ case class RecommendedClusterConfig(
  * Base strategy trait for determining the sizing of the cluster configuration.
  */
 trait ClusterSizingStrategy {
+  final def getNameAsString: String = getClass.getSimpleName.stripSuffix("$")
 
   /**
    * Utility method to compute recommended cores per executor.
@@ -105,6 +106,26 @@ trait ClusterSizingStrategy {
     getRecommendedNumGpus: => Int): RecommendedClusterConfig
 }
 
+object ClusterSizingStrategy {
+  private val strategies = Seq(
+    SourceCoresPreservingStrategy,
+    ConstantTotalCoresStrategy,
+    ConstantGpuCountStrategy
+  ).map(strategy => strategy.getNameAsString -> strategy).toMap
+
+  /**
+   * Returns None for "auto", leaving strategy selection to the tool and platform defaults.
+   * Returns the named strategy otherwise; unknown values throw IllegalArgumentException.
+   */
+  def fromString(value: String): Option[ClusterSizingStrategy] = value match {
+    case "auto" => None
+    case _ => Some(strategies.getOrElse(value,
+      throw new IllegalArgumentException(
+        s"Invalid CLUSTER_SIZING_STRATEGY '$value'. Expected auto, " +
+          s"${strategies.keys.toSeq.sorted.mkString(", ")}.")))
+  }
+}
+
 /**
  * Strategy that keeps the total number of CPU cores between the source and
  * target clusters constant. It adjusts the number of executors (and hence GPUs)
@@ -154,7 +175,7 @@ object ConstantGpuCountStrategy extends ClusterSizingStrategy {
 
 /**
  * Strategy that preserves the source cluster's cores-per-executor and executor count.
- * Used in profiling mode on fixed (on-prem) hardware where node slicing is not
+ * Used on fixed (on-prem) hardware where node slicing is not
  * changeable. User-enforced overrides are still honored.
  */
 object SourceCoresPreservingStrategy extends ClusterSizingStrategy {

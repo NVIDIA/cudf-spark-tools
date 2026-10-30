@@ -20,7 +20,7 @@ import java.nio.file.Paths
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{ConstantGpuCountStrategy, ConstantTotalCoresStrategy, DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, SourceCoresPreservingStrategy, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence, ShuffleInputProvenance, ShuffleStageInputAnalysis}
 import com.nvidia.spark.rapids.tool.qualification.{PluginTypeChecker, QualificationArgs, QualificationMain}
@@ -255,14 +255,14 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         s"- ${notEnoughMemCommentForKey("spark.executor.memory")}",
         s"- ${notEnoughMemCommentForKey("spark.executor.memoryOverhead")}",
         s"- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}",
-        s"- ${notEnoughMemComment(40140)}"
+        s"- ${notEnoughMemComment(22118)}"
       )),
     ("sufficient memory available for executors",
       "44g",
       Seq(
-        "--conf spark.executor.memory=32g",
-        "--conf spark.executor.memoryOverhead=14g",
-        "--conf spark.rapids.memory.pinnedPool.size=5530m"
+        "--conf spark.executor.memory=16g",
+        "--conf spark.executor.memoryOverhead=30g",
+        "--conf spark.rapids.memory.pinnedPool.size=8g"
       ))
   )
   // scalastyle:on line.size.limit
@@ -435,7 +435,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   // are honored by the AutoTuner.
   // AutoTuner is expected to:
   // - Recommend `spark.executor.memory` to a value:
-  //     1.2g/core * 16cores = 19648m
+  //     1.2g/core * 8cores = 9824m
   // - Recommend `spark.rapids.sql.concurrentGpuTasks` to a value:
   //     max(CONC_GPU_TASKS (8), gpuMemory (24g) / GPU_MEM_PER_TASK (4g) = 6
   test("AutoTuner honours user provided tuning configurations specific to Qualification") {
@@ -488,20 +488,18 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     val expectedResults =
       s"""|
           |Spark Properties:
-          |--conf spark.executor.cores=16
-          |--conf spark.executor.instances=2
-          |--conf spark.executor.memory=19648m
-          |--conf spark.executor.memoryOverhead=15168m
+          |--conf spark.executor.memory=9824m
+          |--conf spark.executor.memoryOverhead=24992m
           |--conf spark.executor.resource.gpu.amount=1
           |--conf spark.locality.wait=0
           |--conf spark.plugins=com.nvidia.spark.SQLPlugin
-          |--conf spark.rapids.memory.pinnedPool.size=6602m
-          |--conf spark.rapids.shuffle.multiThreaded.reader.threads=24
-          |--conf spark.rapids.shuffle.multiThreaded.writer.threads=24
+          |--conf spark.rapids.memory.pinnedPool.size=8g
+          |--conf spark.rapids.shuffle.multiThreaded.reader.threads=20
+          |--conf spark.rapids.shuffle.multiThreaded.writer.threads=20
           |--conf spark.rapids.sql.batchSizeBytes=1g
           |--conf spark.rapids.sql.concurrentGpuTasks=6
           |--conf spark.rapids.sql.enabled=true
-          |--conf spark.rapids.sql.multiThreadedRead.numThreads=32
+          |--conf spark.rapids.sql.multiThreadedRead.numThreads=20
           |--conf spark.sql.adaptive.advisoryPartitionSizeInBytes=128m
           |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
           |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=200
@@ -1827,19 +1825,17 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     val expectedResults =
       s"""
         |Spark Properties:
-        |--conf spark.executor.cores=16
-        |--conf spark.executor.instances=2
         |--conf spark.executor.memory=[FILL_IN_VALUE]
         |--conf spark.executor.resource.gpu.amount=1
         |--conf spark.locality.wait=0
         |--conf spark.plugins=com.nvidia.spark.SQLPlugin
         |--conf spark.rapids.memory.pinnedPool.size=[FILL_IN_VALUE]
-        |--conf spark.rapids.shuffle.multiThreaded.reader.threads=24
-        |--conf spark.rapids.shuffle.multiThreaded.writer.threads=24
+        |--conf spark.rapids.shuffle.multiThreaded.reader.threads=20
+        |--conf spark.rapids.shuffle.multiThreaded.writer.threads=20
         |--conf spark.rapids.sql.batchSizeBytes=1g
         |--conf spark.rapids.sql.concurrentGpuTasks=3
         |--conf spark.rapids.sql.enabled=true
-        |--conf spark.rapids.sql.multiThreadedRead.numThreads=32
+        |--conf spark.rapids.sql.multiThreadedRead.numThreads=20
         |--conf spark.sql.adaptive.advisoryPartitionSizeInBytes=128m
         |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
         |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=200
@@ -1866,7 +1862,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
         |- ${classPathComments("rapids.jars.missing")}
         |- ${classPathComments("rapids.shuffle.jars")}
-        |- ${notEnoughMemComment(40140)}
+        |- ${notEnoughMemComment(22118)}
         |- $additionalSparkPluginsComment
         |""".stripMargin
     // scalastyle:on line.size.limit
@@ -2156,6 +2152,112 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
+  test("source cores preserving strategy keeps dynamic allocation executor counts") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "32",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "64g",
+      "spark.dynamicAllocation.enabled" -> "true",
+      "spark.dynamicAllocation.initialExecutors" -> "2",
+      "spark.dynamicAllocation.minExecutors" -> "1",
+      "spark.dynamicAllocation.maxExecutors" -> "4")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion))
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(16), memoryGB = Some(128L), gpuCount = Some(2),
+      gpuDevice = Some(GpuTypes.L4))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM, Some(targetClusterInfo))
+    platform.configureClusterInfoFromEventLog(
+      coresPerExecutor = 32,
+      execsPerNode = 2,
+      numExecs = 2,
+      numExecutorNodes = 1,
+      sparkProperties = sourceProps.toMap,
+      systemProperties = Map.empty)
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(qualification = List(
+      TuningConfigEntry(name = "CLUSTER_SIZING_STRATEGY",
+        default = SourceCoresPreservingStrategy.getNameAsString)))
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform,
+      userProvidedTuningConfigs = Some(tuningConfigs))
+    val (properties, comments) = autoTuner.getRecommendedProperties(
+      showOnlyUpdatedProps = false)
+    val values = properties.map(p => p.name -> p.getTuneValue()).toMap
+
+    assert(values("spark.executor.cores") == "8")
+    assert(values("spark.executor.instances") == "2")
+    assert(values("spark.dynamicAllocation.initialExecutors") == "2")
+    assert(values("spark.dynamicAllocation.minExecutors") == "1")
+    assert(values("spark.dynamicAllocation.maxExecutors") == "4")
+    assert(!comments.exists(_.comment.contains("Tuned dynamic allocation properties")))
+  }
+
+  test("constant GPU count strategy keeps dynamic allocation executor counts") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "2",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "8g",
+      "spark.dynamicAllocation.enabled" -> "true",
+      "spark.dynamicAllocation.initialExecutors" -> "2",
+      "spark.dynamicAllocation.minExecutors" -> "1",
+      "spark.dynamicAllocation.maxExecutors" -> "2")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion))
+    val target = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(4), memoryGB = Some(64L), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM, Some(target))
+    platform.configureClusterInfoFromEventLog(
+      coresPerExecutor = 2, execsPerNode = 1, numExecs = 2, numExecutorNodes = 2,
+      sparkProperties = sourceProps.toMap, systemProperties = Map.empty)
+    val config = ToolTestUtils.buildTuningConfigs(qualification = List(
+      TuningConfigEntry(name = "CLUSTER_SIZING_STRATEGY",
+        default = ConstantGpuCountStrategy.getNameAsString)))
+    val tuner = buildAutoTunerForTests(infoProvider, platform,
+      userProvidedTuningConfigs = Some(config))
+    val (properties, _) = tuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(p => p.name -> p.getTuneValue()).toMap
+
+    platform.recommendedClusterInfo.get.numExecutors shouldBe 2
+    values("spark.executor.cores") shouldBe "4"
+    values("spark.executor.instances") shouldBe "2"
+    values("spark.dynamicAllocation.initialExecutors") shouldBe "2"
+    values("spark.dynamicAllocation.minExecutors") shouldBe "1"
+    values("spark.dynamicAllocation.maxExecutors") shouldBe "2"
+  }
+
+  test("constant GPU count keeps an enforced executor count above the source allocation max") {
+    val sourceProps = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "2",
+      "spark.executor.instances" -> "2",
+      "spark.executor.memory" -> "8g",
+      "spark.dynamicAllocation.enabled" -> "true",
+      "spark.dynamicAllocation.initialExecutors" -> "2",
+      "spark.dynamicAllocation.minExecutors" -> "1",
+      "spark.dynamicAllocation.maxExecutors" -> "2")
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0), sourceProps,
+      Some(testSparkVersion))
+    val target = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(4), memoryGB = Some(64L), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4),
+      enforcedSparkProperties = Map("spark.executor.instances" -> "5"))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM, Some(target))
+    platform.configureClusterInfoFromEventLog(
+      coresPerExecutor = 2, execsPerNode = 1, numExecs = 2, numExecutorNodes = 2,
+      sparkProperties = sourceProps.toMap, systemProperties = Map.empty)
+    val config = ToolTestUtils.buildTuningConfigs(qualification = List(
+      TuningConfigEntry(name = "CLUSTER_SIZING_STRATEGY",
+        default = ConstantGpuCountStrategy.getNameAsString)))
+    val tuner = buildAutoTunerForTests(infoProvider, platform,
+      userProvidedTuningConfigs = Some(config))
+    val (properties, _) = tuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(p => p.name -> p.getTuneValue()).toMap
+
+    platform.recommendedClusterInfo.get.numExecutors shouldBe 5
+    values("spark.executor.instances") shouldBe "5"
+    values("spark.dynamicAllocation.initialExecutors") shouldBe "5"
+    values("spark.dynamicAllocation.maxExecutors") shouldBe "5"
+  }
+
   test("test dynamic allocation recommendations handle zero and negative values") {
     // Test case with edge values
     val logEventsProps: mutable.Map[String, String] = mutable.LinkedHashMap[String, String](
@@ -2176,7 +2278,10 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
 
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
       logEventsProps, Some(testSparkVersion))
-    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(16), memoryGB = Some(64L), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM, Some(targetClusterInfo))
     platform.configureClusterInfoFromEventLog(
       coresPerExecutor = 4,
       execsPerNode = 2,
@@ -2186,7 +2291,13 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       systemProperties = Map.empty
     )
 
-    val autoTuner = buildAutoTunerForTests(infoProvider, platform)
+    // Keep total cores fixed to test scaling from 4 to 16 cores, including zero and
+    // negative allocation settings. The target worker supplies enough memory for 16 cores.
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(qualification = List(
+      TuningConfigEntry(name = "CLUSTER_SIZING_STRATEGY",
+        default = ConstantTotalCoresStrategy.getNameAsString)))
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform,
+      userProvidedTuningConfigs = Some(tuningConfigs))
     val (properties, comments) = autoTuner.getRecommendedProperties()
     val autoTunerOutput = Profiler.getAutoTunerResultsAsString(properties, comments)
     // scalastyle:off line.size.limit
@@ -2198,11 +2309,11 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |--conf spark.dynamicAllocation.minExecutors=1
          |--conf spark.executor.cores=16
          |--conf spark.executor.instances=2
-         |--conf spark.executor.memory=[FILL_IN_VALUE]
+         |--conf spark.executor.memory=32g
          |--conf spark.executor.resource.gpu.amount=1
          |--conf spark.locality.wait=0
          |--conf spark.plugins=com.nvidia.spark.SQLPlugin
-         |--conf spark.rapids.memory.pinnedPool.size=[FILL_IN_VALUE]
+         |--conf spark.rapids.memory.pinnedPool.size=8g
          |--conf spark.rapids.shuffle.multiThreaded.reader.threads=24
          |--conf spark.rapids.shuffle.multiThreaded.writer.threads=24
          |--conf spark.rapids.sql.batchSizeBytes=1g
@@ -2220,6 +2331,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |- 'spark.executor.resource.gpu.amount' should be set to allow Spark to schedule GPU resources.
          |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
          |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
+         |- 'spark.rapids.memory.pinnedPool.size' was not set.
          |- 'spark.rapids.shuffle.multiThreaded.reader.threads' was not set.
          |- 'spark.rapids.shuffle.multiThreaded.writer.threads' was not set.
          |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -2231,11 +2343,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
          |- 'spark.sql.files.maxPartitionBytes' was not set.
          |- 'spark.task.resource.gpu.amount' was not set.
-         |- ${notEnoughMemCommentForKey("spark.executor.memory")}
-         |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
          |- ${classPathComments("rapids.jars.missing")}
          |- ${classPathComments("rapids.shuffle.jars")}
-         |- ${notEnoughMemComment(40140)}
          |- $additionalSparkPluginsComment
          |- ${commentForDynamicAllocationAdjustment(adjustedProperties, 4, 16)}
          |""".stripMargin
@@ -2244,7 +2353,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   }
 
   // Source: 8 cores, 18 executors (from event log),
-  // target: 16 cores (ONPREM default).
+  // target: a supplied worker with 16 cores and 64 GB memory.
   // ConstantTotalCoresStrategy preserves total core count:
   //   ceil(8*18/16) = 9 executor instances.
   // initialExecutors is boosted to match executor.instances
@@ -2266,7 +2375,10 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
 
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
       logEventsProps, Some(testSparkVersion))
-    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM)
+    val targetClusterInfo = ToolTestUtils.buildTargetClusterInfo(
+      cpuCores = Some(16), memoryGB = Some(64L), gpuCount = Some(1),
+      gpuDevice = Some(GpuTypes.L4))
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM, Some(targetClusterInfo))
     platform.configureClusterInfoFromEventLog(
       coresPerExecutor = 8,
       execsPerNode = 2,
@@ -2276,9 +2388,16 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       systemProperties = Map.empty
     )
 
-    val autoTuner = buildAutoTunerForTests(infoProvider, platform)
+    // Keep total cores fixed so scaling from 8 to 16 cores puts initialExecutors above
+    // maxExecutors. The supplied target worker keeps the memory recommendation feasible.
+    val tuningConfigs = ToolTestUtils.buildTuningConfigs(qualification = List(
+      TuningConfigEntry(name = "CLUSTER_SIZING_STRATEGY",
+        default = ConstantTotalCoresStrategy.getNameAsString)))
+    val autoTuner = buildAutoTunerForTests(infoProvider, platform,
+      userProvidedTuningConfigs = Some(tuningConfigs))
     val (properties, comments) =
       autoTuner.getRecommendedProperties()
+    properties.find(_.name == "spark.executor.memory").map(_.getTuneValue()) shouldBe Some("32g")
     // After enforcement: initial capped from 9 to 4,
     // max=floor(9*0.5)=4, min=max(1,floor(4*0.5))=2
     assertDynamicAllocationRecommendations(properties, comments,

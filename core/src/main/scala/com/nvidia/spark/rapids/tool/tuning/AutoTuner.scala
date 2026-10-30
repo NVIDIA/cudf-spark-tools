@@ -242,6 +242,10 @@ abstract class AutoTuner(
   /** Config provider instance - created using the factory method */
   lazy val configProvider: ConfigProviderType = createConfigProvider(userProvidedTuningConfigs)
 
+  private lazy val selectedClusterSizingStrategy: ClusterSizingStrategy =
+    autoTunerHelper.recommendedClusterSizingStrategy(
+      platform, configProvider.getEntry("CLUSTER_SIZING_STRATEGY").getDefault)
+
   // Plugin manager to handle all tuning plugins.
   // By default it creates a manager that sort rules across plugins allowing better control
   // of the order of rule application.
@@ -725,9 +729,27 @@ abstract class AutoTuner(
    * Returns None if the platform doesn't support specific instance types.
    */
   private def configureGPURecommendedInstanceType(): Unit = {
+    val hasUsableTargetWorkerInfo = platform.getTargetWorkerInfo.exists { worker =>
+      worker.cpuCores > 0 && worker.memoryGB > 0 && worker.getGpu.count > 0 &&
+        worker.getGpu.device.isDefined
+    }
+    if (selectedClusterSizingStrategy == ConstantTotalCoresStrategy &&
+        !platform.isPlatformCSP && !hasUsableTargetWorkerInfo) {
+      appendComment(missingTargetWorkerInfoForConstantCoresComment)
+    }
     platform.createRecommendedGpuClusterInfo(recommendations, getAllSourceProperties,
-      autoTunerHelper.recommendedClusterSizingStrategy(platform))
+      selectedClusterSizingStrategy)
     platform.recommendedClusterInfo.foreach { gpuClusterRec =>
+      val coreKey = SparkTaskSlotModel.Properties.ExecutorCores
+      platform.recommendedWorkerNode.foreach { worker =>
+        val coresPerGpu = worker.cores / worker.numGpus
+        if (platform.isPropertyUserOverridden(coreKey) &&
+            gpuClusterRec.coresPerExecutor > coresPerGpu) {
+          appendComment(s"'$coreKey' is ${gpuClusterRec.coresPerExecutor}, but target worker " +
+            s"${worker.name} has only $coresPerGpu CPU core(s) per GPU. " +
+            "The requested executor may not fit; reduce the core setting or use a larger worker.")
+        }
+      }
       // TODO: Should we skip recommendation if cores per executor is lower than a min value?
       appendRecommendation(
         SparkTaskSlotModel.Properties.ExecutorCores, gpuClusterRec.coresPerExecutor)
@@ -1801,7 +1823,8 @@ abstract class AutoTuner(
   /**
    * Recommend dynamic allocation configurations for GPU runs.
    * Adjusts initialExecutors, minExecutors, and maxExecutors based on the ratio
-   * of source cores to target cores.
+   * of source cores to target cores, unless the selected cluster sizing strategy
+   * preserves the source executor count.
    *
    * Formula: adjusted_value = max(1, floor(original_value × source_cores / target_cores))
    *
@@ -1835,7 +1858,12 @@ abstract class AutoTuner(
     // Scale factor to adjust executor counts based on core ratio.
     // Example: source=8 cores, target=16 cores → ratio=0.5 → need fewer executors
     // Example: source=16 cores, target=8 cores → ratio=2.0 → need more executors
-    val adjustRatio = sourceExecCores.toDouble / gpuExecCores
+    val adjustRatio = if (selectedClusterSizingStrategy == SourceCoresPreservingStrategy ||
+        selectedClusterSizingStrategy == ConstantGpuCountStrategy) {
+      1.0
+    } else {
+      sourceExecCores.toDouble / gpuExecCores
+    }
 
     // Helper function to get the adjusted value for a property
     // Formula: adjusted_value = max(1, floor(original_value × source_cores / target_cores))
@@ -1939,8 +1967,16 @@ abstract class AutoTuner(
     val maxOpt = getRecValue(
       "spark.dynamicAllocation.maxExecutors")
 
-    // Cap initialExecutors and executor.instances to maxExecutors
+    // Keep an explicitly requested executor count for strategies that preserve GPU count.
+    // A source max below that count must grow with it to keep the settings consistent.
     (initialOpt, maxOpt) match {
+      case (Some(initial), Some(max)) if initial > max &&
+          (selectedClusterSizingStrategy == SourceCoresPreservingStrategy ||
+            selectedClusterSizingStrategy == ConstantGpuCountStrategy) &&
+          !platform.isPropertyUserOverridden("spark.dynamicAllocation.maxExecutors") &&
+          !ignoreRecommendation("spark.dynamicAllocation.maxExecutors") =>
+        appendRecommendation("spark.dynamicAllocation.maxExecutors", initial.toLong)
+        trackAdjustment("spark.dynamicAllocation.maxExecutors", max, initial)
       case (Some(initial), Some(max)) if initial > max =>
         appendRecommendation(
           "spark.dynamicAllocation.initialExecutors", max.toLong)
@@ -1955,7 +1991,7 @@ abstract class AutoTuner(
     }
 
     // Cap minExecutors to maxExecutors
-    (minOpt, maxOpt) match {
+    (minOpt, getRecValue("spark.dynamicAllocation.maxExecutors")) match {
       case (Some(min), Some(max)) if min > max =>
         appendRecommendation(
           "spark.dynamicAllocation.minExecutors", max.toLong)
@@ -3334,11 +3370,24 @@ class ProfilingAutoTuner(
 trait AutoTunerHelper extends Logging {
   private val pluginReleaseIntervalMonths = 2L
 
+  protected def defaultClusterSizingStrategy: ClusterSizingStrategy
+
   /**
-   * Strategy for cluster shape recommendation.
+   * With auto, preserve source cores and executor count on onprem without target worker
+   * information; otherwise use the tool's default strategy. Explicit choices take precedence.
    * See [[com.nvidia.spark.rapids.tool.ClusterSizingStrategy]] for different strategies.
    */
-  def recommendedClusterSizingStrategy(platform: Platform): ClusterSizingStrategy
+  final def recommendedClusterSizingStrategy(
+      platform: Platform,
+      strategy: String = "auto"): ClusterSizingStrategy = {
+    ClusterSizingStrategy.fromString(strategy).getOrElse {
+      if (!platform.isPlatformCSP && platform.getTargetWorkerInfo.isEmpty) {
+        SourceCoresPreservingStrategy
+      } else {
+        defaultClusterSizingStrategy
+      }
+    }
+  }
   // the plugin jar is in the form of rapids-4-spark_scala_binary-(version)-*.jar
   lazy val pluginJarRegEx: Regex = "rapids-4-spark_\\d\\.\\d+-(\\d{2}\\.\\d{2}\\.\\d+).*\\.jar".r
 
@@ -3457,19 +3506,11 @@ trait AutoTunerHelper extends Logging {
  */
 object ProfilingAutoTunerHelper extends AutoTunerHelper {
   /**
-   * On-prem profiling without a target cluster: use SourceCoresPreservingStrategy
-   * to preserve the source cluster's cores and executor count (the hardware is fixed).
-   * For CSP platforms or when a target cluster is provided, use ConstantGpuCountStrategy.
+   * For automatic sizing on CSP platforms or with target worker information, keep
+   * the GPU count constant. Onprem without target workers is handled by the shared selector.
    */
-  def recommendedClusterSizingStrategy(platform: Platform): ClusterSizingStrategy = {
-    // true when user provided target hardware (workerInfo with cores/memory/GPU)
-    val hasTargetWorkerInfo = platform.targetCluster.exists(!_.getWorkerInfo.isEmpty)
-    if (!platform.isPlatformCSP && !hasTargetWorkerInfo) {
-      SourceCoresPreservingStrategy
-    } else {
-      ConstantGpuCountStrategy
-    }
-  }
+  override protected def defaultClusterSizingStrategy: ClusterSizingStrategy =
+    ConstantGpuCountStrategy
 
   def createAutoTunerInstance(
       appInfoProvider: AppSummaryInfoBaseProvider,
@@ -3583,6 +3624,15 @@ trait AutoTunerStaticComments {
       |To include additional plugins for the GPU cluster, specify 'spark.plugins' in the
       |'sparkProperties.enforced' section in '--target_cluster_info'.
       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def missingTargetWorkerInfoForConstantCoresComment: String = {
+    s"""
+       |Using ${ConstantTotalCoresStrategy.getNameAsString} on ${PlatformNames.ONPREM} without
+       |target cluster worker details may produce inaccurate executor memory recommendations.
+       |Provide target cluster worker details (cores, memory, and GPU),
+       |or set CLUSTER_SIZING_STRATEGY to auto.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
   def notEnoughMemComment(minSizeInMB: Long): String = {

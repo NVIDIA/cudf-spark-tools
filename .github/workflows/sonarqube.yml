@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# A workflow to run SonarQube analysis for rapids tools
 name: SonarQube PR analysis
 
 on:
@@ -31,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      SONAR_HOST_URL: https://sonar.nvidia.com
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
     steps:
       - name: Checkout code
         uses: NVIDIA/spark-rapids-common/checkout@main
@@ -40,16 +41,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check SonarQube connectivity
+      - name: Check SonarQube configuration
         env:
-          SONAR_ROOT_CERT: ${{ secrets.SONAR_ROOT_CERT }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         shell: bash
         run: |
-          if [[ -n "$SONAR_ROOT_CERT" ]]; then
-            cert_path="$RUNNER_TEMP/sonar-root-cert.pem"
-            printf '%s\n' "$SONAR_ROOT_CERT" > "$cert_path"
-            export CURL_CA_BUNDLE="$cert_path"
+          if [[ -z "$SONAR_HOST_URL" || -z "$SONAR_TOKEN" ]]; then
+            echo "::error::SONAR_HOST_URL and SONAR_TOKEN must be available. Public fork PR runs do not receive repository secrets."
+            exit 1
           fi
+
+      - name: Check SonarQube connectivity
+        shell: bash
+        run: |
           version=$(curl --fail --silent --show-error \
             --connect-timeout 10 --max-time 30 \
             "$SONAR_HOST_URL/api/server/version")
@@ -58,16 +62,6 @@ jobs:
             exit 1
           fi
           echo "SonarQube version: $version"
-
-      - name: Check SonarQube token
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        shell: bash
-        run: |
-          if [[ -z "$SONAR_TOKEN" ]]; then
-            echo "::error::SONAR_TOKEN is unavailable. Public fork PR runs do not receive repository secrets; a trusted scan workflow is required to upload analysis."
-            exit 1
-          fi
 
       - name: Read project version
         id: version
@@ -84,10 +78,9 @@ jobs:
           PY
 
       - name: SonarQube analysis
-        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ROOT_CERT: ${{ secrets.SONAR_ROOT_CERT }}
         with:
           scannerVersion: 8.3.0.16463
           args: >-

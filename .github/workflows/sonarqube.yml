@@ -1,0 +1,100 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: SonarQube PR analysis
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonarqube-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sonar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SONAR_HOST_URL: https://sonar.nvidia.com
+    steps:
+      - name: Checkout code
+        uses: NVIDIA/spark-rapids-common/checkout@main
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check SonarQube connectivity
+        env:
+          SONAR_ROOT_CERT: ${{ secrets.SONAR_ROOT_CERT }}
+        shell: bash
+        run: |
+          if [[ -n "$SONAR_ROOT_CERT" ]]; then
+            cert_path="$RUNNER_TEMP/sonar-root-cert.pem"
+            printf '%s\n' "$SONAR_ROOT_CERT" > "$cert_path"
+            export CURL_CA_BUNDLE="$cert_path"
+          fi
+          version=$(curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            "$SONAR_HOST_URL/api/server/version")
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+            echo "::error::SonarQube did not return a valid server version."
+            exit 1
+          fi
+          echo "SonarQube version: $version"
+
+      - name: Check SonarQube token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "::error::SONAR_TOKEN is unavailable. Public fork PR runs do not receive repository secrets; a trusted scan workflow is required to upload analysis."
+            exit 1
+          fi
+
+      - name: Read project version
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import xml.etree.ElementTree as ET
+          version = ET.parse("core/pom.xml").getroot().findtext(
+              "{http://maven.apache.org/POM/4.0.0}version"
+          )
+          if not version:
+              raise SystemExit("Missing core/pom.xml project.version")
+          print("value=" + version.strip())
+          PY
+
+      - name: SonarQube analysis
+        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ROOT_CERT: ${{ secrets.SONAR_ROOT_CERT }}
+        with:
+          scannerVersion: 8.3.0.16463
+          args: >-
+            -Dsonar.projectKey=GPUSW_SPMD_spark-rapids_cudf-spark-tools
+            -Dsonar.projectName=cudf-spark-tools
+            -Dsonar.projectVersion=${{ steps.version.outputs.value }}
+            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
+            -Dsonar.pullrequest.branch=${{ github.head_ref }}
+            -Dsonar.pullrequest.base=${{ github.base_ref }}
+            -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}

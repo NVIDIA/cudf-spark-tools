@@ -2946,6 +2946,22 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(!comments.map(_.comment).exists(_.contains("lowered from")))
   }
 
+  test("Downward pass sizes slots from the recommended cluster under dynamic allocation") {
+    // With dynamic allocation, 'spark.executor.instances' is only the starting executor count
+    // (here 2), so the slots must come from the recommended cluster of 25 executors instead.
+    val sourceProps = downwardPassSourceProps(Map(
+      "spark.dynamicAllocation.enabled" -> "true",
+      "spark.dynamicAllocation.minExecutors" -> "2",
+      "spark.dynamicAllocation.maxExecutors" -> "50"))
+    sourceProps.remove("spark.executor.instances")
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      sourceProps = sourceProps)
+    assert(recommendedValue(properties, "spark.executor.instances").contains("2"))
+    // 900 partitions rounds up to 3 whole waves of 400 slots, rather than 29 waves of 32 slots.
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("1200"))
+    assert(comments.exists(_.contains(s"$DOWNWARD_PASS_SLOTS cluster task slots")))
+  }
+
   test("Downward pass falls back to the cluster record when the platform excludes instances") {
     // Databricks excludes 'spark.executor.instances', so no recommendation exists for it and the
     // slot count must come from the recommended cluster rather than the source CPU value.

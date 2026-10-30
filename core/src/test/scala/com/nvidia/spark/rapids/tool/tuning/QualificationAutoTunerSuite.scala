@@ -2137,17 +2137,21 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       "'spark.dynamicAllocation.maxExecutors' adjusted from 6 to 14")
   }
 
-  // An enforced initialExecutors above maxExecutors is allowed by Spark, so maxExecutors is not
-  // raised to it: maxExecutors 40 -> 20, initialExecutors stays 30.
-  test("dynamic allocation does not raise maxExecutors to enforced initialExecutors") {
-    val (tuned, _, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+  // YARN and Kubernetes reject a starting count above maxExecutors, and an enforced
+  // initialExecutors cannot be lowered, so maxExecutors is raised to it: maxExecutors 40 -> 20,
+  // raised to the enforced 30.
+  test("dynamic allocation raises maxExecutors to enforced initialExecutors") {
+    val (tuned, comments, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
       Seq("spark.dynamicAllocation.maxExecutors" -> "40"),
       ToolTestUtils.buildTargetClusterInfo(
         enforcedSparkProperties = Map("spark.dynamicAllocation.initialExecutors" -> "30")))
 
-    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("20")
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("30")
     tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("30")
     tuned.get("spark.executor.instances") shouldBe Some("30")
+    comments.mkString("\n") should include(
+      "'spark.dynamicAllocation.maxExecutors' adjusted from 20 to 30")
+    recClusterInfo.dynamicAllocationMaxExecutors shouldBe "30"
     recClusterInfo.dynamicAllocationInitialExecutors shouldBe "30"
   }
 
@@ -2164,6 +2168,68 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("2")
     tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("10")
     recClusterInfo.dynamicAllocationInitialExecutors shouldBe "10"
+  }
+
+  // YARN and Kubernetes reject a starting count above maxExecutors, so maxExecutors is raised to a
+  // preserved executor.instances: maxExecutors 40 -> 20, raised to the preserved 30.
+  test("dynamic allocation raises maxExecutors to preserved executor instances") {
+    val (tuned, comments, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.maxExecutors" -> "40",
+        "spark.executor.instances" -> "30"),
+      ToolTestUtils.buildTargetClusterInfo(
+        preserveSparkProperties = List("spark.executor.instances")))
+
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("30")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("30")
+    tuned.get("spark.executor.instances") shouldBe Some("30")
+    comments.mkString("\n") should include(
+      "'spark.dynamicAllocation.maxExecutors' adjusted from 20 to 30")
+    recClusterInfo.dynamicAllocationMaxExecutors shouldBe "30"
+  }
+
+  // A source minExecutors of 0 releases all idle executors, so it is kept rather than raised to 1.
+  test("dynamic allocation keeps a source minExecutors of 0") {
+    val (tuned, _, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.minExecutors" -> "0",
+        "spark.dynamicAllocation.maxExecutors" -> "40"),
+      ToolTestUtils.buildTargetClusterInfo())
+
+    // The source value is unchanged, so it is not listed as a tuned value
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe None
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("20")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("0")
+    tuned.get("spark.executor.instances") shouldBe Some("0")
+    recClusterInfo.dynamicAllocationMinExecutors shouldBe "0"
+  }
+
+  // minExecutors is rounded down, but the starting count uses it rounded up so the application
+  // starts with at least the source cores: minExecutors 3 -> floor(1.5) = 1, while
+  // initialExecutors and executor.instances are ceil(1.5) = 2.
+  test("dynamic allocation starts with the rounded-up minExecutors") {
+    val (tuned, _, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.minExecutors" -> "3"),
+      ToolTestUtils.buildTargetClusterInfo())
+
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("2")
+    tuned.get("spark.executor.instances") shouldBe Some("2")
+    recClusterInfo.dynamicAllocationInitialExecutors shouldBe "2"
+  }
+
+  // The rounded-up minExecutors is capped to maxExecutors: minExecutors 3 -> 1 (rounded up 2) and
+  // maxExecutors 3 -> 2, capped to the enforced cluster size of 1, so the application starts
+  // with 1 executor rather than 2.
+  test("dynamic allocation caps the rounded-up minExecutors to maxExecutors") {
+    val (tuned, _, _) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.minExecutors" -> "3",
+        "spark.dynamicAllocation.maxExecutors" -> "3"),
+      ToolTestUtils.buildTargetClusterInfo(
+        enforcedSparkProperties = Map("spark.executor.instances" -> "1")))
+
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("1")
+    tuned.get("spark.executor.instances") shouldBe Some("1")
   }
 
   // With dynamic allocation enabled and no executor counts set, min and max are not recommended,
@@ -2590,7 +2656,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
 
     val adjustedProperties = List(
       // initialExecutors and minExecutors are not listed since their source values are
-      // zero or negative (clamped to 1).
+      // zero or negative (kept at 0).
       "spark.executor.instances",
       "spark.dynamicAllocation.maxExecutors"
     )
@@ -2616,7 +2682,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |Spark Properties:
          |--conf spark.dynamicAllocation.initialExecutors=1
          |--conf spark.dynamicAllocation.maxExecutors=2
-         |--conf spark.dynamicAllocation.minExecutors=1
+         |--conf spark.dynamicAllocation.minExecutors=0
          |--conf spark.executor.cores=16
          |--conf spark.executor.instances=1
          |--conf spark.executor.memory=[FILL_IN_VALUE]
@@ -2655,6 +2721,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
          |- ${notEnoughMemCommentForKey("spark.executor.memory")}
          |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
          |- ${classPathComments("rapids.jars.missing")}
+         |- ${commentForStartingExecutorCount(Seq("spark.dynamicAllocation.initialExecutors"), 1)}
          |- ${classPathComments("rapids.shuffle.jars")}
          |- ${notEnoughMemComment(40140)}
          |- $additionalSparkPluginsComment

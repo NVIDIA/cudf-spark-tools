@@ -2170,6 +2170,22 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     recClusterInfo.dynamicAllocationInitialExecutors shouldBe "10"
   }
 
+  // A preserved maxExecutors cannot be raised and an enforced minExecutors cannot be lowered,
+  // so minExecutors <= maxExecutors cannot be restored. Report it instead of dropping it.
+  test("dynamic allocation reports an invariant it cannot enforce") {
+    val (tuned, comments, _) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.maxExecutors" -> "10"),
+      ToolTestUtils.buildTargetClusterInfo(
+        enforcedSparkProperties = Map("spark.dynamicAllocation.minExecutors" -> "50"),
+        preserveSparkProperties = List("spark.dynamicAllocation.maxExecutors")))
+
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("50")
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("10")
+    comments should contain(commentForUnenforceableDynamicAllocationInvariant(
+      Seq("'spark.dynamicAllocation.maxExecutors' (10)",
+        "'spark.dynamicAllocation.minExecutors' (50)")))
+  }
+
   // YARN and Kubernetes reject a starting count above maxExecutors, so maxExecutors is raised to a
   // preserved executor.instances: maxExecutors 40 -> 20, raised to the preserved 30.
   test("dynamic allocation raises maxExecutors to preserved executor instances") {

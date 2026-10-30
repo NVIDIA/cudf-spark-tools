@@ -2052,6 +2052,11 @@ abstract class AutoTuner(
    * The same bounds are applied to executor.instances, since Spark uses it as a lower bound for
    * the initial number of executors. Only recommended values are checked and properties that are
    * not recommended are left unset.
+   *
+   * A property that is enforced, preserved or excluded cannot be changed, so a violation that
+   * involves only such properties (e.g. a preserved maxExecutors below an enforced minExecutors)
+   * cannot be fixed. Those are reported as a comment instead of being dropped silently, since
+   * Spark rejects the resulting configuration.
    */
   private def enforceDynamicAllocationInvariants(): Unit = {
     def getRecValue(prop: String): Option[Int] = {
@@ -2059,10 +2064,16 @@ abstract class AutoTuner(
     }
 
     val adjusted = mutable.ListBuffer[String]()
+    // Violations left unfixed because the property cannot be changed.
+    val blocked = mutable.ListBuffer[String]()
 
-    // Skip ignored properties, mirroring appendRecommendation
+    // Skip ignored properties, mirroring appendRecommendation. Such a property cannot be lowered
+    // or raised, so the violation that triggered the adjustment is still there afterwards and is
+    // reported rather than dropped.
     def adjust(prop: String, from: Int, to: Int): Unit = {
-      if (!ignoreRecommendation(prop)) {
+      if (ignoreRecommendation(prop)) {
+        blocked += s"'$prop' ($from)"
+      } else {
         appendRecommendation(prop, to.toLong)
         adjusted += s"'$prop' adjusted from $from to $to"
       }
@@ -2116,6 +2127,9 @@ abstract class AutoTuner(
            |${adjusted.mkString("; ")}.
            |""".stripMargin.trim.replaceAll("\n", "\n  ")
       appendComment(comment)
+    }
+    if (blocked.nonEmpty) {
+      appendComment(commentForUnenforceableDynamicAllocationInvariant(blocked.distinct.toList))
     }
   }
 
@@ -3775,6 +3789,15 @@ trait AutoTunerStaticComments {
        |Replaced the enforced 'spark.executor.instances' of $clusterSize (the size of the target
        |cluster) with the starting executor count of $startingCount, since dynamic allocation is
        |enabled. The size of the target cluster caps 'spark.dynamicAllocation.maxExecutors'.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForUnenforceableDynamicAllocationInvariant(properties: Seq[String]): String = {
+    s"""
+       |Could not enforce minExecutors <= initialExecutors <= maxExecutors because
+       |${properties.mkString(", ")} cannot be changed (enforced, preserved or excluded in the
+       |target cluster). Spark rejects a configuration that violates this, so update the target
+       |cluster to make these properties consistent.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 

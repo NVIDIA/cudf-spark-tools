@@ -277,6 +277,12 @@ object PlatformInstanceTypes {
 abstract class Platform(var gpuDevice: Option[GpuDevice],
     val targetCluster: Option[TargetClusterProps]) extends Logging {
   def platformName: String
+
+  /** Returns supplied target cluster worker details, ignoring an empty worker section. */
+  final def getTargetWorkerInfo: Option[WorkerInfo] = {
+    targetCluster.map(_.getWorkerInfo).filterNot(_.isEmpty)
+  }
+
   private def defaultRecommendedWorkerNode: Option[NodeInstanceMapKey] = {
     PlatformInstanceTypes.DEFAULT_WORKER_NODES.get(platformName)
       .map(instanceType => NodeInstanceMapKey(instanceType = instanceType))
@@ -312,9 +318,19 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
   */
   protected def getRecommendedInstanceInfoFromTargetWorker(
       workerInfoOpt: Option[WorkerInfo]): Option[InstanceInfo] = {
+    def checkWorkerCapacity(instance: InstanceInfo): InstanceInfo = {
+      if (instance.cores < instance.numGpus) {
+        throw new IllegalArgumentException(
+          s"Instance ${instance.name} has ${instance.cores} CPU core(s) for " +
+            s"${instance.numGpus} GPU(s); at least one CPU core per GPU is required.")
+      }
+      instance
+    }
+
     // Helper function to get default instance info
     def getDefaultInstance: Option[InstanceInfo] = {
-      val defaultInstanceInfo = defaultRecommendedWorkerNode.flatMap(getInstanceMapByName.get)
+      val defaultInstanceInfo = defaultRecommendedWorkerNode
+        .flatMap(getInstanceMapByName.get).map(checkWorkerCapacity)
       logInfo("Worker info is not provided in the target cluster. " +
         s"Using default instance type: $defaultInstanceInfo")
       defaultInstanceInfo
@@ -325,7 +341,7 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
         // Try CSP-style first (instanceType)
         workerInfo.getNodeInstanceMapKey match {
           case Some(nodeInstanceMapKey) =>
-            getInstanceMapByName.get(nodeInstanceMapKey).orElse {
+            getInstanceMapByName.get(nodeInstanceMapKey).map(checkWorkerCapacity).orElse {
               val errorMsg =
                 s"""
                    |Could not find matching instance type in resources map.
@@ -373,7 +389,7 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
 
   // Default recommendation based on NDS benchmarks (note: this could be platform specific)
   final def recommendedCoresPerExec: Int = {
-    recommendedWorkerNode.map(instInfo => instInfo.cores / instInfo.numGpus)
+    recommendedWorkerNode.map(instInfo => math.max(1, instInfo.cores / instInfo.numGpus))
       .getOrElse(defaultRecommendedCoresPerExec)
   }
 
@@ -765,21 +781,30 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
                 _recommendedWorkerNode.numGpus).toInt
             }
 
-            // Calculate cores per executor: use the user-specified value (enforced, or
-            // preserved from the source application) if valid, otherwise divide total
-            // cores in the instance by the number of GPUs.
-            val defaultCoresPerExecutor = math.ceil(
-              _recommendedWorkerNode.cores.toDouble / _recommendedWorkerNode.numGpus
-            ).toInt
+            val preserveSourceSizing =
+              recommendedClusterSizingStrategy == SourceCoresPreservingStrategy
+            // One executor is placed on each GPU. Use the worker's per-GPU capacity
+            // when source cores do not fit, but keep explicit user overrides.
+            val defaultCoresPerExecutor =
+              math.max(1, _recommendedWorkerNode.cores / _recommendedWorkerNode.numGpus)
             val recommendedCoresPerExecutor =
               getEnforcedOrPreservedSparkProperty("spark.executor.cores", sourceSparkProperties.get)
               .flatMap(v => scala.util.Try(v.toInt).toOption)
+              .orElse(if (preserveSourceSizing) Some(clusterConfig.coresPerExec) else None)
               .filter { specifiedCores =>
-                val maxCores = _recommendedWorkerNode.cores
-                val isValid = specifiedCores > 0 && specifiedCores <= maxCores
+                val maxCores = defaultCoresPerExecutor
+                val isUserOverridden = isPropertyUserOverridden("spark.executor.cores")
+                val isValid = specifiedCores > 0 &&
+                  (specifiedCores <= maxCores || isUserOverridden)
+                if (specifiedCores > maxCores && isUserOverridden) {
+                  logWarning(s"User-overridden spark.executor.cores=$specifiedCores exceeds " +
+                    s"the $maxCores cores available per GPU on instance " +
+                    s"${_recommendedWorkerNode.name}. Keeping the requested value.")
+                }
                 if (!isValid) {
-                  logWarning(s"User-specified spark.executor.cores=$specifiedCores is invalid " +
-                    s"(must be > 0 and <= $maxCores cores on instance " +
+                  logWarning(s"Requested spark.executor.cores=$specifiedCores is invalid " +
+                    s"(must be > 0 and <= $maxCores cores per executor for " +
+                    s"${_recommendedWorkerNode.numGpus} GPU(s) on instance " +
                     s"${_recommendedWorkerNode.name}). " +
                     s"Using default value: $defaultCoresPerExecutor")
                 }
@@ -787,11 +812,14 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
               }
               .getOrElse(defaultCoresPerExecutor)
 
-            // Calculate the recommended number of executors by dividing the total number of
-            // executors by the recommended cores per executor
-            val recommendedNumExecutors =
+            // Strategies that keep the GPU count also keep the executor count.
+            val recommendedNumExecutors = if (preserveSourceSizing ||
+                recommendedClusterSizingStrategy == ConstantGpuCountStrategy) {
+              clusterConfig.numExecutors
+            } else {
               (clusterConfig.coresPerExec * clusterConfig.numExecutors) /
                 recommendedCoresPerExecutor
+            }
 
             val dynamicAllocSettings = Platform.getDynamicAllocationSettings(sourceSparkProperties)
             recommendedWorkerNode = Some(_recommendedWorkerNode)

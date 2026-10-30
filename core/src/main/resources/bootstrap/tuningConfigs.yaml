@@ -72,6 +72,15 @@
 
 # Default tuning configs used by both Qualification and Profiling tools
 default:
+  - name: CLUSTER_SIZING_STRATEGY
+    description: >-
+      Cluster sizing strategy: auto, SourceCoresPreservingStrategy, ConstantTotalCoresStrategy,
+      or ConstantGpuCountStrategy (case-sensitive). auto preserves source cores and executor
+      count for onprem without target cluster worker information; otherwise qualification
+      preserves total cores and profiling preserves GPU count. Explicit strategies override auto.
+    default: auto
+    usedBy: spark.executor.cores, spark.executor.instances
+
   - name: CONC_GPU_TASKS
     description: >-
       Maximum concurrent GPU tasks for the legacy device-memory-based calculation. The

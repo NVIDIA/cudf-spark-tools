@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.planparser.db.DBVersionExtractor
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence,
   RecommendedCommentResult, ShuffleStageInputAnalysis}
@@ -2305,11 +2305,10 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  // With a target cluster, ConstantGpuCountStrategy re-slices cores (8 -> 16).
-  // Core ratio = 8/16 = 0.5, so DA values are halved.
-  // initialExecutors is boosted to max(floor(8*0.5), executor.instances=18) = 18.
-  // maxExecutors = floor(18*0.5) = 9. Violation: initial(18) > max(9), capped to 9.
-  test("dynamic allocation enforces invariant with target cluster") {
+  // With a target cluster, ConstantGpuCountStrategy re-slices cores (8 -> 16)
+  // while keeping executor counts. The initial count rises to the recommended
+  // cluster count of 18; the source min=4 and max=18 remain unchanged.
+  test("dynamic allocation keeps executor counts with target cluster") {
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
@@ -2346,11 +2345,14 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val autoTuner = buildAutoTunerForTests(
       infoProvider, platform, Some(Yarn))
     val (properties, comments) =
-      autoTuner.getRecommendedProperties()
-    assertDynamicAllocationRecommendations(properties, comments,
-      DynamicAllocationInfo(
-        enabled = true, max = "9", min = "2",
-        initial = "9"))
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val values = properties.map(p => p.name -> p.getTuneValue()).toMap
+    values("spark.executor.cores") shouldBe "16"
+    values("spark.executor.instances") shouldBe "18"
+    values("spark.dynamicAllocation.minExecutors") shouldBe "4"
+    values("spark.dynamicAllocation.initialExecutors") shouldBe "18"
+    values("spark.dynamicAllocation.maxExecutors") shouldBe "18"
+    comments.exists(_.comment.contains("Adjusted dynamic allocation properties")) shouldBe false
   }
 
   // Issue #2053: when spark.executor.cores is in the target cluster `preserve` list,

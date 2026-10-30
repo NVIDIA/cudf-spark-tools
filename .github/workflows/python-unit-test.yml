@@ -41,7 +41,7 @@ jobs:
           path: ${{ env.RAPIDS_USER_TOOLS_CACHE_FOLDER }}
 
   prepare-tools:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: NVIDIA/spark-rapids-common/checkout@main
@@ -63,7 +63,7 @@ jobs:
 
   build:
     needs: [prepare-deps, prepare-tools]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Ensure all runtime downloads (Spark archives, jars, temp build artifacts) land in a
       # repo-local cache folder so they can be restored across matrix jobs via actions/cache

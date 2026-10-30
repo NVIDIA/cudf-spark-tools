@@ -2084,6 +2084,21 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     recClusterInfo.dynamicAllocationInitialExecutors shouldBe "2"
   }
 
+  // The cluster is sized from the workload at ceil(8*20/16)=10 executors, but maxExecutors
+  // scales to ceil(8*0.5)=4, so the other 6 executors could never be used.
+  test("dynamic allocation sizes the recommended cluster down to maxExecutors") {
+    val (tuned, comments, recClusterInfo) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.maxExecutors" -> "8"),
+      ToolTestUtils.buildTargetClusterInfo())
+
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("4")
+    recClusterInfo.numExecutors shouldBe 4
+    // Worker nodes are recomputed for the smaller cluster: ceil(4 / 1 GPU per node)
+    recClusterInfo.numGpusPerNode shouldBe 1
+    recClusterInfo.numWorkerNodes shouldBe 4
+    comments should contain(commentForClusterSizedToMaxExecutors(10, 4))
+  }
+
   // A source maxExecutors below the size of the target cluster (e.g. to share the cluster) is
   // kept: maxExecutors 8 -> 4 by the ratio 8/16, which is below the enforced 12 executors.
   test("dynamic allocation keeps a source maxExecutors below the enforced executor instances") {
@@ -2099,6 +2114,10 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     tuned.get("spark.executor.instances") shouldBe Some("2")
     comments should not contain commentForMaxExecutorsFromTargetCluster(12)
     recClusterInfo.dynamicAllocationMaxExecutors shouldBe "4"
+    // The enforced cluster size is the user's own, e.g. shared with other applications, so it is
+    // kept even though maxExecutors sits below it.
+    recClusterInfo.numExecutors shouldBe 12
+    comments.mkString("\n") should not include "Sized the recommended cluster"
   }
 
   // A scaled minExecutors above the size of the target cluster is capped to it through

@@ -2022,6 +2022,11 @@ abstract class AutoTuner(
    * executors are reported as Spark computes them:
    * max(minExecutors, initialExecutors, executor.instances), using the recommended value of each
    * (an excluded one is not emitted, so it does not count).
+   *
+   * The executor count of the cluster is sized from the workload, so it can land above the
+   * maxExecutors the application can reach. Since the extra executors would stay idle for the
+   * whole run, the cluster is capped to maxExecutors and its worker node count recomputed with
+   * [[Platform.workerNodeCountFor]], the same helper that sized it in the first place.
    */
   private def syncDynamicAllocationToRecommendedCluster(): Unit = {
     def tunedOrElse(property: String, sourceValue: String): String =
@@ -2031,8 +2036,23 @@ abstract class AutoTuner(
       "spark.dynamicAllocation.minExecutors",
       "spark.dynamicAllocation.initialExecutors",
       "spark.executor.instances").flatMap(recommendedIntValue)
+    // An enforced 'spark.executor.instances' is the size of the user's own cluster (see
+    // targetClusterExecutors), which maxExecutors may sit below on purpose, e.g. to share the
+    // cluster with other applications. Only a cluster size we derived ourselves is capped.
+    val maxExecutorsCap = if (targetClusterExecutors.isDefined) {
+      None
+    } else {
+      recommendedIntValue("spark.dynamicAllocation.maxExecutors").filter(_ > 0)
+    }
     platform.recommendedClusterInfo = platform.recommendedClusterInfo.map { info =>
+      val numExecutors = maxExecutorsCap.fold(info.numExecutors)(math.min(info.numExecutors, _))
+      val numWorkerNodes = platform.workerNodeCountFor(numExecutors, info.numGpusPerNode)
+      if (numExecutors != info.numExecutors) {
+        appendComment(commentForClusterSizedToMaxExecutors(info.numExecutors, numExecutors))
+      }
       info.copy(
+        numExecutors = numExecutors,
+        numWorkerNodes = numWorkerNodes,
         dynamicAllocationMaxExecutors = tunedOrElse(
           "spark.dynamicAllocation.maxExecutors", info.dynamicAllocationMaxExecutors),
         dynamicAllocationMinExecutors = tunedOrElse(
@@ -3789,6 +3809,14 @@ trait AutoTunerStaticComments {
        |Replaced the enforced 'spark.executor.instances' of $clusterSize (the size of the target
        |cluster) with the starting executor count of $startingCount, since dynamic allocation is
        |enabled. The size of the target cluster caps 'spark.dynamicAllocation.maxExecutors'.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForClusterSizedToMaxExecutors(fromExecutors: Int, toExecutors: Int): String = {
+    s"""
+       |Sized the recommended cluster from $fromExecutors down to $toExecutors executors, the
+       |'spark.dynamicAllocation.maxExecutors' the application can reach. A larger cluster would
+       |stay partly idle for the whole run.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 

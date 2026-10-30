@@ -692,6 +692,20 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
   def getInstanceMapByName: Map[NodeInstanceMapKey, InstanceInfo] = Map.empty
 
   /**
+   * Number of worker nodes needed to host `numExecutors` executors, which run one per GPU.
+   *
+   * On-prem has no concept of worker nodes, and a non-positive GPU count cannot size nodes
+   * either, so both report [[Platform.UndefinedWorkerNodeCount]].
+   */
+  final def workerNodeCountFor(numExecutors: Int, numGpusPerNode: Int): Int = {
+    if (!isPlatformCSP || numGpusPerNode <= 0) {
+      Platform.UndefinedWorkerNodeCount
+    } else {
+      math.ceil(numExecutors.toDouble / numGpusPerNode).toInt
+    }
+  }
+
+  /**
    * Creates the recommended GPU cluster info based on Spark properties and
    * cluster properties (either provided explicitly by the user or
    * inferred from the event log).
@@ -744,14 +758,8 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
               .filter(_.nonEmpty)
               .orElse(clusterInfoFromEventLog.flatMap(_.driverNodeType))
 
-            val numWorkerNodes = if (!isPlatformCSP) {
-              // For on-prem, we do not have the concept of worker nodes.
-              -1
-            } else {
-              // Calculate number of worker nodes based on executors and GPUs per instance
-              math.ceil(clusterConfig.numExecutors.toDouble /
-                _recommendedWorkerNode.numGpus).toInt
-            }
+            val numWorkerNodes = workerNodeCountFor(
+              clusterConfig.numExecutors, _recommendedWorkerNode.numGpus)
 
             // Calculate cores per executor: use the user-specified value (enforced, or
             // preserved from the source application) if valid, otherwise divide total
@@ -1117,6 +1125,9 @@ class OnPremPlatform(gpuDevice: Option[GpuDevice],
 }
 
 object Platform {
+  /** Reported as the worker node count when worker nodes do not apply or cannot be sized. */
+  val UndefinedWorkerNodeCount: Int = -1
+
   def isDynamicAllocationEnabled(sparkProperties: Map[String, String]): Boolean = {
     sparkProperties.getOrElse("spark.dynamicAllocation.enabled", "false").toBoolean
   }

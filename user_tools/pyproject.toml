@@ -56,7 +56,7 @@ dependencies = [
     # Supports Python [3.9, 3.13]
     "packaging==25.0",
     # supports python[3.8, 3.13]
-    "certifi==2025.6.15",
+    "certifi==2026.10.19",
     # supports python[3.9, 3.13]
     "urllib3==2.8.0",
     # Used as a syntax highlighter for the CLI STDOUT. Python [3.9, 3.12]

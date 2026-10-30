@@ -2159,6 +2159,29 @@ abstract class AutoTuner(
       }
     }
 
+    // An excluded property is not emitted, so its source value still applies to the application
+    // and is not protected above. It is not changed, but a conflict with it is reported.
+    def excludedSourceValue(prop: String): Option[Int] = {
+      if (skippedRecommendations.contains(prop) && recommendedIntValue(prop).isEmpty) {
+        getPropertyValueFromSource(prop).flatMap(v => Try(v.trim.toInt).toOption)
+      } else {
+        None
+      }
+    }
+    val startProps = Seq("spark.dynamicAllocation.minExecutors",
+      "spark.dynamicAllocation.initialExecutors", "spark.executor.instances")
+    getRecValue(maxProp).foreach { max =>
+      startProps.foreach { prop =>
+        excludedSourceValue(prop).filter(_ > max).foreach(v => blocked += s"'$prop' ($v)")
+      }
+    }
+    excludedSourceValue(maxProp).foreach { excludedMax =>
+      val recommendedStart = startProps.flatMap(getRecValue)
+      if (recommendedStart.nonEmpty && recommendedStart.max > excludedMax) {
+        blocked += s"'$maxProp' ($excludedMax)"
+      }
+    }
+
     if (adjusted.nonEmpty) {
       val comment =
         s"""

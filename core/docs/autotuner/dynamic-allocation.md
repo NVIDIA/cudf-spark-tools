@@ -59,6 +59,8 @@ Spark rejects `minExecutors > maxExecutors` and, on YARN and Kubernetes, a start
 2. `minExecutors` is capped to `maxExecutors`.
 3. `initialExecutors` and `executor.instances` are kept within `[minExecutors, maxExecutors]`. A missing `minExecutors` counts as 0.
 
+An excluded `minExecutors`, `initialExecutors`, `executor.instances`, or `maxExecutors` is not emitted, so its source value still applies and is not protected. The heuristic does not change it, but reports a conflict with the tuned values (an excluded value above the tuned `maxExecutors`, or an excluded `maxExecutors` below a tuned value) with the same comment as an unenforceable invariant.
+
 Rule 3 does not lower an enforced or preserved value, and it does not raise one to `minExecutors`, since Spark starts with the largest of them rather than rejecting a lower value.
 
 ## Starting executor count

@@ -2122,6 +2122,36 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     comments.mkString("\n") should not include "Could not enforce"
   }
 
+  // An excluded property is not emitted, so its source value still applies. It is not changed,
+  // but a conflict with the tuned maxExecutors is reported: the excluded minExecutors 10 stays
+  // above the maxExecutors 8 -> 4 (ratio 8/16).
+  test("dynamic allocation reports an excluded minExecutors above the tuned maxExecutors") {
+    val (tuned, comments, _) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.minExecutors" -> "10",
+        "spark.dynamicAllocation.maxExecutors" -> "8"),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.dynamicAllocation.minExecutors")))
+
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("4")
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe None
+    comments should contain(commentForUnenforceableDynamicAllocationInvariant(
+      Seq("'spark.dynamicAllocation.minExecutors' (10)")))
+  }
+
+  // The excluded maxExecutors 3 stays below the tuned minExecutors 8 -> 4 (ratio 8/16).
+  test("dynamic allocation reports an excluded maxExecutors below the tuned minExecutors") {
+    val (tuned, comments, _) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.minExecutors" -> "8",
+        "spark.dynamicAllocation.maxExecutors" -> "3"),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.dynamicAllocation.maxExecutors")))
+
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe None
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("4")
+    comments should contain(commentForUnenforceableDynamicAllocationInvariant(
+      Seq("'spark.dynamicAllocation.maxExecutors' (3)")))
+  }
+
   // A scaled minExecutors above the size of the target cluster is capped to it through
   // maxExecutors: minExecutors 40 -> 20 (ratio 8/16), capped to the enforced 6 executors. The
   // starting count equals the enforced value, so it is not replaced.

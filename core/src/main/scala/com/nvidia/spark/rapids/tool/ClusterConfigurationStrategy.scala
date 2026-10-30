@@ -94,6 +94,13 @@ trait ClusterSizingStrategy {
       .getOrElse(computeRecommendedInstancesExpr())
   }
 
+  /**
+   * Factor applied to source executor counts (e.g. dynamic allocation min/initial/max
+   * executors) so they follow the same sizing rule as the recommended executor count.
+   * Defaults to 1.0, i.e. executor counts are kept as is.
+   */
+  def executorCountScale(sourceCoresPerExec: Int, targetCoresPerExec: Int): Double = 1.0
+
   /** Abstract method to compute the recommended cluster configuration. */
   def computeRecommendedConfig(
     platform: Platform,
@@ -111,6 +118,10 @@ trait ClusterSizingStrategy {
  * accordingly.
  */
 object ConstantTotalCoresStrategy extends ClusterSizingStrategy {
+  // Keep total cores constant: e.g. 8 source cores -> 16 target cores halves executor counts.
+  override def executorCountScale(sourceCoresPerExec: Int, targetCoresPerExec: Int): Double =
+    sourceCoresPerExec.toDouble / targetCoresPerExec
+
   def computeRecommendedConfig(
       platform: Platform,
       initialNumExecutors: Int,

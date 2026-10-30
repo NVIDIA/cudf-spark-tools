@@ -1468,7 +1468,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |Spark Properties:
           |--conf spark.dataproc.enhanced.execution.enabled=false
           |--conf spark.dataproc.enhanced.optimizer.enabled=false
-          |--conf spark.executor.instances=8
+          |--conf spark.dynamicAllocation.initialExecutors=2
           |--conf spark.executor.memory=32g
           |--conf spark.executor.memoryOverhead=19660m
           |--conf spark.locality.wait=0
@@ -1490,6 +1490,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.dataproc.enhanced.execution.enabled' was not set.
           |- 'spark.dataproc.enhanced.optimizer.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
           |- 'spark.dataproc.enhanced.optimizer.enabled' was not set.
+          |- 'spark.dynamicAllocation.initialExecutors' was not set.
           |- 'spark.plugins' should be set to the class name required for the cuDF plugin.
           |  Refer to: https://docs.nvidia.com/spark-rapids/user-guide/latest/getting-started/overview.html
           |- 'spark.rapids.sql.batchSizeBytes' was not set.
@@ -1499,6 +1500,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.sql.adaptive.autoBroadcastJoinThreshold' was not set.
           |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
           |- ${classPathComments("rapids.jars.multiple")} [23.06.0, 23.02.1]
+          |- ${commentForStartingExecutorCount(Seq("spark.dynamicAllocation.initialExecutors"), 2)}
           |- ${classPathComments("rapids.shuffle.jars")}
           |""".stripMargin
     // scalastyle:on line.size.limit

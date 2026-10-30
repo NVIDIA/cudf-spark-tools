@@ -18,7 +18,7 @@ package com.nvidia.spark.rapids.tool.tuning
 
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.{DynamicAllocationInfo, GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{GpuTypes, NodeInstanceMapKey, PlatformFactory, PlatformInstanceTypes, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.planparser.db.DBVersionExtractor
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence,
   RecommendedCommentResult, ShuffleStageInputAnalysis}
@@ -2146,9 +2146,15 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     // With user-enforced cores=11 and source total cores = 11 * 148 = 1628
     // Recommended executors = 1628 / 11 = 148
     // Without the fix (using default 12 cores), it would be 1628 / 12 = 135
-    // This is the key assertion - executor.instances=148 proves cores=11 was used
-    assert(autoTunerOutput.contains("spark.executor.instances=148"),
-      s"Expected spark.executor.instances=148 with enforced cores=11, but got:\n$autoTunerOutput")
+    // This is the key assertion - 148 executors proves cores=11 was used. It is checked on the
+    // recommended cluster since, with dynamic allocation, executor.instances is set to the
+    // starting executor count (max(min=1, initial, instances) = 1) instead of the cluster size.
+    assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(148),
+      s"Expected 148 recommended executors with enforced cores=11, but got:\n$autoTunerOutput")
+    assert(autoTunerOutput.contains("spark.executor.instances=1\n"),
+      s"Expected spark.executor.instances=1 with dynamic allocation, but got:\n$autoTunerOutput")
+    assert(autoTunerOutput.contains("spark.dynamicAllocation.initialExecutors=1\n"),
+      s"Expected initialExecutors=1 with dynamic allocation, but got:\n$autoTunerOutput")
     // Note: spark.executor.cores may not appear in output if source already has same value
   }
 
@@ -2305,11 +2311,10 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     compareOutput(expectedResults, autoTunerOutput)
   }
 
-  // With a target cluster, ConstantGpuCountStrategy re-slices cores (8 -> 16).
-  // Core ratio = 8/16 = 0.5, so DA values are halved.
-  // initialExecutors is boosted to max(floor(8*0.5), executor.instances=18) = 18.
-  // maxExecutors = floor(18*0.5) = 9. Violation: initial(18) > max(9), capped to 9.
-  test("dynamic allocation enforces invariant with target cluster") {
+  // With a target cluster, ConstantGpuCountStrategy re-slices cores (8 -> 16) but keeps the
+  // executor (GPU) count, so the DA values are not scaled by the core ratio (scale = 1.0).
+  // executor.instances is not set in the source, so it is not recommended.
+  test("dynamic allocation keeps executor counts with constant GPU count strategy") {
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
         "spark.executor.cores" -> "8",
@@ -2345,20 +2350,33 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
 
     val autoTuner = buildAutoTunerForTests(
       infoProvider, platform, Some(Yarn))
+    // Use showOnlyUpdatedProps = false so that DA values left unchanged from source
+    // (min/max) are still present to assert on.
     val (properties, comments) =
-      autoTuner.getRecommendedProperties()
-    assertDynamicAllocationRecommendations(properties, comments,
-      DynamicAllocationInfo(
-        enabled = true, max = "9", min = "2",
-        initial = "9"))
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)
+    val recommendedProps = properties.map(p => p.name -> p.getTuneValue()).toMap
+
+    def assertProp(name: String, expected: String): Unit =
+      assert(recommendedProps.get(name).contains(expected),
+        s"$name: expected $expected, got ${recommendedProps.get(name)}")
+
+    assertProp("spark.executor.cores", "16")
+    assertProp("spark.dynamicAllocation.minExecutors", "4")
+    assertProp("spark.dynamicAllocation.initialExecutors", "8")
+    assertProp("spark.dynamicAllocation.maxExecutors", "18")
+    // Set to the starting executor count, max(min=4, initial=8), not the cluster size (18)
+    assertProp("spark.executor.instances", "8")
+    assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(18))
+    assert(!comments.exists(_.comment.contains("based on cores ratio")),
+      "DA properties should not be scaled by the core ratio with ConstantGpuCountStrategy")
   }
 
   // Issue #2053: when spark.executor.cores is in the target cluster `preserve` list,
   // the preserved source value (8) must be the sizing baseline, NOT re-sliced to the
-  // platform default (16). Same scenario as "dynamic allocation enforces invariant with
-  // target cluster" above, but with preserve. Core ratio = 8/8 = 1.0, so source DA is not
-  // scaled; initialExecutors is still boosted to match executor.instances=18.
-  // Expected: cores=8, instances=18, DA min=4 / initial=18 / max=18.
+  // platform default (16). Same scenario as "dynamic allocation keeps executor counts with
+  // constant GPU count strategy" above, but with preserve. Source DA is not scaled and
+  // executor.instances is set to the starting executor count, max(min=4, initial=8) = 8.
+  // Expected: cores=8, 18 recommended executors, DA min=4 / initial=8 / max=18, instances=8.
   test("preserved spark.executor.cores is respected by cluster sizing and dynamic allocation") {
     val logEventsProps: mutable.Map[String, String] =
       mutable.LinkedHashMap[String, String](
@@ -2405,10 +2423,11 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
         s"$name: expected $expected, got ${recommendedProps.get(name)}")
 
     assertProp("spark.executor.cores", "8")
-    assertProp("spark.executor.instances", "18")
+    assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(18))
     assertProp("spark.dynamicAllocation.minExecutors", "4")
-    assertProp("spark.dynamicAllocation.initialExecutors", "18")
+    assertProp("spark.dynamicAllocation.initialExecutors", "8")
     assertProp("spark.dynamicAllocation.maxExecutors", "18")
+    assertProp("spark.executor.instances", "8")
   }
 
   // Issue #2053: when spark.executor.memory is preserved, the source heap value (8g)
@@ -2629,6 +2648,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- 'spark.sql.files.maxPartitionBytes' was not set.
           |- 'spark.task.resource.gpu.amount' was not set.
           |- ${classPathComments("rapids.jars.missing")}
+          |- ${commentForStartingExecutorCount(Seq("spark.dynamicAllocation.initialExecutors"), 18)}
           |- ${classPathComments("rapids.shuffle.jars")}
           |""".stripMargin
     // scalastyle:on line.size.limit
@@ -2924,6 +2944,38 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     val (properties, comments) = autoTuner.getRecommendedProperties()
     assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).forall(_ == "8000"))
     assert(!comments.map(_.comment).exists(_.contains("lowered from")))
+  }
+
+  test("Downward pass sizes slots from the recommended cluster under dynamic allocation") {
+    // With dynamic allocation, 'spark.executor.instances' is only the starting executor count
+    // (here 2), so the slots must come from the recommended cluster of 25 executors instead.
+    val sourceProps = downwardPassSourceProps(Map(
+      "spark.dynamicAllocation.enabled" -> "true",
+      "spark.dynamicAllocation.minExecutors" -> "2",
+      "spark.dynamicAllocation.maxExecutors" -> "50"))
+    sourceProps.remove("spark.executor.instances")
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      sourceProps = sourceProps)
+    assert(recommendedValue(properties, "spark.executor.instances").contains("2"))
+    // 900 partitions rounds up to 3 whole waves of 400 slots, rather than 29 waves of 32 slots.
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("1200"))
+    assert(comments.exists(_.contains(s"$DOWNWARD_PASS_SLOTS cluster task slots")))
+  }
+
+  test("Downward pass bounds the slots by maxExecutors under dynamic allocation") {
+    // The application cannot use more executors than maxExecutors, so a maxExecutors of 10 below
+    // the recommended cluster of 25 executors bounds the slots to 10 x 16 = 160.
+    val sourceProps = downwardPassSourceProps(Map(
+      "spark.dynamicAllocation.enabled" -> "true",
+      "spark.dynamicAllocation.minExecutors" -> "2",
+      "spark.dynamicAllocation.maxExecutors" -> "10"))
+    sourceProps.remove("spark.executor.instances")
+    val (properties, comments) = runDownwardPass(worstStageNeeding900Partitions,
+      sourceProps = sourceProps)
+    assert(recommendedValue(properties, "spark.dynamicAllocation.maxExecutors").forall(_ == "10"))
+    // 900 partitions rounds up to 6 whole waves of 160 slots, rather than 3 waves of 400 slots.
+    assert(recommendedValue(properties, SHUFFLE_PARTITIONS_KEY).contains("960"))
+    assert(comments.exists(_.contains("160 cluster task slots")))
   }
 
   test("Downward pass falls back to the cluster record when the platform excludes instances") {

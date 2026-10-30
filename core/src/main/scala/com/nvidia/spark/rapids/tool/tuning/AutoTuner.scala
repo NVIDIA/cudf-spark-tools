@@ -732,7 +732,7 @@ abstract class AutoTuner(
       appendRecommendation(
         SparkTaskSlotModel.Properties.ExecutorCores, gpuClusterRec.coresPerExecutor)
       if (gpuClusterRec.numExecutors > 0) {
-        // Note: This may change later if dynamic allocation is enabled.
+        // Note: This is replaced by the starting executor count if dynamic allocation is enabled.
         appendRecommendation("spark.executor.instances", gpuClusterRec.numExecutors)
       }
     }
@@ -1800,12 +1800,27 @@ abstract class AutoTuner(
 
   /**
    * Recommend dynamic allocation configurations for GPU runs.
-   * Adjusts initialExecutors, minExecutors, and maxExecutors based on the ratio
-   * of source cores to target cores.
+   * Adjusts initialExecutors, minExecutors, and maxExecutors using the cluster sizing
+   * strategy's executor count scale (the source/target cores ratio for constant total cores,
+   * 1.0 for strategies that keep the executor count).
    *
-   * Formula: adjusted_value = max(1, floor(original_value × source_cores / target_cores))
+   * Formula: initialExecutors, executor.instances and maxExecutors use
+   * max(1, ceil(original_value × scale)), so the GPU cluster can start with and grow to at least
+   * the source cores (matching the executor count of the cluster sizing). minExecutors uses
+   * max(1, floor(original_value × scale)) so the idle footprint stays within the source. A source
+   * value of 0 (e.g. minExecutors 0 to release all idle executors) is kept as 0.
    *
-   * Note: It also updates the executor instances to match the initial executors.
+   * If the source or target executor cores are unknown, the source values are kept as is.
+   *
+   * If the target cluster enforces 'spark.executor.instances', it describes the size of the target
+   * cluster (see targetClusterExecutors), so it caps maxExecutors (or sets it, if the source has
+   * none) and is replaced by the starting executor count.
+   *
+   * Spark starts with max(minExecutors, initialExecutors, executor.instances) executors. The
+   * starting count is computed from the source values (scaled as above, with minExecutors rounded
+   * up so the application starts with at least the source cores), not from the executor count of
+   * the recommended cluster shape, and initialExecutors and executor.instances are both set to it
+   * (0 when none is set, Spark's default minExecutors).
    *
    * @param gpuExecCores Number of cores per executor for GPU runs
    */
@@ -1822,29 +1837,55 @@ abstract class AutoTuner(
       return
     }
 
-    // Get the original executor cores from the event log
+    // Get the original executor cores: prefer the source property, else the cores the
+    // executors registered with in the event log (e.g. Databricks or standalone, where
+    // spark.executor.cores is often unset). Skip scaling if neither is known.
     val sourceExecCores =
       getPropertyValueFromSource(SparkTaskSlotModel.Properties.ExecutorCores)
-      .map(_.toInt)
-      .getOrElse(1)
+        .flatMap(v => scala.util.Try(v.trim.toInt).toOption)
+        .filter(_ > 0)
+        .orElse(platform.clusterInfoFromEventLog.map(_.coresPerExecutor).filter(_ > 0))
+        .getOrElse(0)
 
-    if (sourceExecCores <= 0 || gpuExecCores <= 0) {
-      return
+    // Without both executor cores the counts cannot be scaled, so the source values are kept.
+    // The starting executor count is still set below, so that it does not fall back to the
+    // executor count of the recommended cluster shape.
+    val canScale = sourceExecCores > 0 && gpuExecCores > 0
+
+    // Scale factor to adjust executor counts, taken from the cluster sizing strategy so the
+    // dynamic allocation settings follow the same rule as 'spark.executor.instances'.
+    // Example (constant total cores): source=8 cores, target=16 cores → ratio=0.5
+    // Example (constant GPU count): ratio=1.0 → executor counts are kept
+    val adjustRatio = if (canScale) {
+      autoTunerHelper.recommendedClusterSizingStrategy(platform)
+        .executorCountScale(sourceExecCores, gpuExecCores)
+    } else {
+      1.0
     }
 
-    // Scale factor to adjust executor counts based on core ratio.
-    // Example: source=8 cores, target=16 cores → ratio=0.5 → need fewer executors
-    // Example: source=16 cores, target=8 cores → ratio=2.0 → need more executors
-    val adjustRatio = sourceExecCores.toDouble / gpuExecCores
-
     // Helper function to get the adjusted value for a property
-    // Formula: adjusted_value = max(1, floor(original_value × source_cores / target_cores))
-    def adjustedValue(property: String): Option[Int] = {
+    // Formula: adjusted_value = max(1, round(original_value × adjustRatio)), where round is
+    // ceil when 'roundUp' is set and floor otherwise. The epsilon keeps a product that is a whole
+    // number up to floating point error (e.g. 2.0000000001) from rounding past it. A source value
+    // of 0 is kept, e.g. minExecutors 0 releases all idle executors.
+    def adjustedValue(property: String, roundUp: Boolean): Option[Int] = {
       if (ignoreRecommendation(property)) {
         None
       } else {
         val cpuValue = getPropertyValueFromSource(property).map(_.toInt)
-        cpuValue.map(v => math.max(1, math.floor(v * adjustRatio).toInt))
+        if (canScale) {
+          cpuValue.map { v =>
+            if (v <= 0) {
+              math.max(0, v)
+            } else {
+              val scaled = v * adjustRatio
+              val rounded = if (roundUp) math.ceil(scaled - 1e-9) else math.floor(scaled + 1e-9)
+              math.max(1, rounded.toInt)
+            }
+          }
+        } else {
+          cpuValue
+        }
       }
     }
 
@@ -1860,49 +1901,59 @@ abstract class AutoTuner(
       }
     }
 
-    // Handle initialExecutors and executor.instances together
+    // Spark starts with max(minExecutors, initialExecutors, executor.instances) executors.
     // Ref: https://spark.apache.org/docs/3.5.7/configuration.html#dynamic-allocation
-    adjustedValue("spark.dynamicAllocation.initialExecutors").foreach { v =>
-      // First, find the max recommended value for executor instances
-      // as max of executor.instances, initialExecutors, and minExecutors
-      // This handles if there are any enforced values for either of the
-      // above properties.
-      val recInstanceValues: Seq[Int] = Seq(
-        recommendations.get("spark.executor.instances"),
-        recommendations.get("spark.dynamicAllocation.initialExecutors"),
-        recommendations.get("spark.dynamicAllocation.minExecutors")
-      ).flatMap(_.flatMap(_.tunedValue).map(_.toInt))
-      val recInstancesOpt = if (recInstanceValues.nonEmpty) Some(recInstanceValues.max) else None
-      // Use the max of the adjusted value and the recommended value
-      // of executor instances to avoid reducing the number of executors.
-      val valueToUse = recInstancesOpt match {
-        case Some(recInst) if recInst > v =>
-          recInst
-        case _ =>
-          // Track this only if the selected value is the adjusted value.
-          markAsAdjustedProperty("spark.dynamicAllocation.initialExecutors", v)
-          v
+    // Scale initialExecutors and executor.instances only when set in the source. Otherwise drop
+    // them, including the executor.instances from the cluster sizing, so that the starting count
+    // set by recommendStartingExecutorCount does not include the size of the recommended cluster.
+    Seq("spark.dynamicAllocation.initialExecutors", "spark.executor.instances").foreach { prop =>
+      if (!ignoreRecommendation(prop)) {
+        adjustedValue(prop, roundUp = true) match {
+          case Some(v) =>
+            markAsAdjustedProperty(prop, v)
+            // Use the String overload, since the numeric one skips a value of 0 and would keep
+            // the executor.instances from the cluster sizing
+            appendRecommendation(prop, v.toString)
+          case None =>
+            recommendations.remove(prop)
+        }
       }
-      appendRecommendation("spark.dynamicAllocation.initialExecutors", valueToUse.toLong)
-      // Set spark.executor.instances to match initialExecutors to maintain consistency.
-      appendRecommendation("spark.executor.instances", valueToUse.toLong)
     }
 
-    // Simpler logic for min and max executors
-    adjustedValue("spark.dynamicAllocation.minExecutors").foreach { v =>
+    adjustedValue("spark.dynamicAllocation.minExecutors", roundUp = false).foreach { v =>
       markAsAdjustedProperty("spark.dynamicAllocation.minExecutors", v)
-      appendRecommendation("spark.dynamicAllocation.minExecutors", v)
+      // Use the String overload, since the numeric one skips a value of 0
+      appendRecommendation("spark.dynamicAllocation.minExecutors", v.toString)
     }
 
-    adjustedValue("spark.dynamicAllocation.maxExecutors").foreach { v =>
-      markAsAdjustedProperty("spark.dynamicAllocation.maxExecutors", v)
-      appendRecommendation("spark.dynamicAllocation.maxExecutors", v)
+    val maxExecutorsProp = "spark.dynamicAllocation.maxExecutors"
+    adjustedValue(maxExecutorsProp, roundUp = true).foreach { v =>
+      markAsAdjustedProperty(maxExecutorsProp, v)
+      appendRecommendation(maxExecutorsProp, v)
     }
 
-    // Enforce Spark's invariant: minExecutors <= initialExecutors <= maxExecutors
-    // This is needed because initialExecutors may have been boosted by executor.instances
-    // while maxExecutors was independently scaled down by the core ratio.
+    // The size of the target cluster is the most executors dynamic allocation can get, so cap
+    // maxExecutors to it, keeping a lower maxExecutors from the source (e.g. to share a cluster).
+    targetClusterExecutors.filterNot(_ => ignoreRecommendation(maxExecutorsProp)).foreach {
+      clusterSize =>
+        val currentMax = recommendedIntValue(maxExecutorsProp)
+        if (currentMax.forall(_ > clusterSize)) {
+          appendRecommendation(maxExecutorsProp, clusterSize.toLong)
+          appendComment(commentForMaxExecutorsFromTargetCluster(clusterSize))
+        }
+    }
+
+    // Enforce Spark's invariant: minExecutors <= initialExecutors <= maxExecutors.
+    // This is needed because user-enforced values are not scaled, and rounding each value
+    // separately can break the ordering.
     enforceDynamicAllocationInvariants()
+    // minExecutors is rounded down to keep the idle footprint within the source, but the
+    // application should start with at least the source minExecutors cores, so the rounded-up
+    // value is a candidate for the starting count. E.g. minExecutors 3 with a ratio of 0.5 is
+    // recommended as 1, but the application starts with 2.
+    recommendStartingExecutorCount(
+      adjustedValue("spark.dynamicAllocation.minExecutors", roundUp = true))
+    syncDynamicAllocationToRecommendedCluster()
 
     if (adjustedProperties.nonEmpty) {
       appendComment(commentForDynamicAllocationAdjustment(adjustedProperties.toList,
@@ -1911,12 +1962,133 @@ abstract class AutoTuner(
   }
 
   /**
+   * Under dynamic allocation, an enforced 'spark.executor.instances' describes the size of the
+   * target cluster (e.g. workers x GPUs from a cluster ID) rather than an executor count to start
+   * with, so it is used to cap maxExecutors and replaced by the starting executor count. Keeping
+   * it would start the application at the full cluster size, since Spark starts with
+   * max(minExecutors, initialExecutors, executor.instances).
+   */
+  private def targetClusterExecutors: Option[Int] = {
+    platform.getUserEnforcedSparkProperty("spark.executor.instances")
+      .flatMap(v => Try(v.trim.toInt).toOption)
+      .filter(_ > 0)
+  }
+
+  /**
+   * Sets initialExecutors and executor.instances to the number of executors Spark starts with
+   * under dynamic allocation: max(minExecutors, initialExecutors, executor.instances), or 0 (the
+   * default minExecutors) when none is set. Recommending them explicitly keeps callers that merge
+   * the recommendations over the source configuration (e.g. a spark-submit with --num-executors)
+   * from falling back to the source CPU executor count.
+   *
+   * A preserved executor.instances is left as is and counts at its source value. An excluded one
+   * is not emitted, so it does not count.
+   * An enforced one that describes the size of the target cluster (see targetClusterExecutors) is
+   * not part of the starting count and is replaced by it.
+   *
+   * @param minExecutorsRoundedUp the scaled source minExecutors rounded up, an extra candidate for
+   *                              the starting count, capped to maxExecutors
+   */
+  private def recommendStartingExecutorCount(minExecutorsRoundedUp: Option[Int]): Unit = {
+    val initialProp = "spark.dynamicAllocation.initialExecutors"
+    val instancesProp = "spark.executor.instances"
+    val clusterSize = targetClusterExecutors
+    val instancesOpt = if (clusterSize.isDefined) None else recommendedIntValue(instancesProp)
+    val maxOpt = recommendedIntValue("spark.dynamicAllocation.maxExecutors")
+    val minCandidate = minExecutorsRoundedUp.map(v => maxOpt.fold(v)(math.min(v, _)))
+    val startingCount = (Seq("spark.dynamicAllocation.minExecutors", initialProp)
+      .flatMap(recommendedIntValue) ++ instancesOpt ++ minCandidate :+ 0).max
+
+    val setProperties = Seq(initialProp, instancesProp).filter { prop =>
+      !ignoreRecommendation(prop) && !recommendedIntValue(prop).contains(startingCount)
+    }
+    // Use the String overload, since the numeric one skips a value of 0
+    setProperties.foreach(appendRecommendation(_, startingCount.toString))
+    if (setProperties.nonEmpty) {
+      appendComment(commentForStartingExecutorCount(setProperties, startingCount))
+    }
+
+    // Replace the enforced size of the target cluster, which appendRecommendation does not change
+    clusterSize.filterNot(_ == startingCount).foreach { size =>
+      recommendations.get(instancesProp).foreach(_.setRecommendedValue(startingCount.toString))
+      comments -= getEnforcedPropertyComment(instancesProp)
+      appendComment(commentForEnforcedExecutorInstancesWithDynamicAllocation(size, startingCount))
+    }
+  }
+
+  /**
+   * Updates the dynamic allocation fields of the recommended cluster info with the tuned values,
+   * so the cluster summary reports the GPU settings rather than the source CPU ones. Properties
+   * without a recommendation (e.g. preserved or excluded) keep the source value. The initial
+   * executors are reported as Spark computes them:
+   * max(minExecutors, initialExecutors, executor.instances), using the recommended value of each
+   * (an excluded one is not emitted, so it does not count).
+   *
+   * The executor count of the cluster is sized from the workload, so it can land above the
+   * maxExecutors the application can reach. Since the extra executors would stay idle for the
+   * whole run, the cluster is capped to maxExecutors. It is raised to the starting executor count
+   * if the sizing left it smaller, and its worker node count recomputed with
+   * [[Platform.workerNodeCountFor]], the same helper that sized it in the first place.
+   */
+  private def syncDynamicAllocationToRecommendedCluster(): Unit = {
+    def tunedOrElse(property: String, sourceValue: String): String =
+      recommendedIntValue(property).map(_.toString).getOrElse(sourceValue)
+
+    val effectiveInitial = Seq(
+      "spark.dynamicAllocation.minExecutors",
+      "spark.dynamicAllocation.initialExecutors",
+      "spark.executor.instances").flatMap(recommendedIntValue)
+    // An enforced 'spark.executor.instances' is the size of the user's own cluster (see
+    // targetClusterExecutors), which maxExecutors may sit below on purpose, e.g. to share the
+    // cluster with other applications. Only a cluster size we derived ourselves is capped.
+    val maxExecutorsCap = if (targetClusterExecutors.isDefined) {
+      None
+    } else {
+      recommendedIntValue("spark.dynamicAllocation.maxExecutors").filter(_ > 0)
+    }
+    platform.recommendedClusterInfo = platform.recommendedClusterInfo.map { info =>
+      val cappedExecutors =
+        maxExecutorsCap.fold(info.numExecutors)(math.min(info.numExecutors, _))
+      // The cluster must also hold the executors the application starts with. Like the cap, this
+      // only applies to a cluster size we derived ourselves.
+      val numExecutors = if (targetClusterExecutors.isDefined || effectiveInitial.isEmpty) {
+        cappedExecutors
+      } else {
+        math.max(cappedExecutors, effectiveInitial.max)
+      }
+      val numWorkerNodes = platform.workerNodeCountFor(numExecutors, info.numGpusPerNode)
+      if (numExecutors < info.numExecutors) {
+        appendComment(commentForClusterSizedToMaxExecutors(info.numExecutors, numExecutors))
+      } else if (numExecutors > info.numExecutors) {
+        appendComment(commentForClusterSizedToStartingExecutors(info.numExecutors, numExecutors))
+      }
+      info.copy(
+        numExecutors = numExecutors,
+        numWorkerNodes = numWorkerNodes,
+        dynamicAllocationMaxExecutors = tunedOrElse(
+          "spark.dynamicAllocation.maxExecutors", info.dynamicAllocationMaxExecutors),
+        dynamicAllocationMinExecutors = tunedOrElse(
+          "spark.dynamicAllocation.minExecutors", info.dynamicAllocationMinExecutors),
+        dynamicAllocationInitialExecutors = if (effectiveInitial.nonEmpty) {
+          effectiveInitial.max.toString
+        } else {
+          info.dynamicAllocationInitialExecutors
+        })
+    }
+  }
+
+  /**
    * Enforces Spark's dynamic allocation invariant:
    *   minExecutors <= initialExecutors <= maxExecutors
    *
-   * This is necessary because initialExecutors may be boosted to match executor.instances
-   * (from cluster sizing), while maxExecutors is independently scaled by the core ratio,
-   * potentially resulting in initialExecutors > maxExecutors.
+   * The same bounds are applied to executor.instances, since Spark uses it as a lower bound for
+   * the initial number of executors. Only recommended values are checked and properties that are
+   * not recommended are left unset.
+   *
+   * A property that is enforced, preserved or excluded cannot be changed, so a violation that
+   * involves only such properties (e.g. a preserved maxExecutors below an enforced minExecutors)
+   * cannot be fixed. Those are reported as a comment instead of being dropped silently, since
+   * Spark rejects the resulting configuration.
    */
   private def enforceDynamicAllocationInvariants(): Unit = {
     def getRecValue(prop: String): Option[Int] = {
@@ -1924,64 +2096,91 @@ abstract class AutoTuner(
     }
 
     val adjusted = mutable.ListBuffer[String]()
+    // Violations left unfixed because the property cannot be changed.
+    val blocked = mutable.ListBuffer[String]()
 
-    // Skip ignored properties, mirroring appendRecommendation
-    def trackAdjustment(prop: String, from: Int, to: Int): Unit = {
-      if (!ignoreRecommendation(prop)) {
+    // Skip ignored properties, mirroring appendRecommendation. Such a property cannot be lowered
+    // or raised, so the violation that triggered the adjustment is still there afterwards and is
+    // reported rather than dropped.
+    def adjust(prop: String, from: Int, to: Int): Unit = {
+      if (ignoreRecommendation(prop)) {
+        blocked += s"'$prop' ($from)"
+      } else {
+        appendRecommendation(prop, to.toLong)
         adjusted += s"'$prop' adjusted from $from to $to"
       }
     }
 
-    val minOpt = getRecValue(
-      "spark.dynamicAllocation.minExecutors")
-    val initialOpt = getRecValue(
-      "spark.dynamicAllocation.initialExecutors")
-    val maxOpt = getRecValue(
-      "spark.dynamicAllocation.maxExecutors")
-
-    // Cap initialExecutors and executor.instances to maxExecutors
-    (initialOpt, maxOpt) match {
-      case (Some(initial), Some(max)) if initial > max =>
-        appendRecommendation(
-          "spark.dynamicAllocation.initialExecutors", max.toLong)
-        appendRecommendation(
-          "spark.executor.instances", max.toLong)
-        trackAdjustment(
-          "spark.dynamicAllocation.initialExecutors",
-          initial, max)
-        trackAdjustment(
-          "spark.executor.instances", initial, max)
+    // Spark rejects minExecutors > maxExecutors and, on YARN and Kubernetes, a starting count of
+    // max(minExecutors, initialExecutors, executor.instances) above maxExecutors. An enforced or
+    // preserved value cannot be lowered, so raise maxExecutors to it instead (e.g. when
+    // maxExecutors is the size of the target cluster or a scaled value). An excluded value is not
+    // emitted, so it has no recommended value and is not protected. An enforced
+    // executor.instances that is the size of the target cluster is replaced by the starting count
+    // (see targetClusterExecutors), so it is not protected.
+    val maxProp = "spark.dynamicAllocation.maxExecutors"
+    val protectedProps = Seq(
+      "spark.dynamicAllocation.minExecutors",
+      "spark.dynamicAllocation.initialExecutors") ++
+      Seq("spark.executor.instances").filter(_ => targetClusterExecutors.isEmpty)
+    val protectedMax = protectedProps.filter(ignoreRecommendation).flatMap(recommendedIntValue)
+    (protectedMax.reduceOption(_ max _), getRecValue(maxProp)) match {
+      case (Some(protectedValue), Some(max)) if protectedValue > max =>
+        adjust(maxProp, max, protectedValue)
       case _ =>
     }
+
+    val maxOpt = getRecValue(maxProp)
 
     // Cap minExecutors to maxExecutors
-    (minOpt, maxOpt) match {
+    (getRecValue("spark.dynamicAllocation.minExecutors"), maxOpt) match {
       case (Some(min), Some(max)) if min > max =>
-        appendRecommendation(
-          "spark.dynamicAllocation.minExecutors", max.toLong)
-        trackAdjustment(
-          "spark.dynamicAllocation.minExecutors", min, max)
+        adjust("spark.dynamicAllocation.minExecutors", min, max)
       case _ =>
     }
 
-    // Ensure minExecutors <= initialExecutors
-    val adjustedInitialOpt = getRecValue(
-      "spark.dynamicAllocation.initialExecutors")
-    val adjustedMinOpt = getRecValue(
-      "spark.dynamicAllocation.minExecutors")
-    (adjustedMinOpt, adjustedInitialOpt) match {
-      case (Some(min), Some(initial)) if min > initial =>
-        appendRecommendation(
-          "spark.dynamicAllocation.initialExecutors",
-          min.toLong)
-        appendRecommendation(
-          "spark.executor.instances", min.toLong)
-        trackAdjustment(
-          "spark.dynamicAllocation.initialExecutors",
-          initial, min)
-        trackAdjustment(
-          "spark.executor.instances", initial, min)
-      case _ =>
+    // Keep initialExecutors and executor.instances within [minExecutors, maxExecutors]. A missing
+    // minExecutors uses Spark's default of 0, so it does not block the cap to maxExecutors.
+    // Only a changeable value is raised to minExecutors (see below).
+    val minOpt = getRecValue("spark.dynamicAllocation.minExecutors")
+    // An enforced executor.instances that is the size of the target cluster is replaced by the
+    // starting count (see targetClusterExecutors), so it is not checked against the bounds.
+    val boundedProps = Seq("spark.dynamicAllocation.initialExecutors") ++
+      Seq("spark.executor.instances").filter(_ => targetClusterExecutors.isEmpty)
+    boundedProps.foreach { prop =>
+      getRecValue(prop).foreach { value =>
+        // Spark does not reject a starting value below minExecutors, it starts with the largest of
+        // them. So the lower bound only applies to a value that can be changed, and an enforced or
+        // preserved one is not reported as a violation.
+        val lowerBound = if (ignoreRecommendation(prop)) 0 else minOpt.getOrElse(0)
+        val bounded = math.max(lowerBound, math.min(maxOpt.getOrElse(value), value))
+        if (bounded != value) {
+          adjust(prop, value, bounded)
+        }
+      }
+    }
+
+    // An excluded property is not emitted, so its source value still applies to the application
+    // and is not protected above. It is not changed, but a conflict with it is reported.
+    def excludedSourceValue(prop: String): Option[Int] = {
+      if (skippedRecommendations.contains(prop) && recommendedIntValue(prop).isEmpty) {
+        getPropertyValueFromSource(prop).flatMap(v => Try(v.trim.toInt).toOption)
+      } else {
+        None
+      }
+    }
+    val startProps = Seq("spark.dynamicAllocation.minExecutors",
+      "spark.dynamicAllocation.initialExecutors", "spark.executor.instances")
+    getRecValue(maxProp).foreach { max =>
+      startProps.foreach { prop =>
+        excludedSourceValue(prop).filter(_ > max).foreach(v => blocked += s"'$prop' ($v)")
+      }
+    }
+    excludedSourceValue(maxProp).foreach { excludedMax =>
+      val recommendedStart = startProps.flatMap(getRecValue)
+      if (recommendedStart.nonEmpty && recommendedStart.max > excludedMax) {
+        blocked += s"'$maxProp' ($excludedMax)"
+      }
     }
 
     if (adjusted.nonEmpty) {
@@ -1992,6 +2191,9 @@ abstract class AutoTuner(
            |${adjusted.mkString("; ")}.
            |""".stripMargin.trim.replaceAll("\n", "\n  ")
       appendComment(comment)
+    }
+    if (blocked.nonEmpty) {
+      appendComment(commentForUnenforceableDynamicAllocationInvariant(blocked.distinct.toList))
     }
   }
 
@@ -2612,17 +2814,26 @@ abstract class AutoTuner(
    * The executor count is read from the recommendation map rather than through `getPropertyValue`,
    * because that helper falls back to the source properties and would silently yield the source CPU
    * executor count on a platform that excludes 'spark.executor.instances'. It falls back to
-   * `recommendedClusterInfo.numExecutors` only when no recommendation exists, since
-   * `recommendDynamicAllocationConfigs` rescales the executor counts it recommends without ever
-   * updating the cluster record.
+   * `recommendedClusterInfo.numExecutors` only when no recommendation exists. With dynamic
+   * allocation, 'spark.executor.instances' only sets the starting executor count (or is not
+   * recommended at all), so the recommended cluster's executor count is used instead, bounded by
+   * maxExecutors since the application cannot use more executors than that (e.g. a source
+   * maxExecutors kept below an enforced cluster size to share the cluster).
    *
    * @return the slot count, or None when the recommended cluster shape or the per-executor
    *         multiplier cannot be resolved
    */
   private def downwardShuffleSlotCount: Option[Int] = {
+    val isDynamicAllocationEnabled = getPropertyValue("spark.dynamicAllocation.enabled")
+      .exists(_.trim.equalsIgnoreCase("true"))
     platform.recommendedClusterInfo.flatMap { clusterInfo =>
-      val executors =
+      val executors = if (isDynamicAllocationEnabled) {
+        recommendedIntValue("spark.dynamicAllocation.maxExecutors")
+          .filter(_ > 0)
+          .fold(clusterInfo.numExecutors)(math.min(clusterInfo.numExecutors, _))
+      } else {
         recommendedIntValue("spark.executor.instances").getOrElse(clusterInfo.numExecutors)
+      }
       // Cores, not GPU task concurrency: concurrency is auto-tuned by recent plugin versions, and
       // sizing against it would badly under-use a cluster running mixed CPU and GPU stages.
       val coresPerExecutor = clusterInfo.coresPerExecutor
@@ -3645,6 +3856,54 @@ trait AutoTunerStaticComments {
     s"""
        |Tuned dynamic allocation properties (${properties.mkString(", ")})
        |based on cores ratio (source: $sourceExecCores cores, target: $targetExecCores cores).
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForMaxExecutorsFromTargetCluster(numExecutors: Int): String = {
+    s"""
+       |Set 'spark.dynamicAllocation.maxExecutors' to $numExecutors, the size of the target
+       |cluster from the enforced 'spark.executor.instances'.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForEnforcedExecutorInstancesWithDynamicAllocation(
+      clusterSize: Int, startingCount: Int): String = {
+    s"""
+       |Replaced the enforced 'spark.executor.instances' of $clusterSize (the size of the target
+       |cluster) with the starting executor count of $startingCount, since dynamic allocation is
+       |enabled. The size of the target cluster caps 'spark.dynamicAllocation.maxExecutors'.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForClusterSizedToMaxExecutors(fromExecutors: Int, toExecutors: Int): String = {
+    s"""
+       |Sized the recommended cluster from $fromExecutors down to $toExecutors executors, the
+       |'spark.dynamicAllocation.maxExecutors' the application can reach. A larger cluster would
+       |stay partly idle for the whole run.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForClusterSizedToStartingExecutors(fromExecutors: Int, toExecutors: Int): String = {
+    s"""
+       |Sized the recommended cluster from $fromExecutors up to $toExecutors executors, the number
+       |of executors the application starts with under dynamic allocation.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForUnenforceableDynamicAllocationInvariant(properties: Seq[String]): String = {
+    s"""
+       |Could not enforce minExecutors <= initialExecutors <= maxExecutors because
+       |${properties.mkString(", ")} cannot be changed (enforced, preserved or excluded in the
+       |target cluster). Spark rejects a configuration that violates this, so update the target
+       |cluster to make these properties consistent.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def commentForStartingExecutorCount(properties: Seq[String], startingCount: Int): String = {
+    s"""
+       |Set ${properties.map(p => s"'$p'").mkString(" and ")} to $startingCount,
+       |the number of executors Spark starts with under dynamic allocation:
+       |max(minExecutors, initialExecutors, executor.instances).
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 }

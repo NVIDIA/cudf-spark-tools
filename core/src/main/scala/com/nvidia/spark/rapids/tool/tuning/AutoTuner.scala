@@ -2736,7 +2736,9 @@ abstract class AutoTuner(
    * executor count on a platform that excludes 'spark.executor.instances'. It falls back to
    * `recommendedClusterInfo.numExecutors` only when no recommendation exists. With dynamic
    * allocation, 'spark.executor.instances' only sets the starting executor count (or is not
-   * recommended at all), so the recommended cluster's executor count is used instead.
+   * recommended at all), so the recommended cluster's executor count is used instead, bounded by
+   * maxExecutors since the application cannot use more executors than that (e.g. a source
+   * maxExecutors kept below an enforced cluster size to share the cluster).
    *
    * @return the slot count, or None when the recommended cluster shape or the per-executor
    *         multiplier cannot be resolved
@@ -2746,7 +2748,9 @@ abstract class AutoTuner(
       .exists(_.trim.equalsIgnoreCase("true"))
     platform.recommendedClusterInfo.flatMap { clusterInfo =>
       val executors = if (isDynamicAllocationEnabled) {
-        clusterInfo.numExecutors
+        effectiveIntValue("spark.dynamicAllocation.maxExecutors")
+          .filter(_ > 0)
+          .fold(clusterInfo.numExecutors)(math.min(clusterInfo.numExecutors, _))
       } else {
         recommendedIntValue("spark.executor.instances").getOrElse(clusterInfo.numExecutors)
       }

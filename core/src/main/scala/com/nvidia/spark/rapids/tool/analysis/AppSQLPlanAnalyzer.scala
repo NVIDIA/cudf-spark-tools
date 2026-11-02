@@ -343,6 +343,7 @@ class AppSQLPlanAnalyzer(app: AppBase)
    * - Shuffle write time
    * - Fetch wait time
    * - GPU decode time
+   * - Decoded batch bytes
    *
    * This method processes accumulator information for each SQL stage and node and
    * computes statistical results (min, median, max, sum) for IO-related metrics.
@@ -409,7 +410,8 @@ class AppSQLPlanAnalyzer(app: AppBase)
             metricNameToStatistics(BUFFER_TIME_METRIC_KEY),
             metricNameToStatistics(SHUFFLE_WRITE_TIME_METRIC_KEY),
             metricNameToStatistics(FETCH_WAIT_TIME_METRIC_KEY),
-            metricNameToStatistics(GPU_DECODE_TIME_METRIC_KEY)))
+            metricNameToStatistics(GPU_DECODE_TIME_METRIC_KEY),
+            metricNameToStatistics(DECODED_BATCH_BYTES_METRIC_KEY)))
         }
       }
     }.toSeq

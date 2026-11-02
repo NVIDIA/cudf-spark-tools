@@ -107,7 +107,11 @@ case class TestIODiagnosticResult(
     gpuDecodeTimeMin: Long,
     gpuDecodeTimeMed: Long,
     gpuDecodeTimeMax: Long,
-    gpuDecodeTimeSum: Long)
+    gpuDecodeTimeSum: Long,
+    decodedBatchBytesMin: Long,
+    decodedBatchBytesMed: Long,
+    decodedBatchBytesMax: Long,
+    decodedBatchBytesSum: Long)
 
 class AnalysisSuite extends AnyFunSuite {
 
@@ -219,7 +223,11 @@ class AnalysisSuite extends AnyFunSuite {
         result.gpuDecodeTime.min,
         result.gpuDecodeTime.med,
         result.gpuDecodeTime.max,
-        result.gpuDecodeTime.total)
+        result.gpuDecodeTime.total,
+        result.decodedBatchBytes.min,
+        result.decodedBatchBytes.med,
+        result.decodedBatchBytes.max,
+        result.decodedBatchBytes.total)
     }
   }
 

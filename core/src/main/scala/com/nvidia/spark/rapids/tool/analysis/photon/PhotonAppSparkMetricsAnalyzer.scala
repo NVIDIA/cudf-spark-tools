@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,12 +63,10 @@ class PhotonAppSparkMetricsAnalyzer(app: AppBase) extends AppSparkMetricsAnalyze
   private def collectPhotonAccumulators(): Unit = {
     app.accumManager.applyToAccumInfoMap { accumInfo =>
       accumInfo.infoRef.name.value match {
-        case name if name.contains(
-          PhotonParseHelper.PHOTON_METRIC_PEAK_MEMORY_LABEL) =>
+        case name if PhotonParseHelper.isPhotonPeakMemoryMetric(name) =>
           // Collect accumulators for peak memory
           photonPeakMemoryAccumInfos += accumInfo
-        case name if name.contains(
-          PhotonParseHelper.PHOTON_METRIC_SHUFFLE_WRITE_TIME_LABEL) =>
+        case name if PhotonParseHelper.isPhotonShuffleWriteTimeMetric(name) =>
           // Collect accumulators for shuffle write time
           photonShuffleWriteTimeAccumInfos += accumInfo
         case _ => // Ignore other accumulators

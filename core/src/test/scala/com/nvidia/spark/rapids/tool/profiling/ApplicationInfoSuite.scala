@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths, StandardOpenOption}
 
 import scala.collection.mutable.ArrayBuffer
+import scala.jdk.CollectionConverters._
 
 import com.github.luben.zstd.ZstdInputStream
 import com.nvidia.spark.rapids.BaseNoSparkSuite
@@ -173,16 +174,52 @@ class ApplicationInfoSuite extends BaseNoSparkSuite {
       eventLogInfo.head._1,
       PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE))
 
-    assert(app.sparkVersion == "17.3.x-gpu-ml-scala2.13")
+    // From DBCEventLoggingListenerMetadata, as Databricks logs have no SparkListenerLogStart.
+    assert(app.sparkVersion == "4.0.0")
     assert(app.gpuMode, "expected the RAPIDS plugin to be detected")
     assert(!app.dbPlugin.isPhotonEnabled, "expected the GPU capture to use STANDARD runtime")
     assert(app.getSparkRuntime == SparkRuntime.SPARK_RAPIDS)
     assert(app.sparkRapidsBuildInfo.sparkRapidsBuildInfo.nonEmpty)
     assert(app.getTotalLines == 7022L)
-    assert(app.getProcessedLinesCount == 3689L)
-    assert(app.getSkippedLinesCount == 3333L)
+    assert(app.getProcessedLinesCount == 3690L)
+    assert(app.getSkippedLinesCount == 3332L)
     assert(app.sqlIdToInfo.size == 25)
     assert(app.jobIdToInfo.size == 57)
+  }
+
+  // Profiling defaults to onprem. A Databricks log's shuffle-manager shim comes from its runtime
+  // (17.3 -> 400db173), so the onprem shim for its Spark version (4.0.0 -> 400) must not be
+  // recommended when the platform is omitted.
+  Seq(
+    ("the default platform", Seq.empty[String], None),
+    ("databricks-azure", Seq("--platform", PlatformNames.DATABRICKS_AZURE),
+      Some("com.nvidia.spark.rapids.spark400db173.RapidsShuffleManager"))
+  ).foreach { case (label, platformArgs, expectedShuffleManager) =>
+    runConditionalTest(
+      s"profile Databricks 17.3 RAPIDS GPU eventlog shuffle manager on $label",
+      () => (ToolUtils.isSpark340OrLater(),
+        "DBR 17.3 event-log coverage requires Spark 3.4+")) {
+      TrampolineUtil.withTempDir { outputDir =>
+        val appArgs = new ProfileArgs(Array("--output-directory", outputDir.getAbsolutePath,
+          "--auto-tuner") ++ platformArgs :+ s"$logDir/nds_q88_gpu_db_17_3.zstd")
+        val (exit, _) = ProfileMain.mainInternal(appArgs)
+        assert(exit == 0)
+        val outputLines = Files.walk(outputDir.toPath).iterator().asScala
+          .filter(Files.isRegularFile(_))
+          .flatMap(path => Files.readAllLines(path, StandardCharsets.UTF_8).asScala)
+          .toSeq
+        val recommended = outputLines.map(_.trim)
+          .filter(_.startsWith("--conf spark.shuffle.manager="))
+          .map(_.stripPrefix("--conf spark.shuffle.manager="))
+          .distinct
+        assert(recommended == expectedShuffleManager.toSeq)
+        if (expectedShuffleManager.isEmpty) {
+          assert(outputLines.exists(_.contains(
+            "Cannot recommend RAPIDS Shuffle Manager for Databricks runtime " +
+              "'17.3.x-gpu-ml-scala2.13' on platform 'onprem'.")))
+        }
+      }
+    }
   }
 
   test("Databricks 17.3 fixtures contain only synthetic S3 paths") {

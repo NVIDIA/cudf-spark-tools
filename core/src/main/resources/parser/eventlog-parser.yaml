@@ -62,6 +62,9 @@ eventsTable:
   connectOpClosed: org.apache.spark.sql.connect.service.SparkListenerConnectOperationClosed
   connectOpFailed: org.apache.spark.sql.connect.service.SparkListenerConnectOperationFailed
   connectOpCanceled: org.apache.spark.sql.connect.service.SparkListenerConnectOperationCanceled
+  # List of Databricks events.
+  # Spark has no class for this event; the tools define it in the empty package.
+  dbcEventLogMetadata: DBCEventLoggingListenerMetadata
 # List of events that can be supported by each tool
 toolsConfig:
   - className: FilterAppInfo
@@ -98,6 +101,7 @@ toolsConfig:
       - environmentUpdate
       - applicationEnd
       - logStart
+      - dbcEventLogMetadata
       - streamingQueryStart
       - streamingQueryEnd
       # Spark Connect events (Spark 3.5+)
@@ -139,6 +143,7 @@ toolsConfig:
       - environmentUpdate
       - applicationEnd
       - logStart
+      - dbcEventLogMetadata
       - streamingQueryStart
       - streamingQueryEnd
       - rapidsBuildInfo

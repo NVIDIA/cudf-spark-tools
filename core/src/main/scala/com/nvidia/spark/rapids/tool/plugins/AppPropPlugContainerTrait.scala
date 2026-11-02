@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,20 +69,6 @@ trait AppPropPlugContainerTrait {
     pluginMap.get(pluginId).exists(_.isEnabled)
   }
 
-  /**
-   * Retrieves the Spark version from the first enabled plugin that defines it in its metadata.
-   * This method searches through all enabled plugins and returns the "spark.version" value
-   * from the first plugin that has it stored in its metadata map.
-   *
-   * @return An Option containing the Spark version string if any enabled plugin defines it,
-   *         otherwise None. The version is extracted from the plugin's metadata using the
-   *         "spark.version" key.
-   */
-  def getSparkVersionPlugins: Option[String] = {
-    pluginMap.values.filter(_.isEnabled)
-      .find(_.getMetadata.contains("spark.version"))
-      .flatMap(_.getMetadata.get("spark.version").map(_.toString))
-  }
   /**
    * Retrieves the Spark runtime associated with the enabled plugins.
    * @return An Option containing the SparkRuntime if any enabled plugin has a defined runtime,

@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
 import com.nvidia.spark.rapids.tool._
+import com.nvidia.spark.rapids.tool.planparser.db.DBVersionExtractor
 import com.nvidia.spark.rapids.tool.profiling._
 import com.nvidia.spark.rapids.tool.tuning.config.{CategoryEnum, MissingCommentPolicy,
   ProfTuningConfigProvider, PySparkMemoryRebalanceSource, PySparkMemoryTuningPolicy,
@@ -2408,7 +2409,8 @@ abstract class AutoTuner(
   }
 
   /**
-   * Resolves the RapidsShuffleManager class name based on the Spark version.
+   * Resolves the RapidsShuffleManager class name based on the Spark version, or the runtime of
+   * a Databricks app (see Platform.getShuffleManagerLookupVersion).
    * If a valid class name is not found, an error message is returned.
    *
    * Example:
@@ -2421,11 +2423,15 @@ abstract class AutoTuner(
    * @return Either an error message (Left) or the RapidsShuffleManager class name (Right)
    */
   def getShuffleManagerClassName: Either[String, String] = {
-    appInfoProvider.getSparkVersion match {
+    platform.getShuffleManagerLookupVersion(appInfoProvider) match {
       case Some(sparkVersion) =>
         platform.getShuffleManagerVersion(sparkVersion) match {
           case Some(smVersion) =>
             Right(autoTunerHelper.buildShuffleManagerClassName(smVersion))
+          case None if isDatabricksAppOnOtherPlatform =>
+            // The lookup version is the app's Databricks runtime, which only a Databricks
+            // platform maps to a shim
+            Left(shuffleManagerCommentForDatabricksRuntime(sparkVersion, platform))
           case None =>
             Left(shuffleManagerCommentForUnsupportedVersion(
               sparkVersion, platform))
@@ -2433,6 +2439,12 @@ abstract class AutoTuner(
       case None =>
         Left(shuffleManagerCommentForMissingVersion)
     }
+  }
+
+  /** Whether the event log records a Databricks runtime but the platform isn't Databricks. */
+  private def isDatabricksAppOnOtherPlatform: Boolean = {
+    appInfoProvider.getProperty(DBVersionExtractor.DB_SPARK_VERSION_KEY).isDefined &&
+      !platform.isInstanceOf[DatabricksPlatform]
   }
 
   private def recommendGCProperty(): Unit = {
@@ -3723,6 +3735,14 @@ trait AutoTunerStaticComments {
        |Cannot recommend RAPIDS Shuffle Manager for unsupported ${platform.sparkVersionLabel}: '$sparkVersion'.
        |To enable RAPIDS Shuffle Manager, use a supported ${platform.sparkVersionLabel} (e.g., '$latestSparkVersion')
        |and set: '--conf spark.shuffle.manager=com.nvidia.spark.rapids.spark$latestSmVersion.RapidsShuffleManager'.
+       |See supported versions: $shuffleManagerDocUrl.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def shuffleManagerCommentForDatabricksRuntime(runtime: String, platform: Platform): String = {
+    s"""
+       |Cannot recommend RAPIDS Shuffle Manager for Databricks runtime '$runtime' on platform '${platform.platformName}'.
+       |If the runtime is supported, rerun with '--platform ${PlatformNames.DATABRICKS_AWS}' or '--platform ${PlatformNames.DATABRICKS_AZURE}' to get a recommendation.
        |See supported versions: $shuffleManagerDocUrl.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }

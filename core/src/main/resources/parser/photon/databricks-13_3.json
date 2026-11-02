@@ -4,7 +4,8 @@
     "Some entries have one-to-many mappings. For example, 'PhotonAgg' can map to either 'HashAggregate', 'SortAggregate', or 'ObjectHashAggregate'.",
     "Currently, only the first mapping in the list is used.",
     "This limitation exists because we cannot differentiate between these operators in the SparkPlan.",
-    "TODO: Create separate mapping file for different Photon/Databricks versions"
+    "TODO: Create separate mapping file for different Photon/Databricks versions",
+    "PhotonWriteStage and PhotonParquetWriter appear in 13.3 write plans as well as 15.4 and 17.3. PhotonColumnarToRow, PhotonMetadataSubquery, PhotonRuntimeFilterSource, PhotonRange, PhotonJsonScan and PhotonClustering were first seen in 15.4 and 17.3 logs. The entries are additive and mean the same on every runtime."
   ],
   "PhotonAdapter": [
     "Scan"
@@ -102,5 +103,29 @@
   "PhotonWindow": [
     "Window",
     "RunningWindowFunction"
+  ],
+  "PhotonWriteStage": [
+    "WholeStageCodegen"
+  ],
+  "PhotonParquetWriter": [
+    "WriteFiles"
+  ],
+  "PhotonColumnarToRow": [
+    "ColumnarToRow"
+  ],
+  "PhotonMetadataSubquery": [
+    "Subquery"
+  ],
+  "PhotonRuntimeFilterSource": [
+    "Subquery"
+  ],
+  "PhotonRange": [
+    "Range"
+  ],
+  "PhotonJsonScan": [
+    "Scan"
+  ],
+  "PhotonClustering": [
+    "Sort"
   ]
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -137,13 +137,14 @@ class DBPlugin(
   override val versionExtractor: Option[AppPropVersionExtractorTrait] = Some(DBVersionExtractor)
 
   /**
-   * Post-enable action that extracts and stores Spark version in plugin metadata.
+   * Post-enable action that extracts and stores the Databricks runtime version in plugin
+   * metadata. It is not the Spark version, which the event log records.
    * @param properties Application properties map.
    */
   override def postEnableAction(properties: collection.Map[String, String]): Unit = {
-    // set the spark version if possible using the version extractor from the spark properties.
+    // set the runtime version if possible using the version extractor from the spark properties.
     evalPluginVersion(properties) match {
-      case Some(version) => addMetadata("spark.version", version)
+      case Some(version) => addMetadata("runtime.version", version)
       case None => // do nothing
     }
   }

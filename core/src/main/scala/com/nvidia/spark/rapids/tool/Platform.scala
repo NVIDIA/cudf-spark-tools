@@ -18,7 +18,8 @@ package com.nvidia.spark.rapids.tool
 import scala.annotation.tailrec
 import scala.collection.mutable
 
-import com.nvidia.spark.rapids.tool.planparser.db.DatabricksParseHelper
+import com.nvidia.spark.rapids.tool.planparser.db.{DatabricksParseHelper, DBVersionExtractor}
+import com.nvidia.spark.rapids.tool.profiling.AppInfoPropertyGetter
 import com.nvidia.spark.rapids.tool.tuning.{SparkMaster, TargetClusterProps, TuningEntryTrait, WorkerInfo}
 
 import org.apache.spark.internal.Logging
@@ -449,6 +450,17 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
     supportedShuffleManagerVersionMap.collectFirst {
       case (supportedVersion, smVersion) if sparkVersion.contains(supportedVersion) => smVersion
     }
+  }
+
+  /**
+   * The version to look up in supportedShuffleManagerVersionMap. A Databricks app needs the shim
+   * for its runtime (for example, 14.3 and 15.4 both run Spark 3.5.0), so use the runtime the
+   * event log records, if any, and otherwise the Spark version. On a platform whose map is keyed
+   * by Spark versions, a runtime matches nothing, so a Databricks app never gets an Apache shim.
+   */
+  def getShuffleManagerLookupVersion(appInfoProvider: AppInfoPropertyGetter): Option[String] = {
+    appInfoProvider.getProperty(DBVersionExtractor.DB_SPARK_VERSION_KEY)
+      .orElse(appInfoProvider.getSparkVersion)
   }
 
   /**

@@ -21,6 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import com.nvidia.spark.rapids.SparkRapidsBuildInfoEvent
+import com.nvidia.spark.rapids.tool.planparser.db.DBLogMetadataEvent
 import com.nvidia.spark.rapids.tool.profiling.{BlockManagerRemovedCase, DriverAccumCase, JobInfoClass, ProfileUtils, ResourceProfileInfoCase, SQLExecutionInfoClass, SQLPlanMetricsCase}
 
 import org.apache.spark.internal.Logging
@@ -104,6 +105,8 @@ abstract class EventProcessorBase[T <: AppBase](app: T) extends SparkListener wi
       case _: SparkRapidsBuildInfoEvent =>
         doSparkRapidsBuildInfoEvent(app,
           event.asInstanceOf[SparkRapidsBuildInfoEvent])
+      case _: DBLogMetadataEvent =>
+        doDBLogMetadataEvent(app, event.asInstanceOf[DBLogMetadataEvent])
       case _ =>
         val wasResourceProfileAddedEvent = doSparkListenerResourceProfileAddedReflect(app, event)
         if (!wasResourceProfileAddedEvent) {
@@ -142,6 +145,13 @@ abstract class EventProcessorBase[T <: AppBase](app: T) extends SparkListener wi
       event: SparkListenerLogStart): Unit = {
     logDebug("Processing event: " + event.getClass)
     app.handleLogStartForCachedProps(event)
+  }
+
+  def doDBLogMetadataEvent(
+      app: T,
+      event: DBLogMetadataEvent): Unit = {
+    logDebug("Processing event: " + event.getClass)
+    app.handleDBLogMetadataForCachedProps(event)
   }
 
   def doSparkListenerSQLExecutionStart(

@@ -8,6 +8,9 @@
     },
     {
       "pattern": "https://www.nvidia.com/en-us/security/pgp-key"
+    },
+    {
+      "pattern": "https://deepwiki.com/*"
     }
   ],
   "timeout": "15s",

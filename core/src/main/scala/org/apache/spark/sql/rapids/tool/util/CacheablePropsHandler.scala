@@ -18,6 +18,7 @@ package org.apache.spark.sql.rapids.tool.util
 
 import scala.jdk.CollectionConverters._
 
+import com.nvidia.spark.rapids.tool.planparser.db.DBLogMetadataEvent
 import com.nvidia.spark.rapids.tool.plugins.AppPropPlugContainerTrait
 import com.nvidia.spark.rapids.tool.profiling.ProfileUtils
 
@@ -113,15 +114,11 @@ trait CacheablePropsHandler extends AppPropPlugContainerTrait {
   // caches the spark-version from the eventlogs
   private var _sparkVersion: String = ""
 
-  /** Getter for Spark version */
-  def sparkVersion: String = {
-    // get the spark version from the plugins if any.
-    // If None is defined, fall back to the cached one.
-    getSparkVersionPlugins match {
-      case Some(ver) => ver
-      case None => _sparkVersion
-    }
-  }
+  /**
+   * Getter for Spark version: the version the event log records, from SparkListenerLogStart or,
+   * on Databricks, DBCEventLoggingListenerMetadata.
+   */
+  def sparkVersion: String = _sparkVersion
 
   /** Setter for Spark version */
   def sparkVersion_=(value: String): Unit = {
@@ -196,6 +193,14 @@ trait CacheablePropsHandler extends AppPropPlugContainerTrait {
 
   def handleLogStartForCachedProps(event: SparkListenerLogStart): Unit = {
     sparkVersion = event.sparkVersion
+  }
+
+  /**
+   * Databricks event logs have no SparkListenerLogStart. They record the Spark version in
+   * DBCEventLoggingListenerMetadata instead.
+   */
+  def handleDBLogMetadataForCachedProps(event: DBLogMetadataEvent): Unit = {
+    Option(event.sparkVersion).filter(_.nonEmpty).foreach(sparkVersion = _)
   }
 
   def isGPUModeEnabledForJob(event: SparkListenerJobStart): Boolean = {

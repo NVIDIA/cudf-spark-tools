@@ -176,6 +176,22 @@ object PhotonParseHelper extends PropConditionOnSparkExtTrait {
     accum.name == PHOTON_METRIC_CUMULATIVE_TIME_LABEL && accum.nodeName.contains("Scan")
 
   /**
+   * Checks if a metric is Photon's peak memory usage. The match is exact because on Databricks
+   * 17.3, Parquet writers also report "dictionary encoding - peak memory usage for dictionary
+   * ids", which covers only the dictionary ids, next to their own "peak memory usage".
+   */
+  def isPhotonPeakMemoryMetric(name: String): Boolean =
+    name == PHOTON_METRIC_PEAK_MEMORY_LABEL
+
+  /**
+   * Checks if a metric is part of Photon's shuffle write time, which Photon splits into several
+   * metrics, for example "time taken waiting on file write IO (part of shuffle file write)".
+   * The parts differ between Databricks versions, so the match is on the shared label.
+   */
+  def isPhotonShuffleWriteTimeMetric(name: String): Boolean =
+    name.contains(PHOTON_METRIC_SHUFFLE_WRITE_TIME_LABEL)
+
+  /**
    * Updates I/O metrics for Photon applications using Photon-specific metric names.
    * Converts Photon's "cumulative time" (in nanoseconds) to scanTime (in milliseconds).
    */

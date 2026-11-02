@@ -126,10 +126,9 @@ object IcebergGpuSupport {
    *      is added, this branch should consult a DBR-version predicate instead of
    *      returning unconditionally.
    *   2. Spark version (3.5.x / 4.0.x), only consulted on non-Databricks platforms.
-   *      `sparkVersion` here is whatever `AppBase.sparkVersion` resolves to (raw
-   *      `SparkListenerLogStart` on OSS Spark, plugin-supplied vendor label on
-   *      platforms that override it), so the predicate is only meaningful when
-   *      the platform-shape is known.
+   *      `sparkVersion` here is `AppBase.sparkVersion`, the version the event log
+   *      records (`SparkListenerLogStart`, or `DBCEventLoggingListenerMetadata` on
+   *      Databricks).
    *   3. `spark.rapids.sql.format.iceberg.enabled`
    *   4. `spark.rapids.sql.format.iceberg.write.enabled`
    *   5. `spark.sql.parquet.fieldId.write.enabled`

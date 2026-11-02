@@ -23,14 +23,16 @@ import com.nvidia.spark.rapids.BaseNoSparkSuite
 import com.nvidia.spark.rapids.tool.{AppSummaryInfoBaseProvider, EventLogPathProcessor,
   PlatformFactory, PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AggRawMetricsResult
+import com.nvidia.spark.rapids.tool.planparser.db.{DatabricksParseHelper, DBVersionExtractor}
 import com.nvidia.spark.rapids.tool.profiling.{AppInfoProfileResults, ApplicationSummaryInfo,
-  RapidsPropertyProfileResult, SingleAppSummaryInfoProvider, SQLPlanInfoProfileResult,
-  StageAggGpuMetricsProfileResult}
+  CollectInformation, RapidsPropertyProfileResult, SingleAppSummaryInfoProvider,
+  SQLPlanInfoProfileResult, StageAggGpuMetricsProfileResult}
 import com.nvidia.spark.rapids.tool.tuning.config.{ProfTuningConfigProvider, TuningConfigProvider}
 import org.scalatest.matchers.should.Matchers._
 
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.execution.{SparkPlanInfo => UpstreamSparkPlanInfo}
+import org.apache.spark.sql.rapids.tool.ToolUtils
 import org.apache.spark.sql.rapids.tool.profiling.ApplicationInfo
 import org.apache.spark.sql.rapids.tool.store.SparkPlanInfoTruncated
 import org.apache.spark.sql.rapids.tool.util.{RapidsToolsConfUtil, SparkRuntime}
@@ -152,6 +154,10 @@ class AppSummaryInfoProviderSuite extends BaseNoSparkSuite {
         """"App ID":"local-provider-test","Timestamp":100000,"User":"test"}""") ++
       extraEvents ++ Seq(
       """{"Event":"SparkListenerApplicationEnd","Timestamp":200000}""")
+    withEventLog(events)(f)
+  }
+
+  private def withEventLog(events: Seq[String])(f: String => Unit): Unit = {
     TrampolineUtil.withTempDir { tempDir =>
       val eventLog = Paths.get(tempDir.getAbsolutePath, "eventlog")
       Files.write(eventLog, events.mkString("\n").getBytes(StandardCharsets.UTF_8))
@@ -325,6 +331,81 @@ class AppSummaryInfoProviderSuite extends BaseNoSparkSuite {
         Some(configuredCacheSerializer)
       cacheSerializerRecommendation(profProvider, ProfilingAutoTunerHelper) shouldBe
         Some(configuredCacheSerializer)
+    }
+  }
+
+  runConditionalTest(
+    "providers expose the Spark version of Databricks apps",
+    () => (ToolUtils.isSpark340OrLater(),
+      "DBR 17.3 event-log coverage requires Spark 3.4+")) {
+    // Databricks logs have no SparkListenerLogStart. getSparkVersion comes from
+    // DBCEventLoggingListenerMetadata, and the shuffle-manager lookup uses the runtime from
+    // spark.databricks.clusterUsageTags.sparkVersion.
+    val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE)
+    val qualLogDir = ToolTestUtils.getTestResourcePath("spark-events-qualification")
+    Seq(
+      ("nds_q88_photon_db_13_3.zstd", "3.4.1", "13.3.x-aarch64-photon-scala2.12"),
+      ("nds_merge_q4_photon_db_17_3.zstd", "4.0.0", "17.3.x-photon-scala2.13")
+    ).foreach { case (fileName, sparkVersion, runtime) =>
+      val eventLog = s"$qualLogDir/$fileName"
+      val qualApp = createAppFromEventlog(eventLog, PlatformNames.DATABRICKS_AZURE)
+      val qualProvider = new QualAppSummaryInfoProvider(
+        qualApp, None, emptyAggMetrics, Seq.empty)
+
+      val hadoopConf = RapidsToolsConfUtil.newHadoopConf()
+      val eventLogInfo = EventLogPathProcessor.getEventLogInfo(eventLog, hadoopConf).head._1
+      val profApp = new ApplicationInfo(hadoopConf, eventLogInfo,
+        PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE))
+      val collect = new CollectInformation(Seq(profApp))
+      val profProvider = new SingleAppSummaryInfoProvider(profApp,
+        emptySummary().copy(appInfo = collect.getAppInfo, sparkProps = collect.getSparkProperties))
+
+      Seq(qualProvider, profProvider).foreach { provider =>
+        withClue(s"$fileName, ${provider.getClass.getSimpleName}: ") {
+          provider.getSparkVersion shouldBe Some(sparkVersion)
+          platform.getShuffleManagerLookupVersion(provider) shouldBe Some(runtime)
+        }
+      }
+    }
+  }
+
+  test("Databricks apps take the Spark version only from the event log") {
+    val runtime = "17.3.x-photon-scala2.13"
+    val dbProperties = Seq(
+      DatabricksParseHelper.PROP_ALL_TAGS_KEY -> "[]",
+      DatabricksParseHelper.PROP_TAG_CLUSTER_ID_KEY -> "test-cluster-id",
+      DatabricksParseHelper.PROP_TAG_CLUSTER_NAME_KEY -> "test-cluster-name",
+      DBVersionExtractor.DB_SPARK_VERSION_KEY -> runtime
+    ).map { case (key, value) => s""""$key":"$value"""" }.mkString(",")
+    val environmentUpdate =
+      """{"Event":"SparkListenerEnvironmentUpdate","JVM Information":{},""" +
+        s""""Spark Properties":{$dbProperties},"Hadoop Properties":{},""" +
+        """"System Properties":{},"Classpath Entries":{}}"""
+    val logMetadata =
+      """{"Event":"DBCEventLoggingListenerMetadata","Spark Version":"4.0.0",""" +
+        """"Timestamp":100000,"Rollover Number":0,"SparkContext Id":0}"""
+    val logStart = """{"Event":"SparkListenerLogStart","Spark Version":"3.5.0"}"""
+    val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE)
+    Seq(
+      ("DBCEventLoggingListenerMetadata", Seq(logMetadata), "4.0.0"),
+      ("SparkListenerLogStart", Seq(logStart), "3.5.0"),
+      // The runtime is not a Spark version, so it never becomes sparkVersion.
+      ("no version event", Seq.empty, "")
+    ).foreach { case (label, versionEvents, expectedVersion) =>
+      val events = versionEvents ++ Seq(
+        """{"Event":"SparkListenerApplicationStart","App Name":"ProviderTest",""" +
+          """"App ID":"local-provider-test","Timestamp":100000,"User":"test"}""",
+        environmentUpdate,
+        """{"Event":"SparkListenerApplicationEnd","Timestamp":200000}""")
+      withEventLog(events) { eventLog =>
+        val app = createAppFromEventlog(eventLog, PlatformNames.DATABRICKS_AZURE)
+        val provider = new QualAppSummaryInfoProvider(app, None, emptyAggMetrics, Seq.empty)
+        withClue(s"$label: ") {
+          assert(app.dbPlugin.isEnabled, "expected the Databricks plugin to be enabled")
+          app.sparkVersion shouldBe expectedVersion
+          platform.getShuffleManagerLookupVersion(provider) shouldBe Some(runtime)
+        }
+      }
     }
   }
 }

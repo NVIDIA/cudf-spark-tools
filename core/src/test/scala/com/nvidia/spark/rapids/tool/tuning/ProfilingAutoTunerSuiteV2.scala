@@ -3783,13 +3783,15 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
   // The Databricks entries of supportedShuffleManagerVersionMap. The map-driven tests in
   // ProfilingAutoTunerSuite take both the runtime and the expected class from the map, so a
   // wrong or missing entry stays green there; these pin the expected values independently.
+  // As in a Databricks event log, the Spark version is the Apache one and the runtime is only
+  // in spark.databricks.clusterUsageTags.sparkVersion, which the lookup is keyed by.
   test("test shuffle manager version for databricks 14.3 is 350db143") {
     val databricksVersion = "14.3.x-gpu-ml-scala2.12"
     val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
       mutable.Map("spark.rapids.sql.enabled" -> "true",
         "spark.plugins" -> "com.nvidia.spark.AnotherPlugin, com.nvidia.spark.SQLPlugin",
         DBVersionExtractor.DB_SPARK_VERSION_KEY -> databricksVersion),
-      Some(databricksVersion), Seq())
+      Some("3.5.0"), Seq())
     val autoTuner = buildAutoTunerForTests(
       infoProvider,
       PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS))
@@ -3802,11 +3804,30 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       mutable.Map("spark.rapids.sql.enabled" -> "true",
         "spark.plugins" -> "com.nvidia.spark.AnotherPlugin, com.nvidia.spark.SQLPlugin",
         DBVersionExtractor.DB_SPARK_VERSION_KEY -> databricksVersion),
-      Some(databricksVersion), Seq())
+      Some("4.0.0"), Seq())
     val autoTuner = buildAutoTunerForTests(
       infoProvider,
       PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE))
     verifyRecommendedShuffleManagerVersion(autoTuner, expectedSmVersion = "400db173")
+  }
+
+  test("test shuffle manager is not recommended for a databricks log on the default platform") {
+    // The default (onprem) map is keyed by Spark versions. A Databricks app needs its runtime's
+    // shim (17.3 -> 400db173), so the onprem 400 shim for its Spark version must not be used.
+    val databricksVersion = "17.3.x-gpu-ml-scala2.13"
+    val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
+      mutable.Map("spark.rapids.sql.enabled" -> "true",
+        "spark.plugins" -> "com.nvidia.spark.AnotherPlugin, com.nvidia.spark.SQLPlugin",
+        DBVersionExtractor.DB_SPARK_VERSION_KEY -> databricksVersion),
+      Some("4.0.0"), Seq())
+    val autoTuner = buildAutoTunerForTests(infoProvider, PlatformFactory.createInstance())
+    autoTuner.getShuffleManagerClassName match {
+      case Right(smClassName) =>
+        fail(s"Expected error comment but got valid RapidsShuffleManager: $smClassName")
+      case Left(comment) =>
+        assert(comment ==
+          shuffleManagerCommentForDatabricksRuntime(databricksVersion, autoTuner.platform))
+    }
   }
 
   test("test shuffle manager version for databricks 15.4 without a plugin shim") {
@@ -3815,7 +3836,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       mutable.Map("spark.rapids.sql.enabled" -> "true",
         "spark.plugins" -> "com.nvidia.spark.AnotherPlugin, com.nvidia.spark.SQLPlugin",
         DBVersionExtractor.DB_SPARK_VERSION_KEY -> databricksVersion),
-      Some(databricksVersion), Seq())
+      Some("3.5.0"), Seq())
     val autoTuner = buildAutoTunerForTests(
       infoProvider,
       PlatformFactory.createInstance(PlatformNames.DATABRICKS_AWS))

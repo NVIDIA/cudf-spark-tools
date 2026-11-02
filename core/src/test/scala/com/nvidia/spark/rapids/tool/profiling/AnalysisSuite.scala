@@ -20,13 +20,15 @@ import java.io.File
 
 import com.nvidia.spark.rapids.tool.{PlatformNames, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.MetricCatalog
+import com.nvidia.spark.rapids.tool.analysis.util.AggAccumPhotonHelper
+import com.nvidia.spark.rapids.tool.planparser.db.PhotonParseHelper
 import com.nvidia.spark.rapids.tool.views.{ProfDataSourceView, RawMetricProfilerView}
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.scheduler.AccumulableInfo
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.rapids.tool.ToolUtils
-import org.apache.spark.sql.rapids.tool.store.{AccumInfo, AccumInfoWithMaxAgg, AccumMetaRef}
+import org.apache.spark.sql.rapids.tool.store.{AccumInfo, AccumInfoWithMaxAgg, AccumMetaRef, TaskModel}
 import org.apache.spark.sql.types._
 
 case class TestStageDiagnosticResult(
@@ -251,14 +253,92 @@ class AnalysisSuite extends AnyFunSuite {
       expectFile("sql"), expectFile("job"), expectFile("stage"))
   }
 
-  test("test photon sql metrics aggregation") {
-    val fileName = "nds_q88_photon_db_13_3"
-    val expectFile = (metric: String) => {
-      s"${fileName}_${metric}_metrics_agg_expectation.csv"
+  Seq("nds_q88_photon_db_13_3", "nds_merge_q4_photon_db_17_3").foreach { fileName =>
+    test(s"test photon sql metrics aggregation: $fileName") {
+      val expectFile = (metric: String) => {
+        s"${fileName}_${metric}_metrics_agg_expectation.csv"
+      }
+      testSqlMetricsAggregation(Array(s"${qualLogDir}/${fileName}.zstd"),
+        expectFile("sql"), expectFile("job"), expectFile("stage"),
+        platformName = PlatformNames.DATABRICKS_AWS)
     }
-    testSqlMetricsAggregation(Array(s"${qualLogDir}/${fileName}.zstd"),
-      expectFile("sql"), expectFile("job"), expectFile("stage"),
-      platformName = PlatformNames.DATABRICKS_AWS)
+  }
+
+  test("photon peak memory matches only its own label") {
+    assert(PhotonParseHelper.isPhotonPeakMemoryMetric("peak memory usage"))
+    // Databricks 17.3 Parquet writers also report this, for their dictionary ids only
+    assert(!PhotonParseHelper.isPhotonPeakMemoryMetric(
+      "dictionary encoding - peak memory usage for dictionary ids"))
+  }
+
+  // The parts of Photon's shuffle write time. 13.3's "convert columns to rows" part is
+  // "convert rows to columns" in 17.3.
+  private val photonShuffleWriteParts = Seq(
+    "time taken to sort rows by partition ID (part of shuffle file write)",
+    "time taken waiting on file write IO (part of shuffle file write)")
+  Seq(
+    "nds_q88_photon_db_13_3" ->
+      "time taken to convert columns to rows (part of shuffle file write)",
+    "nds_merge_q4_photon_db_17_3" ->
+      "time taken to convert rows to columns (part of shuffle file write)"
+  ).foreach { case (fileName, convertPart) =>
+    test(s"photon metrics the tools read keep their names and types: $fileName") {
+      val args = Array("--platform", PlatformNames.DATABRICKS_AWS, s"$qualLogDir/$fileName.zstd")
+      val apps = ToolTestUtils.processProfileApps(args, sparkSession)
+      val metrics = apps.head.planMetricProcessor.allSQLMetrics
+      val shuffleWrite =
+        metrics.filter(m => PhotonParseHelper.isPhotonShuffleWriteTimeMetric(m.name))
+      assert(shuffleWrite.map(_.name).toSet == (photonShuffleWriteParts :+ convertPart).toSet)
+      // The tools convert scan time and shuffle write time from nanoseconds, and read peak
+      // memory as bytes
+      val scanTime = metrics.filter { m =>
+        m.name == PhotonParseHelper.PHOTON_METRIC_CUMULATIVE_TIME_LABEL &&
+          m.nodeName.contains("Scan")
+      }
+      val peakMemory = metrics.filter(m => PhotonParseHelper.isPhotonPeakMemoryMetric(m.name))
+      assert(scanTime.map(_.metricType).toSet == Set("nsTiming"))
+      assert(shuffleWrite.map(_.metricType).toSet == Set("nsTiming"))
+      assert(peakMemory.map(_.metricType).toSet == Set("size"))
+    }
+  }
+
+  test("photon stages that shuffle through a CPU Exchange keep the task shuffle write time") {
+    // These stages of the 17.3 fixture have no Photon shuffle write metric. The values are the
+    // sums of their tasks' Shuffle Write Time.
+    val args = Array("--platform", PlatformNames.DATABRICKS_AWS,
+      s"$qualLogDir/nds_merge_q4_photon_db_17_3.zstd")
+    val apps = ToolTestUtils.processProfileApps(args, sparkSession)
+    val swWriteTimes = RawMetricProfilerView.getAggMetrics(apps.toSeq).stageAggs
+      .map(stage => stage.id -> stage.swWriteTimeSum).toMap
+    assert(swWriteTimes(57) == 19330)
+    assert(swWriteTimes(81) == 3)
+    assert(swWriteTimes(86) == 2)
+  }
+
+  test("photon stages without a Photon peak memory metric keep the task peak memory") {
+    // In the fixtures, every task reports 0 peak execution memory, so build the tasks here
+    def task(peakExecutionMemory: Long): TaskModel = TaskModel(
+      stageId = 1, stageAttemptId = 0, taskType = "ShuffleMapTask", endReason = "Success",
+      taskId = 1L, attempt = 0, launchTime = 0L, finishTime = 0L, duration = 0L,
+      successful = true, taskStatus = "SUCCESS", executorId = "1", host = "host1",
+      taskLocality = "PROCESS_LOCAL", speculative = false, gettingResultTime = 0L,
+      executorDeserializeTime = 0L, executorDeserializeCPUTime = 0L, executorRunTime = 0L,
+      executorCPUTime = 0L, peakExecutionMemory = peakExecutionMemory, resultSize = 0L,
+      jvmGCTime = 0L, resultSerializationTime = 0L, memoryBytesSpilled = 0L,
+      diskBytesSpilled = 0L, sr_remoteBlocksFetched = 0L, sr_localBlocksFetched = 0L,
+      sr_fetchWaitTime = 0L, sr_remoteBytesRead = 0L, sr_remoteBytesReadToDisk = 0L,
+      sr_localBytesRead = 0L, sr_totalBytesRead = 0L, sw_bytesWritten = 0L, sw_writeTime = 0L,
+      sw_recordsWritten = 0L, input_bytesRead = 0L, input_recordsRead = 0L,
+      output_bytesWritten = 0L, output_recordsWritten = 0L)
+    def peakMemory(photonPeakValues: Seq[Long], tasks: Seq[TaskModel]): Long =
+      new AggAccumPhotonHelper(Seq.empty, photonPeakValues).accumPerStage(tasks)
+        .peakExecutionMemoryMax
+    // A stage with no Photon peak memory metric
+    assert(peakMemory(Seq.empty, Seq(task(1024), task(4096))) == 4096)
+    // A Photon stage, whose tasks report 0
+    assert(peakMemory(Seq(2048), Seq(task(0), task(0))) == 2048)
+    // A stage with no tasks
+    assert(peakMemory(Seq(2048), Seq.empty) == 0)
   }
 
   test("test stage-level diagnostic metrics with diagnostic views enabled") {

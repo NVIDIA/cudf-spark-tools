@@ -22,6 +22,7 @@ import java.time.LocalDateTime
 import com.nvidia.spark.rapids.BaseNoSparkSuite
 import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AppSQLPlanAnalyzer
+import com.nvidia.spark.rapids.tool.profiling.WholeStageCodeGenResults
 import com.nvidia.spark.rapids.tool.qualification.checkers.{QToolOutFileCheckerImpl, QToolOutJsonFileCheckerImpl, QToolResultCoreChecker, QToolStatusChecker, QToolTestCtxtBuilder}
 import com.nvidia.spark.rapids.tool.views.QualSQLCodeGenView
 import org.json4s.DefaultFormats
@@ -31,6 +32,7 @@ import org.scalatest.matchers.should.Matchers._
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{SourceClusterInfo, ToolUtils}
 import org.apache.spark.sql.rapids.tool.plangraph.SparkPlanGraphCluster
+import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
 import org.apache.spark.sql.rapids.tool.util.UTF8Source
 
 
@@ -47,7 +49,12 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   def expectedQualLoc(dirName: String): String = s"$expRoot/$dirName"
   def profEventLog(fileName: String): String = s"$profLogDir/$fileName"
 
-  private def verifyPhotonExecTopology(rows: Seq[Map[String, String]]): Unit = {
+  /** Expected sizes of a Photon fixture's exec rows, checked by `verifyPhotonExecTopology`. */
+  private case class PhotonTopologyCounts(
+      rows: Int, clusters: Int, shuffleWrappers: Int, sources: Int, sinks: Int)
+
+  private def verifyPhotonExecTopology(
+      rows: Seq[Map[String, String]], expected: PhotonTopologyCounts): Unit = {
     type NodeKey = (String, String)
 
     def nodeKey(row: Map[String, String]): NodeKey =
@@ -62,14 +69,20 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
     val sources = rows.filter(_("Expression Name") == "PhotonShuffleExchangeSource")
     val sinks = rows.filter(_("Expression Name") == "PhotonShuffleExchangeSink")
 
-    assert(rows.size == 297, s"expected 297 Photon exec rows, found ${rows.size}")
-    assert(rowsByNode.size == 297,
-      s"expected 297 unique Photon (SQL ID, SQL Node Id) keys, found ${rowsByNode.size}")
-    assert(clusters.size == 41, s"expected 41 Photon clusters, found ${clusters.size}")
-    assert(shuffleWrappers.size == 39,
-      s"expected 39 Photon shuffle wrappers, found ${shuffleWrappers.size}")
-    assert(sources.size == 39, s"expected 39 Photon shuffle sources, found ${sources.size}")
-    assert(sinks.size == 39, s"expected 39 Photon shuffle sinks, found ${sinks.size}")
+    assert(rows.size == expected.rows,
+      s"expected ${expected.rows} Photon exec rows, found ${rows.size}")
+    assert(rowsByNode.size == expected.rows,
+      s"expected ${expected.rows} unique Photon (SQL ID, SQL Node Id) keys, " +
+        s"found ${rowsByNode.size}")
+    assert(clusters.size == expected.clusters,
+      s"expected ${expected.clusters} Photon clusters, found ${clusters.size}")
+    assert(shuffleWrappers.size == expected.shuffleWrappers,
+      s"expected ${expected.shuffleWrappers} Photon shuffle wrappers, " +
+        s"found ${shuffleWrappers.size}")
+    assert(sources.size == expected.sources,
+      s"expected ${expected.sources} Photon shuffle sources, found ${sources.size}")
+    assert(sinks.size == expected.sinks,
+      s"expected ${expected.sinks} Photon shuffle sinks, found ${sinks.size}")
 
     val emptyClusters = clusters.filter(row => splitValues(row("Exec Children Node Ids")).isEmpty)
     assert(emptyClusters.isEmpty,
@@ -112,6 +125,67 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
     }
     assert(disjointRelations.isEmpty,
       s"found stage-disjoint cluster-child relations: ${disjointRelations.mkString(",")}")
+  }
+
+  /**
+   * Checks the plan-level #2161 invariants on a Photon app: the qualification WholeStage mappings
+   * match the plan graph's cluster memberships, every mapped child resolves to a plan node, no
+   * mapping puts a Photon shuffle source in a cluster, and the qualification stage summaries keep
+   * each stage's raw task duration.
+   */
+  private def verifyPhotonPlanInvariants(
+      app: QualificationAppInfo,
+      wholeStageMapping: Seq[WholeStageCodeGenResults],
+      summary: QualificationSummaryInfo): Unit = {
+    val expectedWholeStageMapping = app.sqlManager.applyToAllPlanModels { planModel =>
+      planModel.getToolsPlanGraph.nodes.collect {
+        case cluster: SparkPlanGraphCluster =>
+          cluster.nodes.map { child =>
+            (planModel.id, cluster.id, cluster.name, child.name, child.id)
+          }
+      }.flatten
+    }.flatten.toSeq
+    val actualWholeStageMapping = wholeStageMapping.map { row =>
+      (row.sqlID, row.nodeID, row.parent, row.child, row.childNodeID)
+    }
+    def toMultiset(
+        rows: Seq[(Long, Long, String, String, Long)]): Map[
+          (Long, Long, String, String, Long), Int] = {
+      rows.groupBy(identity).map { case (row, copies) => row -> copies.size }
+    }
+    assert(toMultiset(actualWholeStageMapping) == toMultiset(expectedWholeStageMapping),
+      "qualification WholeStage mappings do not match graph cluster memberships")
+    val nodePlatformNames = app.sqlManager.applyToAllPlanModels { planModel =>
+      planModel.getToolsPlanGraph.allNodes.map { node =>
+        (planModel.id, node.id) -> node.platformName
+      }
+    }.flatten.toMap
+    val unresolvedMappings = wholeStageMapping.filterNot { row =>
+      nodePlatformNames.contains((row.sqlID, row.childNodeID))
+    }
+    assert(unresolvedMappings.isEmpty,
+      s"qualification WholeStage mappings contain unresolved children: $unresolvedMappings")
+    val sourceMappings = wholeStageMapping.filter { row =>
+      nodePlatformNames.get((row.sqlID, row.childNodeID)).contains("PhotonShuffleExchangeSource")
+    }
+    assert(sourceMappings.isEmpty,
+      s"qualification WholeStage mappings contain Photon shuffle sources: $sourceMappings")
+
+    val stageTaskTimes = summary.stageInfo.groupBy(_.stageId).map {
+      case (stageId, attempts) =>
+        assert(attempts.map(_.stageTaskTime).distinct.size == 1,
+          s"stage $stageId has inconsistent task durations: $attempts")
+        stageId -> attempts.head.stageTaskTime
+    }
+    val rawStageTaskTimes = app.stageIdToTaskEndSum.map { case (stageId, stageSummary) =>
+      stageId.toInt -> stageSummary.totalTaskDuration
+    }.toMap
+    val changedStageTaskTimes = stageTaskTimes.filterNot { case (stageId, taskDuration) =>
+      rawStageTaskTimes.get(stageId).contains(taskDuration)
+    }
+    assert(changedStageTaskTimes.isEmpty,
+      s"qualification stage summaries changed raw per-stage task durations: " +
+        changedStageTaskTimes)
   }
 
   /**
@@ -739,45 +813,13 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
 
     val app = createAppFromEventlog(logFiles.head, PlatformNames.DATABRICKS_AWS)
     val wholeStageMapping = QualSQLCodeGenView.getRawViewFromSqlProcessor(AppSQLPlanAnalyzer(app))
-    val expectedWholeStageMapping = app.sqlManager.applyToAllPlanModels { planModel =>
-      planModel.getToolsPlanGraph.nodes.collect {
-        case cluster: SparkPlanGraphCluster =>
-          cluster.nodes.map { child =>
-            (planModel.id, cluster.id, cluster.name, child.name, child.id)
-          }
-      }.flatten
-    }.flatten.toSeq
-    val actualWholeStageMapping = wholeStageMapping.map { row =>
-      (row.sqlID, row.nodeID, row.parent, row.child, row.childNodeID)
-    }
-    def toMultiset(
-        rows: Seq[(Long, Long, String, String, Long)]): Map[
-          (Long, Long, String, String, Long), Int] = {
-      rows.groupBy(identity).map { case (row, copies) => row -> copies.size }
-    }
-    assert(toMultiset(actualWholeStageMapping) == toMultiset(expectedWholeStageMapping),
-      "qualification WholeStage mappings do not match graph cluster memberships")
-    val nodePlatformNames = app.sqlManager.applyToAllPlanModels { planModel =>
-      planModel.getToolsPlanGraph.allNodes.map { node =>
-        (planModel.id, node.id) -> node.platformName
-      }
-    }.flatten.toMap
-    assert(wholeStageMapping.size == 175,
-      s"expected 175 qualification WholeStage mappings, found ${wholeStageMapping.size}")
-    val unresolvedMappings = wholeStageMapping.filterNot { row =>
-      nodePlatformNames.contains((row.sqlID, row.childNodeID))
-    }
-    assert(unresolvedMappings.isEmpty,
-      s"qualification WholeStage mappings contain unresolved children: $unresolvedMappings")
-    val sourceMappings = wholeStageMapping.filter { row =>
-      nodePlatformNames.get((row.sqlID, row.childNodeID)).contains("PhotonShuffleExchangeSource")
-    }
-    assert(sourceMappings.isEmpty,
-      s"qualification WholeStage mappings contain Photon shuffle sources: $sourceMappings")
-
     val summary = app.aggregateStats().getOrElse {
       fail("expected Photon qualification summary")
     }
+    verifyPhotonPlanInvariants(app, wholeStageMapping, summary)
+    assert(wholeStageMapping.size == 175,
+      s"expected 175 qualification WholeStage mappings, found ${wholeStageMapping.size}")
+
     val sql26Execs = summary.planInfo.filter(_.sqlID == 26L).flatMap(_.execInfo)
     assert(sql26Execs.size == 96,
       s"expected 96 top-level SQL 26 execs, found ${sql26Execs.size}")
@@ -803,34 +845,26 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
       assert(flattenedStageCounts(stageId) == 11)
     }
 
-    val stageSummaries = summary.stageInfo.groupBy(_.stageId).map {
-      case (stageId, attempts) =>
-        assert(attempts.map(_.stageTaskTime).distinct.size == 1,
-          s"stage $stageId has inconsistent task durations: $attempts")
-        assert(attempts.forall(_.unsupportedTaskDur == 0),
-          s"stage $stageId has nonzero unsupported task duration: $attempts")
-        stageId -> attempts.head.stageTaskTime
+    val unsupportedStages = summary.stageInfo.filter(_.unsupportedTaskDur != 0)
+    assert(unsupportedStages.isEmpty,
+      s"found stages with nonzero unsupported task duration: $unsupportedStages")
+    val stageTaskTimes = summary.stageInfo.groupBy(_.stageId).map {
+      case (stageId, attempts) => stageId -> attempts.head.stageTaskTime
     }
-    assert(stageSummaries.values.sum == 3858136L)
-    val rawStageTaskTimes = app.stageIdToTaskEndSum.map { case (stageId, stageSummary) =>
-      stageId.toInt -> stageSummary.totalTaskDuration
-    }.toMap
-    val changedStageTaskTimes = stageSummaries.filterNot { case (stageId, taskDuration) =>
-      rawStageTaskTimes.get(stageId).contains(taskDuration)
-    }
-    assert(changedStageTaskTimes.isEmpty,
-      s"qualification stage summaries changed raw per-stage task durations: " +
-        changedStageTaskTimes)
+    assert(stageTaskTimes.values.sum == 3858136L)
 
+    val expectedTopology = PhotonTopologyCounts(
+      rows = 297, clusters = 41, shuffleWrappers = 39, sources = 39, sinks = 39)
     photonQualTestBuilder(logFiles.head, expectedLabel, PlatformNames.DATABRICKS_AWS,
-      "Photon exec topology", verifyPhotonExecTopology)
+      "Photon exec topology", rows => verifyPhotonExecTopology(rows, expectedTopology))
       .build()
   }
 
   // The fixture is an NDS Delta MERGE (merge.tpl query 4) whose write path uses Photon nodes that
-  // databricks-13_3.json does not map (#2158). The expected set pins that gap; #2159 and a
-  // PhotonClustering mapping should shrink it. Its Photon metric labels are parsed, but their
-  // meanings and units are not validated (#2175).
+  // databricks-13_3.json did not map before #2159 (#2158). Every Photon node in it now has a
+  // mapping, so the expected set of unmapped operators is empty. It is held to the same #2161
+  // invariants as the 13.3 fixture. Its Photon metric labels are parsed, but their meanings and
+  // units are not validated (#2175).
   runConditionalTest(
     "Databricks 17.3 Photon qualification baseline",
     () => (ToolUtils.isSpark340OrLater(),
@@ -840,13 +874,20 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
 
     val app = createAppFromEventlog(logFile, PlatformNames.DATABRICKS_AZURE)
     assert(app.dbPlugin.isPhotonEnabled, "expected DBR 17.3 event log to enable Photon")
-    assert(app.sparkVersion == "17.3.x-photon-scala2.13",
-      s"unexpected DBR version: ${app.sparkVersion}")
+    // From DBCEventLoggingListenerMetadata, as Databricks logs have no SparkListenerLogStart.
+    assert(app.sparkVersion == "4.0.0", s"unexpected Spark version: ${app.sparkVersion}")
+    val wholeStageMapping = QualSQLCodeGenView.getRawViewFromSqlProcessor(AppSQLPlanAnalyzer(app))
+    val summary = app.aggregateStats().getOrElse {
+      fail("expected Photon qualification summary")
+    }
+    verifyPhotonPlanInvariants(app, wholeStageMapping, summary)
 
-    val expectedUnmappedPhotonOps = Set(
-      "PhotonClustering", "PhotonColumnarToRow", "PhotonParquetWriter", "PhotonWriteStage")
+    val expectedTopology = PhotonTopologyCounts(
+      rows = 250, clusters = 40, shuffleWrappers = 11, sources = 12, sinks = 11)
+    val expectedUnmappedPhotonOps = Set.empty[String]
     photonQualTestBuilder(logFile, expectedLabel, PlatformNames.DATABRICKS_AZURE,
-      "Photon operators without an OSS mapping", rows => {
+      "Photon exec topology and operators without an OSS mapping", rows => {
+        verifyPhotonExecTopology(rows, expectedTopology)
         // An unmapped Photon node keeps its Photon name as the exec name.
         val unmappedPhotonOps = rows.map(_("Exec Name")).filter(_.startsWith("Photon")).toSet
         assert(unmappedPhotonOps == expectedUnmappedPhotonOps,

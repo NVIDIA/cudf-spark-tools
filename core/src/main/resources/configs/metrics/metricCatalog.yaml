@@ -198,6 +198,17 @@ metrics:
     aggregation: sum
     includeInDiagnostics: false
     description: Disk writes avoided by the spillable partial-file handle.
+  - name: gpuOutputBatchBytes
+    family: gpu
+    source: accumulable
+    unit: bytes
+    valueForm: integer
+    storageScale: 1
+    aggregation: sum
+    includeInDiagnostics: true
+    description: >-
+      Device memory of the tables the task's scans decoded, i.e. the in-memory size after
+      decompression and decoding. A task with more than one scan input sums across them.
 
   # --- byte high-water marks: per-task peaks, so aggregated by max, never summed --------------
   - name: gpuMaxTaskFootprint

@@ -16,13 +16,13 @@ The dynamic allocation heuristic recommends the executor counts of a GPU applica
 
 ## Scaling the source counts
 
-The scale factor comes from the cluster sizing strategy, so the dynamic allocation counts follow the same rule as the recommended executor count.
+The scale factor comes from the cluster sizing strategy (`CLUSTER_SIZING_STRATEGY` in the tuning configs), so the dynamic allocation counts follow the same rule as the recommended executor count. The defaults with `auto` are listed below; an explicit strategy applies to both tools.
 
-| Strategy | Used by | Scale |
+| Strategy | Default for | Scale |
 | --- | --- | --- |
-| Constant total cores | Qualification | `source executor cores / target executor cores`. For example, 8 source cores and 16 target cores halve the counts. |
+| Constant total cores | Qualification on a CSP or with target worker info | `source executor cores / target executor cores`. For example, 8 source cores and 16 target cores halve the counts. |
 | Constant GPU count | Profiling on a CSP or with target worker info | 1.0, the executor counts are kept. |
-| Source cores preserving | Profiling on-prem without target worker info | 1.0, the executor counts are kept. |
+| Source cores preserving | Both tools on-prem without target worker info | 1.0, the executor counts are kept. |
 
 | Property | Rounding | Reason |
 | --- | --- | --- |
@@ -33,29 +33,26 @@ The scale factor comes from the cluster sizing strategy, so the dynamic allocati
 - `initialExecutors` and `executor.instances` are scaled only when the source sets them. The executor count of the recommended cluster shape is never used as a starting count.
 - When the source or target executor cores are unknown, the source values are kept unscaled.
 
-## Enforced `spark.executor.instances` is the target cluster size
+## Enforced `spark.executor.instances`
 
-Under dynamic allocation, a positive enforced `spark.executor.instances` is read as the size of the target cluster, for example workers × GPUs per worker. It is not read as the number of executors to start with. Keeping it would start the application at the full cluster size.
+Under dynamic allocation, a positive enforced `spark.executor.instances` is kept as is, and `spark.dynamicAllocation.maxExecutors` is set to it, whether that raises or lowers the scaled source value. If the source has no `maxExecutors`, it sets `maxExecutors`. An enforced, preserved, or excluded `maxExecutors` is not changed. A comment records the new `maxExecutors`.
 
-- It caps `spark.dynamicAllocation.maxExecutors`. If the source has no `maxExecutors`, it sets `maxExecutors`. A lower scaled source `maxExecutors` is kept, for example when the application shares the cluster. An enforced, preserved, or excluded `maxExecutors` is not changed.
-- It is replaced in the output by the starting executor count (see below), and a comment records the enforced value and its replacement.
-
-To enforce the number of executors the application starts with instead, enforce `spark.dynamicAllocation.initialExecutors` (or `minExecutors`). Those enforced values are kept and are part of the starting count.
+Since Spark starts with `max(minExecutors, initialExecutors, executor.instances)`, the application starts with at least the enforced count.
 
 Example: the source runs 8-core executors with `minExecutors=2` and `maxExecutors=40`, and the target enforces 16-core executors and `spark.executor.instances=8`.
 
 | Property | Result | Why |
 | --- | --- | --- |
-| `maxExecutors` | 8 | Scaled to 20, then capped to the cluster size of 8. |
+| `maxExecutors` | 8 | Scaled to 20, then set to the enforced 8. |
 | `minExecutors` | 1 | `floor(2 × 0.5)`. |
-| `initialExecutors` | 1 | The starting count. |
-| `executor.instances` | 1 | The enforced 8 is replaced by the starting count. |
+| `initialExecutors` | 8 | The starting count, `max(1, 8)`. |
+| `executor.instances` | 8 | Enforced. |
 
 ## Ordering invariants
 
 Spark rejects `minExecutors > maxExecutors` and, on YARN and Kubernetes, a starting count above `maxExecutors`. After scaling, the heuristic applies these rules in order:
 
-1. If an enforced or preserved `minExecutors`, `initialExecutors`, or `executor.instances` (other than an enforced cluster size) is above `maxExecutors`, `maxExecutors` is raised to it, since the protected value cannot be lowered.
+1. If an enforced or preserved `minExecutors`, `initialExecutors`, or `executor.instances` is above `maxExecutors`, `maxExecutors` is raised to it, since the protected value cannot be lowered.
 2. `minExecutors` is capped to `maxExecutors`.
 3. `initialExecutors` and `executor.instances` are kept within `[minExecutors, maxExecutors]`. A missing `minExecutors` counts as 0.
 
@@ -68,7 +65,7 @@ Rule 3 does not lower an enforced or preserved value, and it does not raise one 
 The starting count is the largest of:
 
 - the recommended `minExecutors` and `initialExecutors`,
-- the recommended `executor.instances`, unless it is an enforced cluster size,
+- the recommended `executor.instances`,
 - the source `minExecutors` scaled and rounded up, capped to `maxExecutors`, so the application starts with at least the source minimum cores,
 - 0, the Spark default `minExecutors`.
 
@@ -78,21 +75,21 @@ The starting count is the largest of:
 | --- | --- |
 | None | The scaled source value, then replaced by the starting count. |
 | Preserved | The unscaled source value. It can raise `maxExecutors` (rule 1). |
-| Enforced, positive | Not counted; it is the target cluster size. |
+| Enforced, positive | The enforced value. It also sets `maxExecutors`. |
 | Excluded | Not counted, since it is not emitted. |
 
-The recommended cluster is capped to `maxExecutors` and raised to the starting count if the workload sizing left it smaller, unless an enforced `executor.instances` gives the cluster size. The recommended cluster summary reports the tuned `minExecutors` and `maxExecutors` and the starting count as its initial executors. Properties without a recommendation keep their source value.
+The recommended cluster is capped to `maxExecutors` and raised to the starting count if the workload sizing left it smaller. The recommended cluster summary reports the tuned `minExecutors` and `maxExecutors` and the starting count as its initial executors. Properties without a recommendation keep their source value.
 
 ## Boundaries and limitations
 
-- Every positive enforced `spark.executor.instances` is read as the cluster size under dynamic allocation, even when it was meant as a starting count. Enforce `initialExecutors` for a starting count.
-- An enforced or preserved `minExecutors` or `initialExecutors` above the enforced cluster size raises `maxExecutors` above the cluster size. The application then asks for more executors than the cluster has.
+- An enforced `spark.executor.instances` sets `maxExecutors` even when the scaled source `maxExecutors` was lower, for example to share the cluster. Enforce `maxExecutors` as well to keep a lower value.
+- An enforced or preserved `minExecutors` or `initialExecutors` above the enforced `executor.instances` raises `maxExecutors` above it.
 - The downward shuffle partition pass sizes its slot count from `min(recommended cluster executors, maxExecutors)`. It does not use the starting count.
 
 ## Implementation map
 
 | Component | Responsibility |
 | --- | --- |
-| [`AutoTuner`](../../src/main/scala/com/nvidia/spark/rapids/tool/tuning/AutoTuner.scala) | `recommendDynamicAllocationConfigs` scales the counts and applies the target cluster cap, `enforceDynamicAllocationInvariants` applies the ordering rules, `recommendStartingExecutorCount` sets the starting count, and `syncDynamicAllocationToRecommendedCluster` updates the cluster summary. |
+| [`AutoTuner`](../../src/main/scala/com/nvidia/spark/rapids/tool/tuning/AutoTuner.scala) | `recommendDynamicAllocationConfigs` scales the counts and sets `maxExecutors` from an enforced `executor.instances`, `enforceDynamicAllocationInvariants` applies the ordering rules, `recommendStartingExecutorCount` sets the starting count, and `syncDynamicAllocationToRecommendedCluster` updates the cluster summary. |
 | [`ClusterConfigurationStrategy`](../../src/main/scala/com/nvidia/spark/rapids/tool/ClusterConfigurationStrategy.scala) | `ClusterSizingStrategy.executorCountScale` owns the scale factor of each sizing strategy. |
 | [`tuningTable.yaml`](../../src/main/resources/bootstrap/tuningTable.yaml) | Owns the public property descriptions and their cluster level. |

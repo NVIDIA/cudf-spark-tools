@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package com.nvidia.spark.rapids.tool.tuning.config
 
 import scala.beans.BeanProperty
+
+import com.nvidia.spark.rapids.tool.ClusterSizingStrategy
 
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.rapids.tool.util.{StringUtils, ValidatableProperties}
@@ -122,6 +124,9 @@ class TuningConfigEntry(
       // Validate the name is defined
       if (isEmptyValue(name)) {
         throw new IllegalArgumentException(s"Name must be defined for config '$name'")
+      }
+      if (name == "CLUSTER_SIZING_STRATEGY" && !isEmptyValue(default)) {
+        ClusterSizingStrategy.fromString(default)
       }
       // Validate at least one of the default, min, max is defined
       if (isEmptyValue(default) && isEmptyValue(min) && isEmptyValue(max)) {

@@ -2369,6 +2369,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
     assert(platform.recommendedClusterInfo.map(_.numExecutors).contains(18))
     assert(!comments.exists(_.comment.contains("based on cores ratio")),
       "DA properties should not be scaled by the core ratio with ConstantGpuCountStrategy")
+    comments.exists(_.comment.contains("Adjusted dynamic allocation properties")) shouldBe false
   }
 
   // Issue #2053: when spark.executor.cores is in the target cluster `preserve` list,

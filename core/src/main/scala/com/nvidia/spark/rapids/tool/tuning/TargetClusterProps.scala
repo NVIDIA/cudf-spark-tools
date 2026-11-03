@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,6 +69,11 @@ class WorkerInfo (
         "target cluster configuration.")
     }
     gpu.validate()
+    if (cpuCores > 0 && gpu.count > cpuCores) {
+      throw new IllegalArgumentException(
+        s"Target worker has $cpuCores CPU core(s) for ${gpu.count} GPU(s); " +
+          "at least one CPU core per GPU is required.")
+    }
   }
 
   /**

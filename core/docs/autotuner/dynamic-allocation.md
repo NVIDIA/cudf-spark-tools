@@ -35,7 +35,7 @@ The scale factor comes from the cluster sizing strategy (`CLUSTER_SIZING_STRATEG
 
 ## Enforced `spark.executor.instances`
 
-Under dynamic allocation, a positive enforced `spark.executor.instances` is kept as is, and `spark.dynamicAllocation.maxExecutors` is set to it, whether that raises or lowers the scaled source value. If the source has no `maxExecutors`, it sets `maxExecutors`. An enforced, preserved, or excluded `maxExecutors` is not changed. A comment records the new `maxExecutors`.
+Under dynamic allocation, a positive enforced `spark.executor.instances` is kept as is, and `spark.dynamicAllocation.maxExecutors` is set to it, whether that raises or lowers the scaled source value. If the source has no `maxExecutors`, it sets `maxExecutors`. An enforced, preserved, or excluded `maxExecutors` is not changed. A comment records the new `maxExecutors` and which direction it moved: raising it is what lets Spark accept the starting count, while lowering it means the application will not scale past the enforced count, and that comment says to enforce `maxExecutors` as well to keep a higher ceiling.
 
 Since Spark starts with `max(minExecutors, initialExecutors, executor.instances)`, the application starts with at least the enforced count.
 

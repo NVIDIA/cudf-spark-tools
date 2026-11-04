@@ -1952,13 +1952,17 @@ abstract class AutoTuner(
       appendRecommendation(maxExecutorsProp, v)
     }
 
-    // An enforced executor.instances is the executor count the user asked for, so maxExecutors is
-    // set to it, raising or lowering the scaled source value.
+    // An enforced executor.instances is the executor count of the target cluster, so maxExecutors
+    // is set to it, raising or lowering the scaled source value. The two directions mean different
+    // things to the user, so they are reported separately: raising is required for the
+    // configuration to start at all, lowering gives up scale-out headroom the source run had.
     enforcedExecutorInstances.filterNot(_ => ignoreRecommendation(maxExecutorsProp)).foreach {
       numExecutors =>
-        if (!recommendedIntValue(maxExecutorsProp).contains(numExecutors)) {
+        val previousMaxExecutors = recommendedIntValue(maxExecutorsProp)
+        if (!previousMaxExecutors.contains(numExecutors)) {
           appendRecommendation(maxExecutorsProp, numExecutors.toLong)
-          appendComment(commentForMaxExecutorsFromEnforcedInstances(numExecutors))
+          appendComment(
+            commentForMaxExecutorsFromEnforcedInstances(numExecutors, previousMaxExecutors))
         }
     }
 
@@ -3877,11 +3881,37 @@ trait AutoTunerStaticComments {
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
-  def commentForMaxExecutorsFromEnforcedInstances(numExecutors: Int): String = {
-    s"""
-       |Set 'spark.dynamicAllocation.maxExecutors' to $numExecutors, the enforced
-       |'spark.executor.instances'.
-       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  /**
+   * Reports 'spark.dynamicAllocation.maxExecutors' being set to an enforced
+   * 'spark.executor.instances'. Raising it is forced by Spark, which rejects a starting count
+   * above the maximum; lowering it costs the application the scale-out headroom the source run
+   * had, so it names the previous value and how to keep it.
+   */
+  def commentForMaxExecutorsFromEnforcedInstances(
+      numExecutors: Int,
+      previousMaxExecutors: Option[Int]): String = {
+    val comment = previousMaxExecutors match {
+      case Some(previous) if previous > numExecutors =>
+        s"""
+           |Lowered 'spark.dynamicAllocation.maxExecutors' from $previous to $numExecutors, the
+           |enforced 'spark.executor.instances', so the application does not ask for more
+           |executors than the target cluster provides. It will not scale past $numExecutors
+           |executors. Enforce 'spark.dynamicAllocation.maxExecutors' to keep a higher ceiling.
+           |"""
+      case Some(previous) =>
+        s"""
+           |Raised 'spark.dynamicAllocation.maxExecutors' from $previous to $numExecutors, the
+           |enforced 'spark.executor.instances'. Spark starts with
+           |max(minExecutors, initialExecutors, executor.instances) and rejects a starting count
+           |above 'spark.dynamicAllocation.maxExecutors' on YARN and Kubernetes.
+           |"""
+      case None =>
+        s"""
+           |Set 'spark.dynamicAllocation.maxExecutors' to $numExecutors, the enforced
+           |'spark.executor.instances'.
+           |"""
+    }
+    comment.stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
   def commentForClusterSizedToMaxExecutors(fromExecutors: Int, toExecutors: Int): String = {

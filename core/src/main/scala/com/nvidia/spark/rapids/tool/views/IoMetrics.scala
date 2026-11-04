@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,11 +43,17 @@ trait IoMetricsTrait {
   protected val DATA_SIZE_LABEL: String
   protected val DECODE_TIME_LABEL: String
 
+  // Data-size metric emitted by Iceberg DataSource V2 BatchScan
+  // (v2Custom_org.apache.iceberg.spark.source.metrics.TotalDataFileSize). It is produced by the
+  // Iceberg source independent of the compute engine, so it is recognized at the base level and
+  // routed to dataSize for all engine helpers (OSS, Photon, Auron).
+  protected val ICEBERG_DATA_SIZE_LABEL = "total data file size (bytes)"
+
   protected val ioLabels: Set[String]
 
   /** Check if a metric name is an I/O metric */
   def isIoMetric(arg: String): Boolean = {
-    ioLabels.contains(arg)
+    ioLabels.contains(arg) || arg == ICEBERG_DATA_SIZE_LABEL
   }
 
   /** Check if a SQL accumulator is an I/O metric */
@@ -85,7 +91,7 @@ trait IoMetricsTrait {
       case BUFFER_TIME_LABEL => destRec.bufferTime = convertMsTime(srcAccum)
       case SCAN_TIME_LABEL => destRec.scanTime = convertMsTime(srcAccum)
       case DECODE_TIME_LABEL => destRec.decodeTime = convertMsTime(srcAccum)
-      case DATA_SIZE_LABEL => destRec.dataSize = srcAccum.total
+      case DATA_SIZE_LABEL | ICEBERG_DATA_SIZE_LABEL => destRec.dataSize = srcAccum.total
       case _ => throw UnsupportedMetricNameException(srcAccum.name)
     }
   }

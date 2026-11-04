@@ -2807,16 +2807,22 @@ abstract class AutoTuner(
   }
 
   /**
-   * Task slots of the cluster this run is recommending, which is the size of one execution wave.
+   * Task slots of the cluster this run is recommending (executors x cores per executor), which is
+   * the size of one execution wave.
    *
-   * The executor count is read from the recommendation map rather than through `getPropertyValue`,
-   * because that helper falls back to the source properties and would silently yield the source CPU
-   * executor count on a platform that excludes 'spark.executor.instances'. It falls back to
-   * `recommendedClusterInfo.numExecutors` only when no recommendation exists. With dynamic
-   * allocation, 'spark.executor.instances' only sets the starting executor count (or is not
-   * recommended at all), so the recommended cluster's executor count is used instead, bounded by
-   * maxExecutors since the application cannot use more executors than that (e.g. an enforced or
-   * preserved maxExecutors below the cluster size).
+   * Executors:
+   *  - Without dynamic allocation: the recommended 'spark.executor.instances', else the executor
+   *    count of the recommended cluster. It is read from the recommendation map, not through
+   *    `getPropertyValue`, which would fall back to the source CPU executor count on a platform
+   *    that excludes 'spark.executor.instances'.
+   *  - With dynamic allocation: 'spark.executor.instances' is only the starting count, so the
+   *    executor count of the recommended cluster is used. That is the CPU run's peak number of
+   *    concurrent executors converted by the cluster sizing strategy (or an enforced
+   *    'spark.executor.instances'), raised to the starting count and capped to maxExecutors by
+   *    syncDynamicAllocationToRecommendedCluster. The wave is sized from what the CPU run used,
+   *    not from maxExecutors, so a GPU run that scales further has more slots than counted; that
+   *    errs toward keeping more partitions, the safe direction for a pass that only lowers them.
+   *    The maxExecutors cap is repeated here as a guard in case the passes are reordered.
    *
    * @return the slot count, or None when the recommended cluster shape or the per-executor
    *         multiplier cannot be resolved

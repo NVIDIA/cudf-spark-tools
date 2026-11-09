@@ -334,14 +334,10 @@ class QualificationAppInfo(
             0L
           }
       }
-      val finalEachStageUnsupported = if (transitionsTime != 0) {
-        // Add 50% penalty for unsupported duration if there are transitions. This number
-        // was randomly picked because it matched roughly what we saw on the experiments
-        // with customer/nds event logs
-        (eachStageUnsupported * 0.5 + eachStageUnsupported).toLong
-      } else {
-        eachStageUnsupported
-      }
+      // The unsupported duration is capped at the stage task time, otherwise the supported
+      // time (stageTaskTime - unsupportedTaskDur) could become negative.
+      val finalEachStageUnsupported = QualificationAppInfo.finalUnsupportedDuration(
+        eachStageUnsupported, stageTaskTime, transitionsTime != 0)
 
       // Get the duration for the given stageId.
       val wallclockStageDuration = stageManager.getDurationById(stageId)
@@ -973,6 +969,24 @@ object QualificationAppInfo extends Logging {
   // to transfer the data from CPU to GPU and vice versa. Current transfer rate is 1GB/s and is
   // based on the testing on few candidate eventlogs.
   val CPU_GPU_TRANSFER_RATE = 1000000000L
+
+  /**
+   * Unsupported duration of a stage. If the stage has CPU-GPU transitions a 50% penalty is added.
+   * This number was randomly picked because it matched roughly what we saw on the experiments
+   * with customer/nds event logs. The result never exceeds the total task time of the stage,
+   * neither with the penalty nor when the stage task time is split evenly among stages.
+   */
+  def finalUnsupportedDuration(
+      eachStageUnsupported: Long,
+      stageTaskTime: Long,
+      hasTransitions: Boolean): Long = {
+    val unsupported = if (hasTransitions) {
+      (eachStageUnsupported * 0.5 + eachStageUnsupported).toLong
+    } else {
+      eachStageUnsupported
+    }
+    math.min(unsupported, math.max(stageTaskTime, 0L))
+  }
 
   def calculateEstimatedInfoSummary(
       appDurationNoOverhead: Long,

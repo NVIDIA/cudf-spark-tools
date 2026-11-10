@@ -107,7 +107,11 @@ case class TestIODiagnosticResult(
     gpuDecodeTimeMin: Long,
     gpuDecodeTimeMed: Long,
     gpuDecodeTimeMax: Long,
-    gpuDecodeTimeSum: Long)
+    gpuDecodeTimeSum: Long,
+    decodedBatchBytesMin: Long,
+    decodedBatchBytesMed: Long,
+    decodedBatchBytesMax: Long,
+    decodedBatchBytesSum: Long)
 
 class AnalysisSuite extends AnyFunSuite {
 
@@ -219,7 +223,11 @@ class AnalysisSuite extends AnyFunSuite {
         result.gpuDecodeTime.min,
         result.gpuDecodeTime.med,
         result.gpuDecodeTime.max,
-        result.gpuDecodeTime.total)
+        result.gpuDecodeTime.total,
+        result.decodedBatchBytes.min,
+        result.decodedBatchBytes.med,
+        result.decodedBatchBytes.max,
+        result.decodedBatchBytes.total)
     }
   }
 
@@ -390,6 +398,27 @@ class AnalysisSuite extends AnyFunSuite {
     import sparkSession.implicits._
     val actualDf = createTestIODiagnosticResult(diagnosticResults).toDF
     compareMetrics(actualDf, expectFile)
+  }
+
+  test("test IO diagnostic metrics report decoded batch bytes per scan node") {
+    // Two GPU Parquet scans of two long columns (16 bytes per row), one file per task: node 11
+    // reads files of 10k, 20k and 30k rows; node 15 reads a single 100-row file.
+    val logs = Array(s"$logDir/gpu_decoded_batch_bytes_eventlog.zstd")
+    val apps = ToolTestUtils.processProfileApps(Array("--enable-diagnostic-views") ++ logs,
+      sparkSession)
+    assert(apps.size == logs.size)
+
+    val collect = new CollectInformation(apps.toSeq)
+    collect.getSQLPlanMetrics
+    val (scans, others) = collect.getIODiagnosticMetrics.partition(_.nodeName.contains("Scan"))
+    val decodedByScan = scans.map { r =>
+      val m = r.decodedBatchBytes
+      r.nodeId -> ((m.min, m.med, m.max, m.total))
+    }.toMap
+    assert(decodedByScan == Map(
+      11L -> ((160000L, 320000L, 480000L, 960000L)),
+      15L -> ((1600L, 1600L, 1600L, 1600L))))
+    assert(others.nonEmpty && others.forall(_.decodedBatchBytes.total == 0L))
   }
 
   test("test IO diagnostic metrics with diagnostic views disabled") {

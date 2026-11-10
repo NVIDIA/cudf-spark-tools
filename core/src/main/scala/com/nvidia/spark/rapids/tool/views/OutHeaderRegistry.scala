@@ -290,7 +290,11 @@ object OutHeaderRegistry {
         "gpuDecodeTimeMin",
         "gpuDecodeTimeMedian",
         "gpuDecodeTimeMax",
-        "gpuDecodeTimeTotal"),
+        "gpuDecodeTimeTotal",
+        "decodedBatchBytesMin",
+        "decodedBatchBytesMedian",
+        "decodedBatchBytesMax",
+        "decodedBatchBytesTotal"),
     "IOAnalysisProfileResult" ->
       Array("appID", "sqlID", "input_bytesRead_sum", "input_recordsRead_sum",
         "output_bytesWritten_sum", "output_recordsWritten_sum", "diskBytesSpilled_sum",

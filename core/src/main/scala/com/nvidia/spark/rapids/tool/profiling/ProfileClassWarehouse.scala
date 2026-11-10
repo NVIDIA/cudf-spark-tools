@@ -1309,6 +1309,7 @@ case class SQLTaskAggMetricsProfileResult(
  * - Shuffle write time (ns)
  * - Fetch wait time (ns)
  * - GPU decode time (ns)
+ * - Decoded batch bytes
  */
 case class IODiagnosticResult(
     appName: String,
@@ -1324,7 +1325,8 @@ case class IODiagnosticResult(
     bufferTime: StatisticsMetrics,
     shuffleWriteTime: StatisticsMetrics,
     fetchWaitTime: StatisticsMetrics,
-    gpuDecodeTime: StatisticsMetrics) extends ProfileResult {
+    gpuDecodeTime: StatisticsMetrics,
+    decodedBatchBytes: StatisticsMetrics) extends ProfileResult {
 
   override def outputHeaders: Array[String] = {
     OutHeaderRegistry.outputHeaders("IODiagnosticResult")
@@ -1365,7 +1367,11 @@ case class IODiagnosticResult(
       gpuDecodeTime.min.toString,
       gpuDecodeTime.med.toString,
       gpuDecodeTime.max.toString,
-      gpuDecodeTime.total.toString)
+      gpuDecodeTime.total.toString,
+      decodedBatchBytes.min.toString,
+      decodedBatchBytes.med.toString,
+      decodedBatchBytes.max.toString,
+      decodedBatchBytes.total.toString)
   }
 
   override def convertToCSVSeq(): Array[String] = {
@@ -1403,7 +1409,11 @@ case class IODiagnosticResult(
       gpuDecodeTime.min.toString,
       gpuDecodeTime.med.toString,
       gpuDecodeTime.max.toString,
-      gpuDecodeTime.total.toString)
+      gpuDecodeTime.total.toString,
+      decodedBatchBytes.min.toString,
+      decodedBatchBytes.med.toString,
+      decodedBatchBytes.max.toString,
+      decodedBatchBytes.total.toString)
   }
 }
 

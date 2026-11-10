@@ -35,7 +35,7 @@ The scale factor comes from the cluster sizing strategy (`CLUSTER_SIZING_STRATEG
 
 ## Enforced `spark.executor.instances`
 
-Under dynamic allocation, a positive enforced `spark.executor.instances` is kept as is, and `spark.dynamicAllocation.maxExecutors` is set to it, whether that raises or lowers the scaled source value. If the source has no `maxExecutors`, it sets `maxExecutors`. An enforced, preserved, or excluded `maxExecutors` is not changed. A comment records the new `maxExecutors` and which direction it moved: raising it is what lets Spark accept the starting count, while lowering it means the application will not scale past the enforced count, and that comment says to enforce `maxExecutors` as well to keep a higher ceiling.
+Under dynamic allocation, a positive enforced `spark.executor.instances` is kept as is, and `spark.dynamicAllocation.maxExecutors` is set to it, whether that raises or lowers the scaled source value. If an enforced or preserved `minExecutors` or `initialExecutors` is above the enforced count, `maxExecutors` is set to that value instead, since Spark starts with the largest of them and rejects a starting count above `maxExecutors`. The comment then reports that final ceiling rather than the enforced count. If the source has no `maxExecutors`, it sets `maxExecutors`. An enforced, preserved, or excluded `maxExecutors` is not changed. A comment records the new `maxExecutors` and which direction it moved: raising it is what lets Spark accept the starting count, while lowering it means the application will not scale past the enforced count, and that comment says to enforce `maxExecutors` as well to keep a higher ceiling.
 
 Since Spark starts with `max(minExecutors, initialExecutors, executor.instances)`, the application starts with at least the enforced count.
 
@@ -56,7 +56,7 @@ Spark rejects `minExecutors > maxExecutors` and, on YARN and Kubernetes, a start
 2. `minExecutors` is capped to `maxExecutors`.
 3. `initialExecutors` and `executor.instances` are kept within `[minExecutors, maxExecutors]`. A missing `minExecutors` counts as 0.
 
-An excluded `minExecutors`, `initialExecutors`, `executor.instances`, or `maxExecutors` is not emitted, so its source value still applies and is not protected. The heuristic does not change it, but reports a conflict with the tuned values (an excluded value above the tuned `maxExecutors`, or an excluded `maxExecutors` below a tuned value) with the same comment as an unenforceable invariant.
+An excluded `minExecutors`, `initialExecutors`, `executor.instances`, or `maxExecutors` is not emitted, so its source value still applies and is not protected. The heuristic does not change it, but reports a conflict with the tuned values (an excluded value above the tuned `maxExecutors`, or an excluded `maxExecutors` below a tuned value) with the same comment as an unenforceable invariant. The conflict is checked after the starting executor count is set, so it covers the final `initialExecutors` and `executor.instances`.
 
 Rule 3 does not lower an enforced or preserved value, and it does not raise one to `minExecutors`, since Spark starts with the largest of them rather than rejecting a lower value.
 
@@ -66,7 +66,7 @@ The starting count is the largest of:
 
 - the recommended `minExecutors` and `initialExecutors`,
 - the recommended `executor.instances`,
-- the source `minExecutors` scaled and rounded up, capped to `maxExecutors`, so the application starts with at least the source minimum cores,
+- the source `minExecutors` scaled and rounded up, capped to `maxExecutors` (the recommended value, or the source value of an excluded `maxExecutors`, which still applies), so the application starts with at least the source minimum cores,
 - 0, the Spark default `minExecutors`.
 
 `initialExecutors` and `executor.instances` are both set to the starting count unless they are enforced, preserved, or excluded. Setting them explicitly keeps a caller that merges the recommendations over the source configuration, for example a `spark-submit` with `--num-executors`, from falling back to the source CPU executor count.

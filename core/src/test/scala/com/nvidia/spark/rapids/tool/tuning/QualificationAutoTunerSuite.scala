@@ -2039,7 +2039,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         enforcedSparkProperties = Map("spark.executor.instances" -> "12")))
 
     tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("12")
-    comments should contain(commentForMaxExecutorsFromEnforcedInstances(12, None))
+    comments should contain(commentForMaxExecutorsFromEnforcedInstances(12, 12, None))
     comments.mkString("\n") should not include "Lowered 'spark.dynamicAllocation.maxExecutors'"
     comments.mkString("\n") should not include "Raised 'spark.dynamicAllocation.maxExecutors'"
   }
@@ -2084,7 +2084,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("2")
     tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("12")
     tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("12")
-    comments should contain(commentForMaxExecutorsFromEnforcedInstances(12, Some(20)))
+    comments should contain(commentForMaxExecutorsFromEnforcedInstances(12, 12, Some(20)))
     comments should contain(getEnforcedPropertyComment("spark.executor.instances"))
     comments should contain(commentForDynamicAllocationAdjustment(
       List("spark.dynamicAllocation.minExecutors", "spark.dynamicAllocation.maxExecutors"), 8, 16))
@@ -2122,7 +2122,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("2")
     tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("12")
     tuned.get("spark.executor.instances") shouldBe Some("12")
-    comments should contain(commentForMaxExecutorsFromEnforcedInstances(12, Some(4)))
+    comments should contain(commentForMaxExecutorsFromEnforcedInstances(12, 12, Some(4)))
     recClusterInfo.dynamicAllocationMaxExecutors shouldBe "12"
     recClusterInfo.dynamicAllocationInitialExecutors shouldBe "12"
     recClusterInfo.numExecutors shouldBe 12
@@ -2176,9 +2176,11 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     comments should contain(getEnforcedPropertyComment("spark.executor.instances"))
   }
 
-  // An enforced minExecutors cannot be lowered, so maxExecutors is raised to it instead of being
-  // set to the enforced 6 executors, since Spark rejects minExecutors > maxExecutors. The
-  // enforced executor.instances is kept; Spark starts with max(14, 14, 6) = 14 executors.
+  // An enforced minExecutors cannot be lowered, so maxExecutors is set to it instead of to the
+  // enforced 6 executors, since Spark rejects minExecutors > maxExecutors. The enforced
+  // executor.instances is kept; Spark starts with max(14, 14, 6) = 14 executors. The scaled
+  // maxExecutors 40 -> 20 is lowered straight to 14, so the comment reports the final ceiling
+  // rather than 6 followed by a separate raise to 14.
   test("dynamic allocation raises maxExecutors to enforced minExecutors") {
     val (tuned, comments, _) = tuneDynamicAllocationWithTargetCluster(
       Seq("spark.dynamicAllocation.maxExecutors" -> "40"),
@@ -2191,8 +2193,45 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe Some("14")
     tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("14")
     tuned.get("spark.executor.instances") shouldBe Some("6")
-    comments.mkString("\n") should include(
-      "'spark.dynamicAllocation.maxExecutors' adjusted from 6 to 14")
+    comments should contain(commentForMaxExecutorsFromEnforcedInstances(6, 14, Some(20)))
+    val allComments = comments.mkString("\n")
+    allComments should include("will not scale past 14 executors")
+    allComments should not include "will not scale past 6"
+    allComments should not include "'spark.dynamicAllocation.maxExecutors' adjusted from"
+  }
+
+  // The rounded-up minExecutors is capped to an excluded maxExecutors, whose source value still
+  // applies: minExecutors 3 -> floor(1.5) = 1 (rounded up 2), but the excluded maxExecutors is 1,
+  // so the application starts with 1 executor rather than 2, which Spark would reject.
+  test("dynamic allocation caps the rounded-up minExecutors to an excluded maxExecutors") {
+    val (tuned, comments, _) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.minExecutors" -> "3",
+        "spark.dynamicAllocation.maxExecutors" -> "1"),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.dynamicAllocation.maxExecutors")))
+
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe None
+    tuned.get("spark.dynamicAllocation.minExecutors") shouldBe Some("1")
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("1")
+    tuned.get("spark.executor.instances") shouldBe Some("1")
+    comments.mkString("\n") should not include "'spark.dynamicAllocation.maxExecutors' (1)"
+  }
+
+  // A preserved executor.instances of 6 sets the starting count above the excluded maxExecutors 4,
+  // which still applies from the source. Neither can be changed, so the conflict is reported
+  // against the final starting count.
+  test("dynamic allocation reports an excluded maxExecutors below the final starting count") {
+    val (tuned, comments, _) = tuneDynamicAllocationWithTargetCluster(
+      Seq("spark.dynamicAllocation.maxExecutors" -> "4",
+        "spark.executor.instances" -> "6"),
+      ToolTestUtils.buildTargetClusterInfo(
+        preserveSparkProperties = List("spark.executor.instances"),
+        excludeSparkProperties = List("spark.dynamicAllocation.maxExecutors")))
+
+    tuned.get("spark.dynamicAllocation.maxExecutors") shouldBe None
+    tuned.get("spark.dynamicAllocation.initialExecutors") shouldBe Some("6")
+    comments should contain(commentForUnenforceableDynamicAllocationInvariant(
+      Seq("'spark.dynamicAllocation.maxExecutors' (4)")))
   }
 
   // YARN and Kubernetes reject a starting count above maxExecutors, and an enforced
@@ -2862,7 +2901,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     values("spark.dynamicAllocation.minExecutors") shouldBe "1"
     values("spark.dynamicAllocation.maxExecutors") shouldBe "5"
     comments.map(_.comment) should contain (
-      commentForMaxExecutorsFromEnforcedInstances(5, Some(2)))
+      commentForMaxExecutorsFromEnforcedInstances(5, 5, Some(2)))
   }
 
   test("test dynamic allocation recommendations handle zero and negative values") {

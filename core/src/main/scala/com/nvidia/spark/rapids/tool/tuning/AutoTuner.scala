@@ -1835,7 +1835,8 @@ abstract class AutoTuner(
    * If the source or target executor cores are unknown, the source values are kept as is.
    *
    * If the target cluster enforces 'spark.executor.instances', it is kept and maxExecutors is set
-   * to it (see enforcedExecutorInstances).
+   * to it (see enforcedExecutorInstances), or to an enforced or preserved minExecutors or
+   * initialExecutors above it, since Spark rejects a starting count above maxExecutors.
    *
    * Spark starts with max(minExecutors, initialExecutors, executor.instances) executors. The
    * starting count is computed from the source values (scaled as above, with minExecutors rounded
@@ -1956,26 +1957,37 @@ abstract class AutoTuner(
     // is set to it, raising or lowering the scaled source value. The two directions mean different
     // things to the user, so they are reported separately: raising is required for the
     // configuration to start at all, lowering gives up scale-out headroom the source run had.
+    // A protected (enforced or preserved) minExecutors or initialExecutors above the enforced
+    // instances cannot be lowered and Spark starts with the largest of them, so maxExecutors is
+    // set to that starting count instead. Otherwise enforceDynamicAllocationInvariants would raise
+    // it afterwards and the comment would report a ceiling the application does not have.
     enforcedExecutorInstances.filterNot(_ => ignoreRecommendation(maxExecutorsProp)).foreach {
       numExecutors =>
+        val newMaxExecutors = (numExecutors +: protectedStartingCounts).max
         val previousMaxExecutors = recommendedIntValue(maxExecutorsProp)
-        if (!previousMaxExecutors.contains(numExecutors)) {
-          appendRecommendation(maxExecutorsProp, numExecutors.toLong)
-          appendComment(
-            commentForMaxExecutorsFromEnforcedInstances(numExecutors, previousMaxExecutors))
+        if (!previousMaxExecutors.contains(newMaxExecutors)) {
+          appendRecommendation(maxExecutorsProp, newMaxExecutors.toLong)
+          appendComment(commentForMaxExecutorsFromEnforcedInstances(
+            numExecutors, newMaxExecutors, previousMaxExecutors))
         }
     }
 
     // Enforce Spark's invariant: minExecutors <= initialExecutors <= maxExecutors.
     // This is needed because user-enforced values are not scaled, and rounding each value
     // separately can break the ordering.
-    enforceDynamicAllocationInvariants()
+    val unenforceable = enforceDynamicAllocationInvariants()
     // minExecutors is rounded down to keep the idle footprint within the source, but the
     // application should start with at least the source minExecutors cores, so the rounded-up
     // value is a candidate for the starting count. E.g. minExecutors 3 with a ratio of 0.5 is
     // recommended as 1, but the application starts with 2.
     recommendStartingExecutorCount(
       adjustedValue("spark.dynamicAllocation.minExecutors", roundUp = true))
+    // Conflicts with excluded properties are checked against the final starting count, which
+    // recommendStartingExecutorCount can raise above the values checked by the invariants.
+    val blocked = (unenforceable ++ excludedDynamicAllocationConflicts()).distinct
+    if (blocked.nonEmpty) {
+      appendComment(commentForUnenforceableDynamicAllocationInvariant(blocked))
+    }
     syncDynamicAllocationToRecommendedCluster()
 
     if (adjustedProperties.nonEmpty) {
@@ -1996,6 +2008,64 @@ abstract class AutoTuner(
       .filter(_ > 0)
   }
 
+  private val daStartingCountProps = Seq(
+    "spark.dynamicAllocation.minExecutors",
+    "spark.dynamicAllocation.initialExecutors",
+    "spark.executor.instances")
+
+  /**
+   * The recommended values of the starting count properties (minExecutors, initialExecutors,
+   * executor.instances) that are enforced or preserved, so they cannot be lowered. An excluded
+   * one is not emitted, so it has no recommended value and is not included.
+   */
+  private def protectedStartingCounts: Seq[Int] =
+    daStartingCountProps.filter(ignoreRecommendation).flatMap(recommendedIntValue)
+
+  /**
+   * The source value of a dynamic allocation property that is excluded from the
+   * recommendations. It is not emitted, so its source value still applies to the application.
+   */
+  private def excludedSourceIntValue(prop: String): Option[Int] = {
+    if (skippedRecommendations.contains(prop) && recommendedIntValue(prop).isEmpty) {
+      getPropertyValueFromSource(prop).flatMap(v => Try(v.trim.toInt).toOption)
+    } else {
+      None
+    }
+  }
+
+  /**
+   * The maxExecutors that applies to the application: the recommended value, else the source
+   * value of an excluded maxExecutors.
+   */
+  private def effectiveMaxExecutors: Option[Int] = {
+    val maxProp = "spark.dynamicAllocation.maxExecutors"
+    recommendedIntValue(maxProp).orElse(excludedSourceIntValue(maxProp))
+  }
+
+  /**
+   * Conflicts between the recommended dynamic allocation counts and the source value of an
+   * excluded one, which is not changed: an excluded minExecutors, initialExecutors or
+   * executor.instances above the recommended maxExecutors, or an excluded maxExecutors below the
+   * recommended starting count. Spark rejects these configurations, so they are reported.
+   */
+  private def excludedDynamicAllocationConflicts(): Seq[String] = {
+    val maxProp = "spark.dynamicAllocation.maxExecutors"
+    val aboveMax = recommendedIntValue(maxProp).toSeq.flatMap { max =>
+      daStartingCountProps.flatMap { prop =>
+        excludedSourceIntValue(prop).filter(_ > max).map(v => s"'$prop' ($v)")
+      }
+    }
+    val belowStart = excludedSourceIntValue(maxProp).flatMap { excludedMax =>
+      val recommendedStart = daStartingCountProps.flatMap(recommendedIntValue)
+      if (recommendedStart.nonEmpty && recommendedStart.max > excludedMax) {
+        Some(s"'$maxProp' ($excludedMax)")
+      } else {
+        None
+      }
+    }
+    aboveMax ++ belowStart
+  }
+
   /**
    * Sets initialExecutors and executor.instances to the number of executors Spark starts with
    * under dynamic allocation: max(minExecutors, initialExecutors, executor.instances), or 0 (the
@@ -2007,13 +2077,15 @@ abstract class AutoTuner(
    * excluded one is not emitted, so it does not count.
    *
    * @param minExecutorsRoundedUp the scaled source minExecutors rounded up, an extra candidate for
-   *                              the starting count, capped to maxExecutors
+   *                              the starting count, capped to maxExecutors (the recommended
+   *                              value, else the source value of an excluded one)
    */
   private def recommendStartingExecutorCount(minExecutorsRoundedUp: Option[Int]): Unit = {
     val initialProp = "spark.dynamicAllocation.initialExecutors"
     val instancesProp = "spark.executor.instances"
     val instancesOpt = recommendedIntValue(instancesProp)
-    val maxOpt = recommendedIntValue("spark.dynamicAllocation.maxExecutors")
+    // An excluded maxExecutors still applies from the source, so it caps the candidate too.
+    val maxOpt = effectiveMaxExecutors
     val minCandidate = minExecutorsRoundedUp.map(v => maxOpt.fold(v)(math.min(v, _)))
     val startingCount = (Seq("spark.dynamicAllocation.minExecutors", initialProp)
       .flatMap(recommendedIntValue) ++ instancesOpt ++ minCandidate :+ 0).max
@@ -2093,10 +2165,13 @@ abstract class AutoTuner(
    *
    * A property that is enforced, preserved or excluded cannot be changed, so a violation that
    * involves only such properties (e.g. a preserved maxExecutors below an enforced minExecutors)
-   * cannot be fixed. Those are reported as a comment instead of being dropped silently, since
-   * Spark rejects the resulting configuration.
+   * cannot be fixed. Those are returned, to be reported as a comment together with conflicts
+   * with excluded properties (see [[excludedDynamicAllocationConflicts]]) instead of being dropped
+   * silently, since Spark rejects the resulting configuration.
+   *
+   * @return the properties of the violations that could not be fixed, with their values
    */
-  private def enforceDynamicAllocationInvariants(): Unit = {
+  private def enforceDynamicAllocationInvariants(): List[String] = {
     def getRecValue(prop: String): Option[Int] = {
       recommendations.get(prop).flatMap(_.tunedValue).map(_.toInt)
     }
@@ -2123,12 +2198,7 @@ abstract class AutoTuner(
     // maxExecutors is a scaled value). An excluded value is not emitted, so it has no
     // recommended value and is not protected.
     val maxProp = "spark.dynamicAllocation.maxExecutors"
-    val protectedProps = Seq(
-      "spark.dynamicAllocation.minExecutors",
-      "spark.dynamicAllocation.initialExecutors",
-      "spark.executor.instances")
-    val protectedMax = protectedProps.filter(ignoreRecommendation).flatMap(recommendedIntValue)
-    (protectedMax.reduceOption(_ max _), getRecValue(maxProp)) match {
+    (protectedStartingCounts.reduceOption(_ max _), getRecValue(maxProp)) match {
       case (Some(protectedValue), Some(max)) if protectedValue > max =>
         adjust(maxProp, max, protectedValue)
       case _ =>
@@ -2162,29 +2232,6 @@ abstract class AutoTuner(
       }
     }
 
-    // An excluded property is not emitted, so its source value still applies to the application
-    // and is not protected above. It is not changed, but a conflict with it is reported.
-    def excludedSourceValue(prop: String): Option[Int] = {
-      if (skippedRecommendations.contains(prop) && recommendedIntValue(prop).isEmpty) {
-        getPropertyValueFromSource(prop).flatMap(v => Try(v.trim.toInt).toOption)
-      } else {
-        None
-      }
-    }
-    val startProps = Seq("spark.dynamicAllocation.minExecutors",
-      "spark.dynamicAllocation.initialExecutors", "spark.executor.instances")
-    getRecValue(maxProp).foreach { max =>
-      startProps.foreach { prop =>
-        excludedSourceValue(prop).filter(_ > max).foreach(v => blocked += s"'$prop' ($v)")
-      }
-    }
-    excludedSourceValue(maxProp).foreach { excludedMax =>
-      val recommendedStart = startProps.flatMap(getRecValue)
-      if (recommendedStart.nonEmpty && recommendedStart.max > excludedMax) {
-        blocked += s"'$maxProp' ($excludedMax)"
-      }
-    }
-
     if (adjusted.nonEmpty) {
       val comment =
         s"""
@@ -2194,9 +2241,7 @@ abstract class AutoTuner(
            |""".stripMargin.trim.replaceAll("\n", "\n  ")
       appendComment(comment)
     }
-    if (blocked.nonEmpty) {
-      appendComment(commentForUnenforceableDynamicAllocationInvariant(blocked.distinct.toList))
-    }
+    blocked.toList
   }
 
   def calculateClusterLevelRecommendations(): Unit = {
@@ -3882,33 +3927,54 @@ trait AutoTunerStaticComments {
   }
 
   /**
-   * Reports 'spark.dynamicAllocation.maxExecutors' being set to an enforced
+   * Reports 'spark.dynamicAllocation.maxExecutors' being set from an enforced
    * 'spark.executor.instances'. Raising it is forced by Spark, which rejects a starting count
    * above the maximum; lowering it costs the application the scale-out headroom the source run
    * had, so it names the previous value and how to keep it.
+   *
+   * @param enforcedInstances the enforced 'spark.executor.instances'
+   * @param maxExecutors the new maxExecutors: the enforced instances, or the starting count of an
+   *                     enforced or preserved minExecutors or initialExecutors above them
+   * @param previousMaxExecutors the maxExecutors recommended before, if any
    */
   def commentForMaxExecutorsFromEnforcedInstances(
-      numExecutors: Int,
+      enforcedInstances: Int,
+      maxExecutors: Int,
       previousMaxExecutors: Option[Int]): String = {
+    val fromInstances = maxExecutors == enforcedInstances
+    val source = if (fromInstances) {
+      "the enforced 'spark.executor.instances'"
+    } else {
+      s"""the starting executor count
+         |max(minExecutors, initialExecutors, executor.instances) of the enforced and preserved
+         |properties, which is above the enforced 'spark.executor.instances' ($enforcedInstances)"""
+        .stripMargin
+    }
+    // A starting count above the enforced instances asks for more executors than the target
+    // cluster provides, so the lowered ceiling is only explained by the cluster size when it
+    // equals the enforced instances.
+    val lowerReason = if (fromInstances) {
+      ", so the application does not ask for more executors than the target cluster provides"
+    } else {
+      ", the lowest maxExecutors Spark accepts with the protected starting count"
+    }
     val comment = previousMaxExecutors match {
-      case Some(previous) if previous > numExecutors =>
+      case Some(previous) if previous > maxExecutors =>
         s"""
-           |Lowered 'spark.dynamicAllocation.maxExecutors' from $previous to $numExecutors, the
-           |enforced 'spark.executor.instances', so the application does not ask for more
-           |executors than the target cluster provides. It will not scale past $numExecutors
-           |executors. Enforce 'spark.dynamicAllocation.maxExecutors' to keep a higher ceiling.
+           |Lowered 'spark.dynamicAllocation.maxExecutors' from $previous to $maxExecutors,
+           |$source$lowerReason. It will not scale past $maxExecutors executors. Enforce
+           |'spark.dynamicAllocation.maxExecutors' to keep a higher ceiling.
            |"""
       case Some(previous) =>
         s"""
-           |Raised 'spark.dynamicAllocation.maxExecutors' from $previous to $numExecutors, the
-           |enforced 'spark.executor.instances'. Spark starts with
+           |Raised 'spark.dynamicAllocation.maxExecutors' from $previous to $maxExecutors,
+           |$source. Spark starts with
            |max(minExecutors, initialExecutors, executor.instances) and rejects a starting count
            |above 'spark.dynamicAllocation.maxExecutors' on YARN and Kubernetes.
            |"""
       case None =>
         s"""
-           |Set 'spark.dynamicAllocation.maxExecutors' to $numExecutors, the enforced
-           |'spark.executor.instances'.
+           |Set 'spark.dynamicAllocation.maxExecutors' to $maxExecutors, $source.
            |"""
     }
     comment.stripMargin.trim.replaceAll("\n", "\n  ")

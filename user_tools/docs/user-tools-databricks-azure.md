@@ -4,7 +4,7 @@ This is a guide for the tools for the NVIDIA cuDF plugin for Apache Spark on [Da
 
 ## Assumptions
 
-The tool currently only supports event logs stored on ABFS ([Azure Blob File System](https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-introduction-abfs-uri)). The remote output storage is also expected to be ABFS (no DBFS paths).
+The tools read Apache Spark event logs from a local path or from ABFS ([Azure Blob File System](https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-introduction-abfs-uri)). ABFS paths must use the full form `abfss://<container>@<storage-account>.dfs.core.windows.net/<path>`. The output of the tools is written to a local directory.
 
 ## Prerequisites
 
@@ -21,9 +21,10 @@ The tool currently only supports event logs stored on ABFS ([Azure Blob File Sys
 - Set the configuration settings and credentials of the Azure CLI:
   - Set up the authentication by following these [instructions](https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli).
   - Configure the Azure CLI by following these [instructions](https://learn.microsoft.com/en-us/cli/azure/azure-cli-configuration).
-    - `location` is used for retreving instance type description (default is `westus`).
+    - `location` is used for retrieving instance type description (default is `westus`).
     - `output` should use default of `json` in `core` section.
     - Verify that the configurations are stored in the file `$AZURE_CONFIG_DIR/config` where the default value of `AZURE_CONFIG_DIR` is `$HOME/.azure` on Linux or macOS.
+- The tools use the Azure CLI to read the storage account key for ABFS event logs. See [Accessing ABFS event logs](#accessing-abfs-event-logs) for the permissions and network access this requires.
 
 ### 3.cuDF plugin tools
 
@@ -33,13 +34,13 @@ The tool currently only supports event logs stored on ABFS ([Azure Blob File Sys
 
 ### 4.Install the package
 
-- Install `spark-rapids-user-tools` with python [3.8, 3.11] using:
+- Install `spark-rapids-user-tools` with python [3.10, 3.12] using:
   - pip:  `pip install spark-rapids-user-tools`
   - wheel-file: `pip install <wheel-file>`
   - from source: `pip install -e .`
 - Verify the command is installed correctly by running
   ```bash
-    spark_rapids_user_tools databricks-azure -- --help
+    spark_rapids -- --help
   ```
 
 ### 5.Environment variables
@@ -47,7 +48,7 @@ The tool currently only supports event logs stored on ABFS ([Azure Blob File Sys
 Before running any command, you can set environment variables to specify configurations.
 - User tools variables use the `RAPIDS_USER_TOOLS_*` naming pattern:
   - `RAPIDS_USER_TOOLS_CACHE_FOLDER`: specifies the location of a local directory that the cuDF plugin CLI uses to store and cache the downloaded resources. The default is `/var/tmp/spark_rapids_user_tools_cache`.  Note that caching the resources locally has an impact on the total execution time of the command.
-  - `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY`: specifies the location of a local directory that the cuDF plugin CLI uses to generate the output. The wrapper CLI arguments override that environment variable (`--local_folder` for Qualification).
+  - `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY`: specifies the location of a local directory that the cuDF plugin CLI uses to generate the output. The CLI argument `--output_folder` overrides that environment variable.
 - For Databricks CLI, some environment variables can be set and picked up by the cuDF plugin user tools such as: `DATABRICKS_CONFIG_FILE`, `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. See the description of the variables in [Environment variables](https://docs.databricks.com/en/dev-tools/auth/index.html#environment-variables-and-fields-for-client-unified-authentication).
 - For Azure CLI, some environment variables can be set and picked up by the cuDF plugin user tools such as: `AZURE_CONFIG_FILE` and `AZURE_DEFAULTS_LOCATION`.
 
@@ -56,114 +57,106 @@ Before running any command, you can set environment variables to specify configu
 ### Local deployment
 
 ```
-spark_rapids_user_tools databricks-azure qualification [options]
-spark_rapids_user_tools databricks-azure qualification -- --help
+spark_rapids qualification --platform databricks-azure [options]
+spark_rapids qualification -- --help
 ```
 
 The local deployment runs on the local development machine. It requires:
 1. Installing and configuring the Databricks and Azure CLI
-2. Java 1.8+ development environment
+2. Java 1.8+ development environment (Java 23 fails with the Hadoop libraries used by the tools; see [Troubleshooting](#troubleshooting))
 3. Internet access to download JAR dependencies from mvn: `spark-*.jar` and `hadoop-azure-*.jar`
 4. Dependencies are cached on the local disk to reduce the overhead of the download.
 
 #### Command options
 
-| Option                         | Description                                                                                                                                                                                                                                                                                                                                                                                               | Default                                                                                                                                                                                                                                             | Required |
-|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------:|
-| **cpu_cluster**                | The Databricks-cluster on which the Apache Spark applications were executed. Accepted values are an Databricks-cluster id, or a valid path to the cluster properties file (json format) generated by Databricks CLI command `databricks clusters get CLUSTER_ID [flags]`                                                                                                                                  | N/A                                                                                                                                                                                                                                                 |    N     |
-| **eventlogs**                  | A comma seperated list of ABFS urls pointing to event logs or ABFS directory, or local event log filenames or directory                                                                                                                                                                                                                                                                                   | Reads the Spark's property `spark.eventLog.dir` defined in `cpu_cluster`. This property should be included in the output of `databricks clusters get CLUSTER_ID [flags]`. Note that the wrapper will raise an exception if the property is not set. |    N     |
-| **remote_folder**              | The ABFS folder where the output of the wrapper's output is copied. If missing, the output will be available only on local disk                                                                                                                                                                                                                                                                           | N/A                                                                                                                                                                                                                                                 |    N     |
-| **gpu_cluster**                | The Databricks-cluster on which the Spark applications is planned to be migrated. The argument can be an Databricks-cluster id or a valid path to the cluster's properties file (json format) generated by the Databricks CLI `databricks clusters get CLUSTER_ID [flags]` command                                                                                                                        | The wrapper maps the Azure machine instances of the original cluster into Azure instances that support GPU acceleration.                                                                                                                            |    N     |
-| **local_folder**               | Local work-directory path to store the output and to be used as root directory for temporary folders/files. The final output will go into a subdirectory named `qual-${EXEC_ID}` where `exec_id` is an auto-generated unique identifier of the execution.                                                                                                                                                 | If the argument is NONE, the default value is the env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory.                                                                                                       |    N     |
-| **jvm_heap_size**              | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                                                                                                                                                                             | 24                                                                                                                                                                                                                                                  |    N     |
-| **profile**                    | A named Databricks profile that you can specify to get the settings/credentials of the Databricks account                                                                                                                                                                                                                                                                                                 | "DEFAULT"                                                                                                                                                                                                                                           |    N     |
-| **tools_jar**                  | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                                                                                                                                                           | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                                                                                                                                     |    N     |
-| **filter_apps**                | Filtering criteria of the applications listed in the final STDOUT table is one of the following (`ALL`, `SPEEDUPS`, `SAVINGS`). "`ALL`" means no filter applied. "`SPEEDUPS`" lists all the apps that are either '_Recommended_', or '_Strongly Recommended_' based on speedups. "`SAVINGS`" lists all the apps that have positive estimated GPU savings except for the apps that are '_Not Applicable_'. | `SAVINGS`                                                                                                                                                                                                                                           |    N     |
-| **gpu_cluster_recommendation** | The type of GPU cluster recommendation to generate. It accepts one of the following (`CLUSTER`, `JOB`, `MATCH`). `MATCH`: keep GPU cluster same number of nodes as CPU cluster; `CLUSTER`: recommend optimal GPU cluster by cost for entire cluster. `JOB`: recommend optimal GPU cluster by cost per job                                                                                                 | `MATCH`                                                                                                                                                                                                                                             |    N     |
-| **cpu_discount**               | A percent discount for the cpu cluster cost in the form of an integer value (e.g. 30 for 30% discount)                                                                                                                                                                                                                                                                                                    | N/A                                                                                                                                                                                                                                                 |    N     |
-| **gpu_discount**               | A percent discount for the gpu cluster cost in the form of an integer value (e.g. 30 for 30% discount)                                                                                                                                                                                                                                                                                                    | N/A                                                                                                                                                                                                                                                 |    N     |
-| **global_discount**            | A percent discount for both the cpu and gpu cluster costs in the form of an integer value (e.g. 30 for 30% discount)                                                                                                                                                                                                                                                                                      | N/A                                                                                                                                                                                                                                                 |    N     |
-| **verbose**                    | True or False to enable verbosity to the wrapper script                                                                                                                                                                                                                                                                                                                                                   | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                                                                                                                                                   |    N     |
-| **rapids_options****           | A list of valid [Qualification tool options](https://docs.nvidia.com/spark-rapids/user-guide/latest/qualification/jar-usage.html#running-the-qualification-tool-standalone-on-spark-event-logs). Note that (`output-directory`, `platform`) flags are ignored, and that multiple "spark-property" is not supported.                                                                                                                                                                  | N/A                                                                                                                                                                                                                                                 |    N     |
+| Option                 | Description                                                                                                                                                                                                                                   | Default                                                                                                                         | Required |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|:--------:|
+| **platform** (`-p`)    | The platform on which the applications were executed. Use `databricks-azure`                                                                                                                                                                  | N/A                                                                                                                             |    Y     |
+| **eventlogs** (`-e`)   | Event log filenames, ABFS or local directories containing event logs (comma separated), or path to a TXT file containing a list of event log paths. ABFS paths must use the form `abfss://<container>@<storage-account>.dfs.core.windows.net/<path>` | If missing, the `cluster` argument must point to a valid Databricks cluster                                                     |    N     |
+| **cluster**            | The Databricks cluster on which the Apache Spark applications were executed. Accepted values are a Databricks cluster id, or a valid path to the cluster properties file (json format) generated by Databricks CLI command `databricks clusters get CLUSTER_ID [flags]` | N/A                                                                                                                             |    N     |
+| **output_folder** (`-o`) | Local path to store the output. The final output goes into a subdirectory named `qual_<YYYYmmddHHmmss>_<0x%08X>`                                                                                                                             | The env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory                                  |    N     |
+| **filter_apps** (`-f`) | Filtering criteria of the applications listed in the final STDOUT table: `ALL` or `TOP_CANDIDATES`. `ALL` means no filter applied. `TOP_CANDIDATES` lists the apps whose unsupported-operator stage duration is less than 25% of the app duration and whose estimated speedup is greater than 1.3x. The filter does not affect the CSV report | `TOP_CANDIDATES`                                                                                                                |    N     |
+| **custom_model_file**  | An optional local path to a custom XGBoost model file                                                                                                                                                                                         | N/A                                                                                                                             |    N     |
+| **tools_jar**          | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem, or remote ABFS url                                                                                                                                          | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                 |    N     |
+| **jvm_heap_size**      | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                 | Calculated from the total memory of the host                                                                                    |    N     |
+| **jvm_threads**        | Number of threads to use for parallel processing on the eventlogs batch                                                                                                                                                                       | Calculated from the number of cores and the heap size of the host                                                               |    N     |
+| **submission_mode** (`-s`) | Submission mode to run the qualification tool: `local` or `distributed`                                                                                                                                                                   | `local`                                                                                                                         |    N     |
+| **tools_config_file**  | Path to a configuration file that contains the tools' options. See the [sample configuration files](https://github.com/NVIDIA/cudf-spark-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid)                 | N/A                                                                                                                             |    N     |
+| **target_cluster_info** | Path to a YAML file that contains the target cluster information. See the [sample files](https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/docs/sampleFiles/targetClusterInfo)                                                      | N/A                                                                                                                             |    N     |
+| **tuning_configs**     | Path to a YAML file that contains the tuning configurations. See the [sample file](https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/src/main/resources/bootstrap/tuningConfigs.yaml)                                                  | N/A                                                                                                                             |    N     |
+| **qualx_config**       | Path to a `qualx-conf.yaml` file to use for configuration                                                                                                                                                                                     | The [default qualx-conf.yaml](https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml) |    N     |
+| **verbose** (`-v`)     | True or False to enable verbosity of the script                                                                                                                                                                                               | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                               |    N     |
+| **rapids_options****   | A list of valid [Qualification tool options](https://docs.nvidia.com/spark-rapids/user-guide/latest/qualification/jar-usage.html#running-the-qualification-tool-standalone-on-spark-event-logs). Note that (`output-directory`, `platform`) flags are ignored, and that multiple "spark-property" is not supported. | N/A                                                                                                                             |    N     |
 
 #### Use case scenario
 
 A typical workflow to successfully run the `qualification` command in local mode is described as follows:
 
-1. Store the Apache Spark event logs in ABFS folder.
+1. Store the Apache Spark event logs in an ABFS folder or a local folder.
 2. A user sets up his development machine:
    1. configures Java
    2. installs Databricks CLI and configures the profile and the credentials to make sure the
       access credentials are stored in the file `~/.databrickscfg` on Unix, Linux, or macOS,
       or in another file defined by environment variable `DATABRICKS_CONFIG_FILE`.
-   3. installs Azure CLI and configures the credentials to make sure the Azure CLI
-      commands can access the ABFS resources (i.e. storage container `LOGS_CONTAINER` which stores the event logs).
-   4. installs `spark_rapids_user_tools`
-3. If the results of the wrapper need to be stored on ABFS, then another ABFS uri is required `REMOTE_FOLDER=abfss://OUT_BUCKET/`
-4. User defines the Databricks-cluster on which the Spark application were running. Note that the cluster does not have to be active; but it has to be visible by the Databricks CLI (i.e., can run `databricks clusters get --cluster-name`).
-5. The following script runs qualification by passing an ABFS remote directory to store the output:
+   3. installs Azure CLI and configures the credentials so that the tools can read the storage account key
+      of the account that stores the event logs (see [Accessing ABFS event logs](#accessing-abfs-event-logs)).
+   4. installs `spark-rapids-user-tools`
+3. User defines the Databricks cluster on which the Spark applications were running. Note that the cluster does not have to be active; but it has to be visible by the Databricks CLI (i.e., can run `databricks clusters get CLUSTER_ID`).
+4. The following script runs qualification and stores the output in a local folder:
 
    ```
    # define the wrapper cache directory if necessary
    export RAPIDS_USER_TOOLS_CACHE_FOLDER=my_cache_folder
-   export EVENTLOGS=abfss://LOGS_CONTAINER/eventlogs/
+   export EVENTLOGS=abfss://<container>@<storage-account>.dfs.core.windows.net/eventlogs/
    export CLUSTER_ID=my-databricks-cpu-cluster-id
-   export REMOTE_FOLDER=abfss://OUT_BUCKET/wrapper_output
 
-   spark_rapids_user_tools databricks-azure qualification \
+   spark_rapids qualification --platform databricks-azure \
       --eventlogs $EVENTLOGS \
-      --cpu_cluster $CLUSTER_ID \
-      --remote_folder $REMOTE_FOLDER
+      --cluster $CLUSTER_ID \
+      --output_folder ./qual_output
    ```
-   The wrapper generates a unique-Id for each execution in the format of `qual_<YYYYmmddHHmmss>_<0x%08X>`
-   The above command will generate a directory containing `qualification_summary.csv` in addition to
-   the actual folder of the cuDF plugin Qualification tool. The directory will be mirrored to ABFS path (`REMOTE_FOLDER`).
+   The wrapper generates a unique-Id for each execution in the format of `qual_<YYYYmmddHHmmss>_<0x%08X>`.
+   The above command generates a directory containing `qualification_summary.csv` in addition to
+   the output of the cuDF plugin Qualification tool in `qual_core_output`:
 
    ```
-    ./qual_<YYYYmmddHHmmss>_<0x%08X>/qualification_summary.csv
-    ./qual_<YYYYmmddHHmmss>_<0x%08X>/rapids_4_spark_qualification_output/
+    ./qual_output/qual_<YYYYmmddHHmmss>_<0x%08X>/qualification_summary.csv
+    ./qual_output/qual_<YYYYmmddHHmmss>_<0x%08X>/qual_core_output/
    ```
 
 ### Qualification output
 
-For each app, the command output lists the following fields:
+For each app, `qualification_summary.csv` includes the following fields:
 
 - `App ID`: An application is referenced by its application ID, '_app-id_'. When running on YARN,
   each application may have multiple attempts, but there are attempt IDs only for applications
   in cluster mode, not applications in client mode.  Applications in YARN cluster mode can be
   identified by their attempt-id.
 - `App Name`: Name of the application
-- `Speedup Based Recommendation`: Recommendation based on '_Estimated Speed-up Factor_'. Note that an
-  application that has job or stage failures will be labeled '_Not Applicable_'
-- `Savings Based Recommendation`: Recommendation based on '_Estimated GPU Savings_'.
-    - '_Strongly Recommended_': An app with savings GEQ 40%
-    - '_Recommended_': An app with savings between (1, 40) %
-    - '_Not Recommended_': An app with no savings
-    - '_Not Applicable_': An app that has job or stage failures.
+- `Estimated GPU Speedup Category`: The category of the estimated speedup of the app.
 - `Estimated GPU Speedup`: Speed-up factor estimated for the app. Calculated as the ratio
   between '_App Duration_' and '_Estimated GPU Duration_'.
 - `Estimated GPU Duration`: Predicted runtime of the app if it was run on GPU
 - `App Duration`: Wall-Clock time measured since the application starts till it is completed.
   If an app is not completed an estimated completion time would be computed.
-- `Estimated GPU Savings(%)`: Percentage of cost savings of the app if it migrates to an
-  accelerated cluster. It is calculated as:
-  ```
-  estimated_saving = 100 - ((100 * gpu_cost) / cpu_cost)
-  ```
 
-The command creates a directory with UUID that contains the following:
-- Directory generated by the cuDF plugin qualification tool `rapids_4_spark_qualification_output`;
-- A CSV file that contains the summary of all the applications along with estimated absolute costs
+The command creates a directory with a unique ID that contains the following:
+- `qualification_summary.csv`: the summary of all the applications;
+- `qual_core_output`: the directory generated by the cuDF plugin qualification tool, including `status.csv`, which reports
+  whether each event log was processed successfully;
+- `qual_core_stderr.log`: the log of the cuDF plugin qualification tool.
 - Sample directory structure:
     ```
     .
     ├── qualification_summary.csv
-    └── rapids_4_spark_qualification_output
-        ├── rapids_4_spark_qualification_output.csv
-        ├── rapids_4_spark_qualification_output.log
-        ├── rapids_4_spark_qualification_output_execs.csv
-        ├── rapids_4_spark_qualification_output_stages.csv
-        └── ui
+    ├── qualification_statistics.csv
+    ├── qual_core_stderr.log
+    └── qual_core_output
+        ├── apps_summary.csv
+        ├── status.csv
+        ├── qual_metrics
+        ├── raw_metrics
+        └── tuning
     ```
 
 ## Profiling command
@@ -171,107 +164,170 @@ The command creates a directory with UUID that contains the following:
 ### Local deployment
 
 ```
-spark_rapids_user_tools databricks-azure profiling [options]
-spark_rapids_user_tools databricks-azure profiling -- --help
+spark_rapids profiling --platform databricks-azure [options]
+spark_rapids profiling -- --help
 ```
 
 The local deployment runs on the local development machine. It requires:
 1. Installing and configuring the Databricks and Azure CLI
-2. Java 1.8+ development environment
+2. Java 1.8+ development environment (Java 23 fails with the Hadoop libraries used by the tools; see [Troubleshooting](#troubleshooting))
 3. Internet access to download JAR dependencies from mvn: `spark-*.jar`, and `hadoop-azure-*.jar`
 4. Dependencies are cached on the local disk to reduce the overhead of the download.
 
 #### Command options
 
-| Option               | Description                                                                                                                                                                                                                                                            | Default                                                                                                                                                                                                                                         | Required |
-|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
-| **gpu_cluster**      | The Databricks-cluster on which the Apache Spark applications were executed. Accepted values are an Databricks-cluster id, or a valid path to the cluster properties file (json format) generated by Databricks CLI command `databricks clusters get CLUSTER_ID [flags]` | None                                                                                                                                                                                                                                           |     N    |
+| Option                   | Description                                                                                                                                                                                                                                                            | Default                                                                                                                                       | Required |
+|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|:--------:|
+| **platform** (`-p`)      | The platform on which the applications were executed. Use `databricks-azure`                                                                                                                                                                                           | N/A                                                                                                                                           |    Y     |
+| **eventlogs** (`-e`)     | Event log filenames, ABFS or local directories containing event logs (comma separated), or path to a TXT file containing a list of event log paths. ABFS paths must use the form `abfss://<container>@<storage-account>.dfs.core.windows.net/<path>`                   | Reads the Spark's property `spark.eventLog.dir` defined in `cluster`                                                                         |    N     |
+| **cluster** (`-c`)       | The Databricks cluster on which the Apache Spark applications were executed. Accepted values are a Databricks cluster id, or a valid path to the cluster properties file (json format) generated by Databricks CLI command `databricks clusters get CLUSTER_ID [flags]` | N/A                                                                                                                                           |    N     |
+| **driverlog** (`-d`)     | Valid path to the GPU driver log file                                                                                                                                                                                                                                  | N/A                                                                                                                                           |    N     |
+| **output_folder** (`-o`) | Local path to store the output. The final output goes into a subdirectory named `prof_<YYYYmmddHHmmss>_<0x%08X>`                                                                                                                                                       | The env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory                                                |    N     |
+| **tools_jar**            | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                   | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                               |    N     |
+| **jvm_heap_size**        | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                                          | Calculated from the total memory of the host                                                                                                  |    N     |
+| **jvm_threads**          | Number of threads to use for parallel processing on the eventlogs batch                                                                                                                                                                                                | Calculated from the number of cores and the heap size of the host                                                                             |    N     |
+| **tools_config_file**    | Path to a configuration file that contains the tools' options. See the [sample configuration files](https://github.com/NVIDIA/cudf-spark-tools/tree/main/user_tools/tests/spark_rapids_tools_ut/resources/tools_config/valid)                                          | N/A                                                                                                                                           |    N     |
+| **target_cluster_info**  | Path to a YAML file that contains the target cluster information. See the [sample files](https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/docs/sampleFiles/targetClusterInfo)                                                                               | N/A                                                                                                                                           |    N     |
+| **tuning_configs**       | Path to a YAML file that contains the tuning configurations. See the [sample file](https://github.com/NVIDIA/cudf-spark-tools/tree/main/core/src/main/resources/bootstrap/tuningConfigs.yaml)                                                                           | N/A                                                                                                                                           |    N     |
+| **verbose** (`-v`)       | True or False to enable verbosity of the script                                                                                                                                                                                                                        | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                                             |    N     |
+| **rapids_options****     | A list of valid [Profiling tool options](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/jar-usage.html#prof-tool-title-options). Note that (`output-directory`) flags are ignored, and that multiple "spark-property" is not supported               | N/A                                                                                                                                           |    N     |
 
-| **eventlogs**        | A comma seperated list of ABFS urls pointing to event logs or ABFS directory                                                                                                                                                                                           | Reads the Spark's property `spark.eventLog.dir` defined in `gpu_cluster`. This property should be included in the output of `databricks clusters get CLUSTER_ID [flags]`. Note that the wrapper will raise an exception if the property is not set. |     N    |
-| **remote_folder**    | The ABFS folder where the output of the wrapper's output is copied. If missing, the output will be available only on local disk                                                                                                                                        | N/A                                                                                                                                                                                                                                             |     N    |
-| **local_folder**     | Local work-directory path to store the output and to be used as root directory for temporary folders/files. The final output will go into a subdirectory named `prof-${EXEC_ID}` where `exec_id` is an auto-generated unique identifier of the execution.              | If the argument is NONE, the default value is the env variable `RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY` if any; or the current working directory.                                                                                                   |     N    |
-| **profile**          | A named Databricks profile that you can specify to get the settings/credentials of the Databricks account                                                                                                                                                              | "DEFAULT"                                                                                                                                                                                                                                       |     N    |
-| **jvm_heap_size**    | The maximum heap size of the JVM in gigabytes                                                                                                                                                                                                                          | 24                                                                                                                                                                                                                                              |     N    |
-| **tools_jar**        | Path to a bundled jar including cuDF plugin tool. The path is a local filesystem, or remote ABFS url                                                                                                                                                                        | Downloads the latest `rapids-4-spark-tools_*.jar` from mvn repo                                                                                                                                                                                 |     N    |
-| **credentials_file** | The local path of JSON file that contains the application credentials                                                                                                                                                                                                  | If missing, loads the env variable `DATABRICKS_CONFIG_FILE` if any. Otherwise, it uses the default path `~/.databrickscfg` on Unix, Linux, or macOS                                                                                             |     N    |
-| **verbose**          | True or False to enable verbosity to the wrapper script                                                                                                                                                                                                                | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                                                                                                                                               |     N    |
-| **rapids_options**** | A list of valid [Profiling tool options](https://docs.nvidia.com/spark-rapids/user-guide/latest/profiling/jar-usage.html#prof-tool-title-options). Note that (`output-directory`, `auto-tuner`, `combined`) flags are ignored                                                                               | N/A                                                                                                                                                                                                                                             |     N    |
-
-If the CLI does not provide an argument `gpu_cluster`, the autotuner will still recommend tuning settings based on the job event log.
+If the CLI does not provide an argument `cluster`, the autotuner will still recommend tuning settings based on the job event log.
 
 #### Use case scenario
 
 A typical workflow to successfully run the `profiling` command in local mode is described as follows:
 
-1. Store the Apache Spark event logs in ABFS folder.
+1. Store the Apache Spark event logs in an ABFS folder or a local folder.
 2. A user sets up his development machine:
    1. configures Java
    2. installs Databricks CLI and configures the profile and the credentials to make sure the
       access credentials are stored in the file `~/.databrickscfg` on Unix, Linux, or macOS,
       or in another file defined by environment variable `DATABRICKS_CONFIG_FILE`.
-   3. installs Azure CLI and configures the credentials to make sure the Azure CLI
-      commands can access the ABFS resources (i.e. storage container `LOGS_CONTAINER` which stores the event logs).
-   4. installs `spark_rapids_user_tools`
-3. If the results of the wrapper need to be stored on ABFS, then another ABFS uri is required `REMOTE_FOLDER=abfss://OUT_BUCKET/`
-4. Depending on the accessibility of the cluster properties, the user chooses one of the 2 cases below (_"Case-A"_, and _"Case-B"_) to trigger the CLI.
+   3. installs Azure CLI and configures the credentials so that the tools can read the storage account key
+      of the account that stores the event logs (see [Accessing ABFS event logs](#accessing-abfs-event-logs)).
+   4. installs `spark-rapids-user-tools`
+3. Depending on the accessibility of the cluster properties, the user chooses one of the 2 cases below (_"Case-A"_, and _"Case-B"_) to trigger the CLI.
 
 For each successful execution, the wrapper generates a new directory in the format of
 `prof_<YYYYmmddHHmmss>_<0x%08X>`. The directory contains `tuning_summary.log` in addition to
-the actual folder of the cuDF plugin Profiling tool. The directory will be mirrored to ABFS folder if the
-argument `--remote_folder` was a valid ABFS path.
+the output of the cuDF plugin Profiling tool:
 
    ```
     ./prof_<YYYYmmddHHmmss>_<0x%08X>/tuning_summary.log
     ./prof_<YYYYmmddHHmmss>_<0x%08X>/rapids_4_spark_profile/
    ```
 
-**Case-A: A gpu-cluster property file is accessible:**
+The `rapids_4_spark_profile` directory includes `profiling_status.csv`, which reports whether each event log
+was processed successfully, and `prof_core_stderr.log`, the log of the cuDF plugin profiling tool.
+
+**Case-A: A cluster property file is accessible:**
 
 A cluster property is still accessible if one of the following conditions applies:
 
 1. The cluster is listed by the `databricks clusters get CLUSTER_ID [flags]` cmd. In this case, the CLI will be triggered by providing
-   `--gpu_cluster $CLUSTER_ID`
+   `--cluster $CLUSTER_ID`
 
-       ```
-       # run the command using the GPU cluster name
-       export RAPIDS_USER_TOOLS_CACHE_FOLDER=my_cache_folder
-       export EVENTLOGS=abfss://LOGS_CONTAINER/eventlogs/
-       export CLUSTER_ID=my-databricks-gpu-cluster-id
-       export REMOTE_FOLDER=abfss://OUT_BUCKET/wrapper_output
+   ```
+   # run the command using the cluster id
+   export RAPIDS_USER_TOOLS_CACHE_FOLDER=my_cache_folder
+   export EVENTLOGS=abfss://<container>@<storage-account>.dfs.core.windows.net/eventlogs/
+   export CLUSTER_ID=my-databricks-gpu-cluster-id
 
-       spark_rapids_user_tools databricks-azure profiling \
-          --eventlogs $EVENTLOGS \
-          --gpu_cluster $CLUSTER_ID \
-          --remote_folder $REMOTE_FOLDER
-       ```
+   spark_rapids profiling --platform databricks-azure \
+      --eventlogs $EVENTLOGS \
+      --cluster $CLUSTER_ID \
+      --output_folder ./prof_output
+   ```
 2. The cluster properties file is accessible on local disk or a valid ABFS path.
 
    ```
    $> export CLUSTER_PROPS_FILE=cluster-props.json
    $> databricks clusters get $CLUSTER_ID > $CLUSTER_PROPS_FILE
    ```
-   Trigger the CLI by providing the path to the properties file `--gpu_cluster $CLUSTER_PROPS_FILE`
+   Trigger the CLI by providing the path to the properties file `--cluster $CLUSTER_PROPS_FILE`
 
    ```
-   $> spark_rapids_user_tools databricks-azure profiling \
+   $> spark_rapids profiling --platform databricks-azure \
         --eventlogs $EVENTLOGS \
-        --gpu_cluster $CLUSTER_PROPS_FILE \
-        --remote_folder $REMOTE_FOLDER
+        --cluster $CLUSTER_PROPS_FILE \
+        --output_folder ./prof_output
    ```
 
-**Case-B: GPU cluster information is missing:**
+**Case-B: Cluster information is missing:**
 
 In this scenario, if you have no access to the properties of the cluster, the autotuner will still recommend tuning settings based on the job event log:
 
-    ```
-    # Run the profiling cmd
-    $> spark_rapids_user_tools databricks-azure profiling \
-            --eventlogs $EVENTLOGS \
-            --remote_folder $REMOTE_FOLDER
-    ```
+   ```
+   # Run the profiling cmd
+   $> spark_rapids profiling --platform databricks-azure \
+        --eventlogs $EVENTLOGS \
+        --output_folder ./prof_output
+   ```
 
-Note that if the user does not supply a cluster or worker properties file, the autotuner will still recommend
-tuning settings based on the job event log.
+## Accessing ABFS event logs
+
+When an event log path starts with `abfss://`, the tools read the event logs directly from the Azure storage account.
+
+### How the tools authenticate
+
+1. The tools take the storage account name from the first `abfss://` path in `--eventlogs`. The account name is the part
+   between `@` and `.dfs.core.windows.net`, so the path must use the full form
+   `abfss://<container>@<storage-account>.dfs.core.windows.net/<path>`.
+2. The tools run `az storage account show-connection-string --name <storage-account>` and extract the account key.
+3. The key is passed to the JVM as the system property
+   `rapids.tools.hadoop.fs.azure.account.key.<storage-account>.dfs.core.windows.net`, and the cuDF plugin tool
+   copies it into the Hadoop configuration used by the `hadoop-azure` ABFS driver.
+
+This has the following requirements:
+
+- **Permission to list the account keys.** The Azure identity used by the Azure CLI needs the
+  `Microsoft.Storage/storageAccounts/listKeys/action` permission on the storage account, for example through the
+  `Contributor` or the `Storage Account Key Operator Service Role` role. Data-plane roles such as
+  `Storage Blob Data Reader` alone are not enough. See [Manage storage account access keys](https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage)
+  and [Azure built-in roles for Storage](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/storage).
+- **Shared Key access must be allowed** on the storage account. See
+  [Prevent Shared Key authorization](https://learn.microsoft.com/en-us/azure/storage/common/shared-key-authorization-prevent).
+- **The storage account must be in the active Azure CLI subscription** (`az account show`).
+- **All ABFS event logs in a single run must be in the same storage account.** Only the first `abfss://` path is used to
+  look up the key.
+
+If the key lookup fails, the tools log the error at `INFO` level and continue without a key. The run then fails to read
+the event logs later (see [Troubleshooting](#troubleshooting)).
+
+Note that the key is passed as a JVM `-D` argument, so it is visible in the process list of the host while the tools run.
+The tools' log files mask the key.
+
+### Network access
+
+If the storage account firewall is set to deny public network access by default, the host running the tools must be
+allowed to reach the account, for example with an IP rule for the host's public IP address, a virtual network rule, or a
+private endpoint. Azure RBAC roles do not bypass the firewall. See
+[Azure Storage firewall and virtual network rules](https://learn.microsoft.com/en-us/azure/storage/common/storage-network-security).
+
+### Alternatives when key or network access is not possible
+
+- Copy the event logs to a local folder (for example with the Azure CLI or AzCopy) and point
+  `--eventlogs` at the local path. No storage account key is needed in this case.
+- Run the tools from inside Databricks with the
+  [notebook templates](https://github.com/NVIDIA/cudf-spark-examples/tree/main/tools/databricks).
+
+## Troubleshooting
+
+When an event log cannot be read, the command still prints `Processing Completed!`, but no application is processed. Check
+the status file and the tool log in the output directory:
+
+- Qualification: `qual_<YYYYmmddHHmmss>_<0x%08X>/qual_core_output/status.csv` and `qual_<YYYYmmddHHmmss>_<0x%08X>/qual_core_stderr.log`
+- Profiling: `prof_<YYYYmmddHHmmss>_<0x%08X>/rapids_4_spark_profile/profiling_status.csv` and `prof_<YYYYmmddHHmmss>_<0x%08X>/rapids_4_spark_profile/prof_core_stderr.log`
+
+A `FAILURE` row in the status file includes the reason. Common errors:
+
+| Error                                                                                                                                     | Cause                                                                                                         | Fix                                                                                                                   |
+|-------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `IndexError: list index out of range` while submitting the job                                                                            | The ABFS path does not include `@<storage-account>.dfs.core.windows.net`                                       | Use the full form `abfss://<container>@<storage-account>.dfs.core.windows.net/<path>`                                 |
+| `KeyProviderException: Failure to initialize configuration`                                                                               | No storage account key was passed to the JVM, because the `az storage account show-connection-string` call failed | Check that the Azure CLI is installed and logged in, that the account is in the active subscription, and that you have the `listKeys` permission. The key lookup error is written to the application log file printed at the end of the run (`~/.spark_rapids_tools/logs/<run id>.log`) |
+| `AccessDeniedException: Operation failed: "This request is not authorized to perform this operation.", 403, HEAD, https://<storage-account>.dfs.core.windows.net/...` | The storage account firewall blocks the host running the tools                                                | Allow the host's network access to the storage account (see [Network access](#network-access)), or use a local copy of the event logs |
+| `UnsupportedOperationException: getSubject is supported only if a security manager is allowed`                                            | The JVM is too new for the Hadoop libraries used by the tools (seen with Java 23)                              | Use Java 8, 11 or 17                                                                                                  |
 
 ## Diagnostic command
 
@@ -295,7 +351,7 @@ user must have SSH access.
 | **key_file**      | Path to the private key file to be used for the ssh connections.                                          | Default ssh key based on the OS                                                             |    N     |
 | **thread_num**    | Number of threads to access remote cluster nodes in parallel                                              | 3                                                                                           |    N     |
 | **yes**           | auto confirm to interactive question                                                                      | False                                                                                       |    N     |
-| **verbose**       | True or False to enable verbosity to the wrapper script                                                   | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                           |    N     |
+| **verbose**       | True or False to enable verbosity to the wrapper script                                                   | False if `RAPIDS_USER_TOOLS_LOG_DEBUG` is not set                                                                           |    N     |
 
 ### Info collection
 

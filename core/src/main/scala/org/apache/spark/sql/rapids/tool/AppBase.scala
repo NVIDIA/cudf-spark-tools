@@ -652,6 +652,25 @@ abstract class AppBase(
     // round up for edge case when total core seconds is in range [0, 1)
     math.ceil(totalCoreSec).toLong
   }
+
+  /**
+   * Calculates the core seconds that the executors held between two times (ms). It is the sum
+   * over the executors of the part of the executor duration (s) that is between those times,
+   * multiplied by num of cores. An executor's duration is as in calculateTotalCoreSec, so the
+   * core seconds of windows that do not overlap add up to at most the total core seconds.
+   */
+  def calculateCoreSecBetween(startTime: Long, endTime: Long): Double = {
+    val coreMs = executorIdToInfo.values.map { eInfo =>
+      val eEndTime = if (eInfo.removeTime == 0L) {
+        getAppEndTime.getOrElse(eInfo.addTime)
+      } else {
+        eInfo.removeTime
+      }
+      val heldTime = math.min(eEndTime, endTime) - math.max(eInfo.addTime, startTime)
+      math.max(heldTime, 0L) * eInfo.totalCores
+    }.sum
+    coreMs.toDouble / 1000
+  }
 }
 
 object AppBase {

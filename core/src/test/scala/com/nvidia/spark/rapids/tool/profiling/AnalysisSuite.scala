@@ -444,12 +444,34 @@ class AnalysisSuite extends AnyFunSuite {
       .add("appDuration", LongType, true)
       .add("potentialProbs", StringType, true)
       .add("executorCpuTime", DoubleType, true)
+      .add("coreSeconds", DoubleType, true)
     val actualDf = sqlAggDurCpu.toDF
 
     val dfExpect = sparkSession.read.option("header", "true").option("nullValue", "-")
       .schema(schema).csv(resultExpectation.getPath())
 
     ToolTestUtils.compareDataFrames(actualDf, dfExpect)
+  }
+
+  test("test core seconds between two times") {
+    val apps =
+      ToolTestUtils.processProfileApps(Array(s"$logDir/rapids_join_eventlog.zstd"), sparkSession)
+    val app = apps.head
+    val appEndTime = app.getAppEndTime.get
+    app.executorIdToInfo.clear()
+    // 4 cores that are removed 5 s before the app ends, and 2 cores that are added 3 s before
+    // the app ends and are not removed
+    val removedExec = app.getOrCreateExecutor("1", appEndTime - 10000L)
+    removedExec.totalCores = 4
+    removedExec.removeTime = appEndTime - 5000L
+    val keptExec = app.getOrCreateExecutor("2", appEndTime - 3000L)
+    keptExec.totalCores = 2
+    // both executors in full
+    assert(app.calculateCoreSecBetween(0L, Long.MaxValue) == 4 * 5.0 + 2 * 3.0)
+    // the last 1.5 s of the first executor and the first 0.5 s of the second
+    assert(app.calculateCoreSecBetween(appEndTime - 6500L, appEndTime - 2500L) == 4 * 1.5 + 2 * 0.5)
+    // no executor is held between the removal of the first and the start of the second
+    assert(app.calculateCoreSecBetween(appEndTime - 5000L, appEndTime - 3000L) == 0.0)
   }
 
   test("test shuffleSkewCheck empty") {

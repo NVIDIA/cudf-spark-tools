@@ -507,6 +507,11 @@ reportDefinitions:
             dataType: Double
             description: >-
               TBD
+          - name: SQL Core Seconds
+            dataType: Double
+            description: >-
+              The core seconds that the executors held while the SQL ran. The app's
+              totalCoreSeconds is the same metric summed over the whole app.
       # SQLTaskAggMetricsProfileResult
       - label: coreRawSqlLevelAggregatedTaskMetricsCSV
         description: >-

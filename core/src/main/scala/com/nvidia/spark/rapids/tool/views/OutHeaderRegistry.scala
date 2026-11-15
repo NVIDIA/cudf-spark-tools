@@ -303,7 +303,8 @@ object OutHeaderRegistry {
         "Contains Dataset or RDD Op",
         "App Duration",
         "Potential Problems",
-        "Executor CPU Time Percent"),
+        "Executor CPU Time Percent",
+        "SQL Core Seconds"),
     "ShuffleSkewProfileResult" ->
       Array("stageId", "stageAttemptId", "taskId", "attempt",
         "taskDurationSec", "avgDurationSec", "taskShuffleReadMB", "avgShuffleReadMB",

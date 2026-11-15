@@ -269,10 +269,15 @@ class AppSparkMetricsAnalyzer(app: AppBase) extends AppAnalysisBase(app) with Lo
       } else {
         ""
       }
+      // The core seconds that the executors held while the SQL ran. Like the duration
+      // it is not defined for a SQL that did not end.
+      // TODO: If there are SQLs that ran concurrently, e.g., using the Spark Fair Scheduler,
+      // this may double count the overlapping portion of executor uptime.
+      val sqlCoreSec = sqlCase.endTime.map(app.calculateCoreSecBetween(sqlCase.startTime, _))
       // Then, build the SQLDurationExecutorTimeProfileResult
       SQLDurationExecutorTimeProfileResult(app.appId, sqlCase.rootExecutionID,
         sqlId, sqlCase.duration, sqlCase.hasDatasetOrRDD,
-        app.getAppDuration.orElse(Option(0L)), sqlIssues, sqlCase.sqlCpuTimePercent)
+        app.getAppDuration.orElse(Option(0L)), sqlIssues, sqlCase.sqlCpuTimePercent, sqlCoreSec)
     }.toSeq
   }
 

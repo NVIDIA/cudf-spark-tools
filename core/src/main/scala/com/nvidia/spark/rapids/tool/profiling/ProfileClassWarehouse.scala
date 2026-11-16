@@ -16,6 +16,8 @@
 
 package com.nvidia.spark.rapids.tool.profiling
 
+import java.util.Locale
+
 import scala.collection.Map
 
 import com.nvidia.spark.rapids.tool.analysis.{MetricCatalog, StatisticsMetrics}
@@ -1466,9 +1468,9 @@ case class SQLDurationExecutorTimeProfileResult(
     case Some(dur) => dur.toString
     case None => ""
   }
-  // the times of the SQL and of the executors are in ms, so 3 decimals keep the value exact
+  // the times of the SQL and of the executors are in ms, so 3 decimals keep the value exact.
   private def coreSecStr: String = coreSeconds match {
-    case Some(coreSec) => f"$coreSec%1.3f"
+    case Some(coreSec) => "%.3f".formatLocal(Locale.ROOT, coreSec)
     case None => ""
   }
   private def appDurStr: String = appDuration match {

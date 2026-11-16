@@ -510,8 +510,9 @@ reportDefinitions:
           - name: SQL Core Seconds
             dataType: Double
             description: >-
-              The core seconds that the executors held while the SQL ran. The app's
-              totalCoreSeconds is the same metric summed over the whole app.
+              The core seconds that the executors held while the SQL ran. SQLs that ran
+              concurrently each count the shared executor time, so summing this over SQLs
+              can exceed totalCoreSeconds.
       # SQLTaskAggMetricsProfileResult
       - label: coreRawSqlLevelAggregatedTaskMetricsCSV
         description: >-

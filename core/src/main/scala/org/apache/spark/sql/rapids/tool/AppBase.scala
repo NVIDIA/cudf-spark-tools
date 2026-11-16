@@ -629,6 +629,14 @@ abstract class AppBase(
   }
 
   /**
+   * The time (ms) that the executor was removed, or the app end time if it was not removed.
+   * None if neither is known.
+   */
+  private def executorEndTime(eInfo: ExecutorInfoClass): Option[Long] = {
+    if (eInfo.removeTime == 0L) getAppEndTime else Some(eInfo.removeTime)
+  }
+
+  /**
    * Calculates total core seconds which is the sum over executor core seconds. Executor
    * core seconds is computed as executor duration (s) multiplied by num of cores.
    */
@@ -636,16 +644,10 @@ abstract class AppBase(
     var totalCoreSec: Double = 0
     executorIdToInfo.foreach { case(_, eInfo) =>
       val eStartTime = eInfo.addTime
-      var eEndTime = eInfo.removeTime
-      if (eEndTime == 0L) {
-        getAppEndTime match {
-          case Some(appEndTime) =>
-            eEndTime = appEndTime
-          case None =>
-            logInfo("Unable to find either executor or app end time: " +
-              "setting executor duration to 0")
-            eEndTime = eStartTime
-        }
+      val eEndTime = executorEndTime(eInfo).getOrElse {
+        logInfo("Unable to find either executor or app end time: " +
+          "setting executor duration to 0")
+        eStartTime
       }
       totalCoreSec += (eEndTime - eStartTime).toDouble / 1000 * eInfo.totalCores
     }
@@ -661,11 +663,7 @@ abstract class AppBase(
    */
   def calculateCoreSecBetween(startTime: Long, endTime: Long): Double = {
     val coreMs = executorIdToInfo.values.map { eInfo =>
-      val eEndTime = if (eInfo.removeTime == 0L) {
-        getAppEndTime.getOrElse(eInfo.addTime)
-      } else {
-        eInfo.removeTime
-      }
+      val eEndTime = executorEndTime(eInfo).getOrElse(eInfo.addTime)
       val heldTime = math.min(eEndTime, endTime) - math.max(eInfo.addTime, startTime)
       math.max(heldTime, 0L) * eInfo.totalCores
     }.sum

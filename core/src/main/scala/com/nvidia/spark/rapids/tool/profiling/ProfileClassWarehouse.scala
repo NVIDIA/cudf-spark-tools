@@ -16,6 +16,8 @@
 
 package com.nvidia.spark.rapids.tool.profiling
 
+import java.util.Locale
+
 import scala.collection.Map
 
 import com.nvidia.spark.rapids.tool.analysis.{MetricCatalog, StatisticsMetrics}
@@ -1457,12 +1459,18 @@ case class SQLDurationExecutorTimeProfileResult(
     containsDataset: Boolean,
     appDuration: Option[Long],
     potentialProbs: String,
-    executorCpuRatio: Double) extends ProfileResult {
+    executorCpuRatio: Double,
+    coreSeconds: Option[Double]) extends ProfileResult {
   override def outputHeaders: Array[String] = {
     OutHeaderRegistry.outputHeaders("SQLDurationExecutorTimeProfileResult")
   }
   private def durStr: String = duration match {
     case Some(dur) => dur.toString
+    case None => ""
+  }
+  // the times of the SQL and of the executors are in ms, so 3 decimals keep the value exact.
+  private def coreSecStr: String = coreSeconds match {
+    case Some(coreSec) => "%.3f".formatLocal(Locale.ROOT, coreSec)
     case None => ""
   }
   private def appDurStr: String = appDuration match {
@@ -1488,7 +1496,8 @@ case class SQLDurationExecutorTimeProfileResult(
       containsDataset.toString,
       appDurStr,
       potentialStr,
-      execCpuTimePercent)
+      execCpuTimePercent,
+      coreSecStr)
   }
 
   override def convertToCSVSeq(): Array[String] = {
@@ -1499,7 +1508,8 @@ case class SQLDurationExecutorTimeProfileResult(
       containsDataset.toString,
       appDurStr,
       StringUtils.reformatCSVString(potentialStr),
-      execCpuTimePercent)
+      execCpuTimePercent,
+      coreSecStr)
   }
 }
 

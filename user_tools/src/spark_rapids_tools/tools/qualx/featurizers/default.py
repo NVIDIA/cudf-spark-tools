@@ -19,7 +19,6 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 
-from spark_rapids_tools.tools.qualx.config import get_label
 from spark_rapids_tools.tools.qualx.util import log_fallback, get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +29,8 @@ logger = get_logger(__name__)
 # N/A indicates that the feature is derived from other features or other sources
 expected_raw_features = {
     'appDuration',  # sql_duration_and_executor_cpu_time_percent (App Duration)
+    'appTaskTime',  # job_+_stage_level_aggregated_task_metrics (sum of duration_sum)
+    'appWallTime',  # sql_duration_and_executor_cpu_time_percent (App Duration)
     'appId',  # application_information
     'appName',  # application_information
     'cache_hit_ratio',  # sql_plan_metrics_for_application (cache hits size, cache misses size)
@@ -224,11 +225,10 @@ def extract_raw_features(
                      fallback_reason=f'Empty feature tables found after preprocessing: {empty_tables_str}')
         return pd.DataFrame(columns=list(expected_raw_features))
 
-    if get_label() == 'duration_sum':
-        # override appDuration with sum(duration_sum) across all stages per appId
-        app_duration_sum = job_stage_agg_tbl.groupby('appId')['duration_sum'].sum().reset_index()
-        app_duration_sum = app_duration_sum.rename(columns={'duration_sum': 'appDuration'})
-        app_tbl = app_tbl.merge(app_duration_sum, on=['appId'], how='left', suffixes=['_orig', None])
+    # keep the app's wall time and its sum(duration_sum) across all stages, for the cost function
+    app_task_time = job_stage_agg_tbl.groupby('appId')['duration_sum'].sum().rename('appTaskTime').reset_index()
+    app_tbl = app_tbl.merge(app_task_time, on='appId', how='left')
+    app_tbl['appWallTime'] = app_tbl['appDuration']
 
     # ensure task features are valid floats
     app_task_features = ['taskCpu', 'taskGpu']
@@ -332,6 +332,8 @@ def extract_raw_features(
     app_cols = [
         'appId',
         'appDuration',
+        'appTaskTime',
+        'appWallTime',
         'sqlID',
         'Duration',
         'description',

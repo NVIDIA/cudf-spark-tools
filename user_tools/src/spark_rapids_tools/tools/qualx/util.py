@@ -32,7 +32,7 @@ from tabulate import tabulate
 
 from spark_rapids_tools.api_v1 import QualWrapper, QualCore
 from spark_rapids_tools.cmdli.dev_cli import DevCLI
-from spark_rapids_tools.tools.qualx.config import get_config, get_label
+from spark_rapids_tools.tools.qualx.config import get_config, get_cost_function, get_label
 from spark_rapids_tools.utils.util import temp_file_with_contents
 
 
@@ -436,6 +436,7 @@ def print_speedup_summary(dataset_summary: pd.DataFrame) -> None:
     overall_speedup = (
             dataset_summary['appDuration'].sum()
             / dataset_summary['appDuration_pred'].sum()
+            * get_cost_function().price_ratio
     )
     total_applications = dataset_summary.shape[0]
     summary = {

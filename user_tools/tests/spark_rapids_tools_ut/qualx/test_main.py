@@ -23,6 +23,7 @@ from spark_rapids_tools.tools.qualx.qualx_main import (
     _compute_summary,
     _add_entries_for_missing_apps,
 )
+from spark_rapids_tools.tools.qualx.rollup import CostFunction
 from ..conftest import SparkRapidsToolsUT
 
 
@@ -73,8 +74,11 @@ class TestMain(SparkRapidsToolsUT):
             'appName': ['app1', 'app1', 'app2'],
             'appId': ['id1', 'id1', 'id2'],
             'appDuration': [100, 100, 200],
+            'appWallTime': [100, 100, 200],
             'Duration': [100, 100, 200],
             'Duration_pred': [50, 50, 100],
+            'fraction_supported': [1.0, 1.0, 1.0],
+            'y_pred': [2.0, 2.0, 2.0],
             'Duration_supported': [100, 100, 200],
             'sqlDuration': [50, 50, 100],
             'sqlDuration_pred': [25, 25, 50],
@@ -92,6 +96,47 @@ class TestMain(SparkRapidsToolsUT):
             'appName', 'appId', 'appDuration', 'fraction_supported',
             'appDuration_pred', 'speedup'
         ])
+        # app1's SQLs overlap, so its duration is raised to their sum
+        assert summary['appDuration'].tolist() == [200, 200]
+        assert summary['appDuration_pred'].tolist() == [100, 100]
+        assert summary['speedup'].tolist() == [2.0, 2.0]
+
+    def test_compute_summary_of_task_time(self, monkeypatch):
+        """Test _compute_summary with a cost of task time, and with prices"""
+        cost_fn = CostFunction.load('duration_sum.py', price_ratio=0.5)
+        monkeypatch.setattr('spark_rapids_tools.tools.qualx.qualx_main.get_cost_function', lambda: cost_fn)
+        # one app of two SQLs that hold 3,000 of its 4,000 ms of task time in 60 of its 100 s, and are a quarter and
+        # a half supported
+        results = pd.DataFrame({
+            'appName': 'app1',
+            'appId': 'id1',
+            'appDuration': 100_000,
+            'appWallTime': 100_000,
+            'appTaskTime': 4000,
+            'scaleFactor': 1.0,
+            'description': 'desc1',
+            'Duration': [20_000, 40_000],
+            'duration_sum': [1000, 2000],
+            'fraction_supported': [0.25, 0.5],
+            'y_pred': [2.0, 2.0],
+        })
+        assert cost_fn.label == 'duration_sum'
+        results['duration_sum_supported'] = results['duration_sum'] * results['fraction_supported']
+        results['duration_sum_pred'] = results['duration_sum'] - results['duration_sum_supported'] / 2
+
+        summary = _compute_summary(results).iloc[0]
+
+        # the supported share of the app's task time: the SQLs count for 3/4 of the app, and not for 60% of it
+        assert summary['fraction_supported'] == pytest.approx((250 + 1000) / 4000)
+        # the app's durations are its costs, as whole numbers
+        assert summary['cost'] == 4000
+        assert summary['appDuration'] == 4000
+        assert summary['gpuCost'] == pytest.approx(4000 - (250 + 1000) / 2)
+        assert summary['appDuration_pred'] == int(summary['gpuCost'])
+        # the speedup is at the prices, and the costs aren't
+        assert summary['speedup'] == pytest.approx(0.5 * 4000 / summary['gpuCost'])
+        assert summary['duration_sum'] == 3000
+        assert summary['duration_sum_supported'] == 1250
 
     def test_add_entries_for_missing_apps(self):
         """Test _add_entries_for_missing_apps"""

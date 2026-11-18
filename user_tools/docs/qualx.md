@@ -403,3 +403,71 @@ In order to use a custom plugin, just reference it in the associated dataset JSO
     }
 }
 ```
+
+### Cost Functions
+
+QualX predicts a speedup for each SQL and rolls them up into a speedup for each app. A cost function describes what a SQL
+and an app cost. The model learns the ratio of each SQL's cost in the CPU run over the GPU run, and each app's speedup is
+its CPU cost over its predicted GPU cost, summed over its SQLs and its time outside them.
+
+Two are built in:
+- `duration.py` (the default): wall time, with the label `Duration`.
+- `duration_sum.py`: task time, with the label `duration_sum`.
+
+Set one in the `qualx-conf.yaml` with its label:
+```yaml
+label: Duration  # shorthand for cost_function: duration.py
+```
+
+Or, for a cost function with args or a file of your own, set `cost_function` instead, with optional prices:
+```yaml
+cost_function:
+  path: my_cost_function.py
+  args:
+    non_sql_speedup: 1.0
+cpu_cost: 14.60  # optional: the price of one unit of cost in a CPU run
+gpu_cost: 15.96  # optional: the price of one unit of cost in a GPU run
+```
+
+- Setting both `label` and `cost_function` is an error. `QUALX_LABEL` overrides either one with its label's built-in.
+- The prices multiply the app's final predicted and actual speedup by `cpu_cost / gpu_cost`. Training doesn't read them.
+
+A cost function is a Python file that defines the functions below. `sql_cost` and `app_cost` give what a CPU or a GPU
+run cost. The optional `gpu_sql_cost` and `gpu_app_cost` predict what a CPU app would cost on GPU, and are overridden
+when their defaults don't fit the cost.
+```python
+import pandas as pd
+
+LABEL = 'Duration'                           # what the model predicts the ratio of
+INPUT_COLUMNS = ['Duration', 'appWallTime']  # the columns that the functions below read
+
+
+def sql_cost(sqls: pd.DataFrame) -> pd.Series:
+    """What each SQL cost in its run. sqls has one row per SQL of each app, from a CPU or a GPU run."""
+    return sqls['Duration']
+
+
+def app_cost(sqls: pd.DataFrame) -> pd.Series:
+    """What the app of each SQL cost in its run. The sum of SQL costs and non-SQL cost."""
+    return sqls['appWallTime']
+
+
+def gpu_sql_cost(sqls: pd.DataFrame, speedup: pd.Series) -> pd.Series:
+    """Optional. What each SQL of a CPU app is predicted to cost in the GPU app. sqls has each SQL's cost as cost,
+    and speedup is the model's predicted ratio for it, adjusted for its unsupported operators. By default, this is
+    the cost / speedup. Override it to add custom post-processing when the model's predicted ratio isn't the ratio
+    of this cost basis.
+    """
+    return sqls['cost'] / speedup  # the default
+
+
+def gpu_app_cost(sqls: pd.DataFrame, non_sql_speedup: float = 1.0) -> pd.Series:
+    """Optional. What the app of each SQL of a CPU app is predicted to cost in the GPU app, like app_cost. sqls has
+    each SQL's cost, its app's cost, its predicted GPU cost and its app, as cost, appCost, gpuCost and app. By
+    default, the sum of its SQLs' gpuCost, plus its observed CPU non-SQL cost. Override it when the non-SQL time
+    costs differently on GPU than on CPU, e.g., due to differences in dynamic allocation.
+    """
+    app = sqls.groupby('app')
+    non_sql_cost = (sqls['appCost'] - app['cost'].transform('sum')).clip(lower=0)  # SQLs can overlap
+    return app['gpuCost'].transform('sum') + non_sql_cost / non_sql_speedup
+```

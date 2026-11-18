@@ -419,12 +419,12 @@ Set one in the `qualx-conf.yaml` with its label:
 label: Duration  # shorthand for cost_function: duration.py
 ```
 
-Or, for a cost function with args or a file of your own, set `cost_function` instead, with optional prices:
+Or, for a cost function with args or a file of your own, set `cost_function` instead, with optional prices and args:
 ```yaml
 cost_function:
   path: my_cost_function.py
   args:
-    non_sql_speedup: 1.0
+    non_sql_speedup: 1.0  # optional, if the function takes additional args
 cpu_cost: 14.60  # optional: the price of one unit of cost in a CPU run
 gpu_cost: 15.96  # optional: the price of one unit of cost in a GPU run
 ```

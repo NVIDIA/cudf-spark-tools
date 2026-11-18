@@ -3980,7 +3980,7 @@ trait AutoTunerStaticComments {
     s"""
        |Replaced the enforced 'spark.executor.instances' of $clusterSize (the size of the target
        |cluster) with the starting executor count of $startingCount, since dynamic allocation is
-       |enabled. The size of the target cluster caps 'spark.dynamicAllocation.maxExecutors'.
+       |enabled.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 

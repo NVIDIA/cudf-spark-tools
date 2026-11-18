@@ -2558,17 +2558,16 @@ abstract class AutoTuner(
     val shuffleStagesWithPosSpilling = appInfoProvider.getShuffleStagesWithPosSpilling
     if (shuffleStagesWithPosSpilling.nonEmpty) {
       val shuffleSkewStages = appInfoProvider.getShuffleSkewStages
-      if (shuffleSkewStages.exists(id => shuffleStagesWithPosSpilling.contains(id))) {
-        appendComment(
-          "Shuffle skew exists (when task's Shuffle Read Size > 3 * Avg Stage-level size) in\n" +
-            s"  stages with spilling. Increasing shuffle partitions is not recommended in this\n" +
-            s"  case since keys will still hash to the same task.")
-      } else {
+      val eligible = shuffleStagesWithPosSpilling -- shuffleSkewStages
+      if (eligible.nonEmpty) {
         inputShufflePartitions *=
           configProvider.getEntry("SHUFFLE_PARTITION_MULTIPLIER").getDefault.toInt
-        // Could be memory instead of partitions
-        recordShufflePartitionUpwardReason("spilling was detected in shuffle stages")
+        recordShufflePartitionUpwardReason("spilling was detected in non-skewed shuffle stages")
         appendComment(shufflePartitionsCommentForSpilling)
+      }
+      if ((shuffleStagesWithPosSpilling intersect shuffleSkewStages).nonEmpty) {
+        appendComment("Skewed spilling stages may retain large partitions after a partition " +
+          "increase; they do not veto an increase for other non-skewed spilling stages.")
       }
     }
     inputShufflePartitions

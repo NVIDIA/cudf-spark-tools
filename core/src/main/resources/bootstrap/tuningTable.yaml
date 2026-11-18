@@ -840,3 +840,12 @@ tuningDefinitions:
       name: boolean
     comments:
       persistent: controls whether the writing of Delta Lake tables is accelerated by the cuDF plugin. Default is 'true'.
+
+  - label: spark.rapids.memory.pageablePool.size
+    description: Pageable host pool contained within the executor overhead budget
+    enabled: true
+    level: cluster
+    category: tuning
+    confType:
+      name: byte
+      defaultUnit: Byte

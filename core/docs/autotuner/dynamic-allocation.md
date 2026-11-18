@@ -9,10 +9,11 @@ The dynamic allocation heuristic recommends the executor counts of a GPU applica
 | Category | Behavior |
 | --- | --- |
 | Recommends | `spark.dynamicAllocation.minExecutors`, `spark.dynamicAllocation.initialExecutors`, `spark.dynamicAllocation.maxExecutors`, and `spark.executor.instances`. |
-| Applies to | Cluster-level AutoTuner output when the effective `spark.dynamicAllocation.enabled` (enforced or source value) is `true`. When it is not `true`, the `minExecutors`, `initialExecutors`, and `maxExecutors` recommendations are removed and `spark.executor.instances` keeps the executor count of the recommended cluster. |
+| Applies to | Cluster-level AutoTuner output when the effective `spark.dynamicAllocation.enabled` (enforced or source value) is `true`. When it is not `true`, the `minExecutors`, `initialExecutors`, and `maxExecutors` recommendations are removed, including enforced ones, and `spark.executor.instances` keeps the executor count of the recommended cluster. |
 | Reads | The source executor counts, the source executor cores (`spark.executor.cores`, or the executor cores recorded in the event log when it is unset), the recommended target executor cores, the cluster sizing strategy, and target controls. |
-| Honors | Enforced, preserved, and excluded target values. An enforced or preserved value is never lowered. |
-| Does not recommend or change | `spark.executor.cores` or the executor count of the recommended cluster shape. |
+| Honors | Enforced, preserved, and excluded target values. An enforced or preserved value is never lowered, except an enforced `spark.executor.instances`, which is the size of the target cluster and is replaced by the starting count (see [Enforced `spark.executor.instances`](#enforced-sparkexecutorinstances)). |
+| Changes | The executor count and worker node count of the recommended cluster, which is capped to `maxExecutors` and raised to the starting count, unless `spark.executor.instances` is enforced. |
+| Does not recommend or change | `spark.executor.cores`. |
 
 ## Scaling the source counts
 
@@ -38,7 +39,7 @@ The scale factor comes from the cluster sizing strategy (`CLUSTER_SIZING_STRATEG
 Under dynamic allocation, a positive enforced `spark.executor.instances` describes the size of the target cluster rather than an executor count to start with. Keeping it would start the application at the full cluster size, since Spark starts with `max(minExecutors, initialExecutors, executor.instances)`. So the heuristic:
 
 - caps `maxExecutors` to the size of the target cluster, keeping a lower scaled source value (for example to share the cluster), or sets it when the source has no `maxExecutors`. If an enforced or preserved `minExecutors` or `initialExecutors` is above the size of the target cluster, the cap is that value instead, since Spark starts with the largest of them and rejects a starting count above `maxExecutors`. The comment then reports that final ceiling. An enforced, preserved, or excluded `maxExecutors` is not changed;
-- leaves it out of the starting count and replaces it with the starting count, with a comment in place of the enforced-property comment. It is not replaced when it already equals the starting count;
+- leaves it out of the starting count and replaces it with the starting count, with a comment in place of the enforced-property comment. It is not replaced when it already equals the starting count. When the source sets no `minExecutors` or `initialExecutors`, the starting count is 0, so it is replaced with 0 and the application starts with no executors and scales up;
 - keeps the recommended cluster at the enforced size, without capping it to `maxExecutors` or raising it to the starting count.
 
 Example: the source runs 8-core executors with `minExecutors=2` and `maxExecutors=40`, and the target enforces 16-core executors and `spark.executor.instances=8`.
@@ -58,9 +59,9 @@ Spark rejects `minExecutors > maxExecutors` and, on YARN and Kubernetes, a start
 2. `minExecutors` is capped to `maxExecutors`.
 3. `initialExecutors` and `executor.instances` (unless it is the enforced size of the target cluster) are kept within `[minExecutors, maxExecutors]`. A missing `minExecutors` counts as 0.
 
-An excluded `minExecutors`, `initialExecutors`, `executor.instances`, or `maxExecutors` is not emitted, so its source value still applies and is not protected. The heuristic does not change it, but reports a conflict with the tuned values (an excluded value above the tuned `maxExecutors`, or an excluded `maxExecutors` below a tuned value) with the same comment as an unenforceable invariant. The conflict is checked after the starting executor count is set, so it covers the final `initialExecutors` and `executor.instances`.
+An excluded `minExecutors`, `initialExecutors`, `executor.instances`, or `maxExecutors` is not emitted, so its source value still applies and is not protected. The heuristic does not change it, but reports a conflict with the tuned values (an excluded value above the tuned `maxExecutors`, or an excluded `maxExecutors` below the tuned starting count) with the same comment as an unenforceable invariant. The conflict is checked after the starting executor count is set, so it covers the final `initialExecutors` and `executor.instances`.
 
-Rule 3 does not lower an enforced or preserved value, and it does not raise one to `minExecutors`, since Spark starts with the largest of them rather than rejecting a lower value.
+Rule 3 does not lower an enforced or preserved value, and it does not raise one to `minExecutors`, since Spark starts with the largest of them rather than rejecting a lower value. A violation that only involves values that cannot be changed, for example an enforced `maxExecutors` below an enforced `minExecutors`, is reported in a comment instead.
 
 ## Starting executor count
 
@@ -87,6 +88,7 @@ Unless `executor.instances` is enforced, the recommended cluster is capped to `m
 - An enforced `spark.executor.instances` only caps `maxExecutors`. A scaled source `maxExecutors` below it is kept. Enforce `maxExecutors` as well to use the whole target cluster.
 - An enforced or preserved `minExecutors` or `initialExecutors` above the enforced `executor.instances` raises `maxExecutors` above the size of the target cluster, and the cluster summary still reports the enforced size.
 - The downward shuffle partition pass sizes its slot count from `min(recommended cluster executors, maxExecutors)`. It does not use the starting count.
+- When `spark.dynamicAllocation.enabled` is not `true`, enforced `minExecutors`, `initialExecutors`, and `maxExecutors` are removed from the output, although their enforced-property comments remain. Enforce `spark.dynamicAllocation.enabled=true` as well to keep them.
 
 ## Implementation map
 

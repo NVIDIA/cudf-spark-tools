@@ -2889,10 +2889,11 @@ abstract class AutoTuner(
    *    that excludes 'spark.executor.instances'.
    *  - With dynamic allocation: 'spark.executor.instances' is only the starting count, so the
    *    executor count of the recommended cluster is used. That is the CPU run's peak number of
-   *    concurrent executors converted by the cluster sizing strategy (or an enforced
-   *    'spark.executor.instances'), raised to the starting count and capped to maxExecutors by
-   *    syncDynamicAllocationToRecommendedCluster. The wave is sized from what the CPU run used,
-   *    not from maxExecutors, so a GPU run that scales further has more slots than counted; that
+   *    concurrent executors converted by the cluster sizing strategy, raised to the starting
+   *    count and capped to maxExecutors by syncDynamicAllocationToRecommendedCluster, or the size
+   *    of the target cluster from an enforced 'spark.executor.instances', which is kept as is.
+   *    The wave is sized from what the CPU run used, not from maxExecutors, so a GPU run that
+   *    scales further has more slots than counted; that
    *    errs toward keeping more partitions, the safe direction for a pass that only lowers them.
    *    The maxExecutors cap is repeated here as a guard in case the passes are reordered.
    *

@@ -161,6 +161,10 @@ expected_raw_features = {
     'taskGpu',  # executor_information
 }
 
+# data_source_information columns aggregated per (appId, sqlID) into data source features
+DS_KEY_COLS = ['appId', 'sqlID']
+DS_METRIC_COLS = ['scan_time', 'decode_time', 'data_size']
+
 
 def extract_raw_features(
     toc: pd.DataFrame,
@@ -435,20 +439,13 @@ def extract_raw_features(
 
     # add data source features
     ds_tbl = combine_tables('ds_tbl')
-    grouped_ds_tbl = ds_tbl.groupby(['appId', 'sqlID'], as_index=False).sum()
+    grouped_ds_tbl = ds_tbl.groupby(DS_KEY_COLS, as_index=False).sum()
     grouped_ds_tbl['scan_bw'] = (
         1.0 * grouped_ds_tbl['data_size'] / grouped_ds_tbl['scan_time']
     )
-    ds_cols = [
-        'appId',
-        'sqlID',
-        'scan_bw',
-        'scan_time',
-        'decode_time',
-        'data_size',
-    ]
+    ds_cols = DS_KEY_COLS + ['scan_bw'] + DS_METRIC_COLS
     full_tbl = full_tbl.merge(
-        grouped_ds_tbl[ds_cols], on=['appId', 'sqlID'], how='left'
+        grouped_ds_tbl[ds_cols], on=DS_KEY_COLS, how='left'
     )
 
     # add shuffle bandwidth aggregate features
@@ -911,6 +908,13 @@ def load_csv_files(
     ds_tbl = scan_tbl('data_source_information')
     if not ds_tbl.empty:
         ds_tbl['appId'] = app_info['appId'].iloc[0]
+    else:
+        # Apps without scans have no data_source_information rows (the CSV is absent, zero-byte or header-only).
+        # Use a typed empty frame so the per-(appId, sqlID) aggregation in extract_raw_features still works when
+        # no app in the batch has scans; those SQLs then get zero-valued data source features.
+        ds_tbl = pd.DataFrame(columns=DS_KEY_COLS + DS_METRIC_COLS).astype(
+            {'appId': str, 'sqlID': int, **dict.fromkeys(DS_METRIC_COLS, int)}
+        )
 
     out = {
         'app_tbl': app_info_mg,

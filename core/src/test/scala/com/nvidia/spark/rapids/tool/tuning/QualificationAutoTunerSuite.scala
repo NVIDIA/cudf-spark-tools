@@ -202,6 +202,36 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
+  test("qualification sizes GPU executor memory without Photon off-heap") {
+    // The event log has the Databricks Photon default of 16191 MB spark.memory.offHeap.size.
+    val eventLog = s"$qualLogDir/nds_q88_photon_db_13_3.zstd"
+
+    TrampolineUtil.withTempDir { tempDir =>
+      val result = QualificationMain.mainInternal(new QualificationArgs(Array(
+        "--platform",
+        PlatformNames.DATABRICKS_AWS,
+        "--output-directory",
+        tempDir.getAbsolutePath,
+        "--auto-tuner",
+        eventLog)))
+
+      assert(!result.isFailed)
+      val appId = result.appSummaries.headOption.map(_.appId)
+        .getOrElse(throw new TestFailedException("No appId found in the result", 0))
+      val tuningResultPath = Paths.get(
+        QualReportGenConfProvider.getTuningReportPath(tempDir.getAbsolutePath),
+        s"$appId.log").toString
+      val tuningResults = FSUtils.readFileContentAsUTF8(tuningResultPath)
+
+      assertExpectedLinesExist(Seq(
+        "--conf spark.executor.memory=64g",
+        "--conf spark.rapids.memory.pinnedPool.size=6553m",
+        s"- ${photonOffHeapExcludedComment(16191)}"
+      ), tuningResults)
+      assert(!tuningResults.contains("--conf spark.memory.offHeap"))
+    }
+  }
+
   test("test AutoTuner for Qualification sets batch size to 1GB") {
     val autoTuner = buildDefaultAutoTuner()
     val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =

@@ -36,7 +36,7 @@ import org.yaml.snakeyaml.constructor.ConstructorException
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.rapids.tool.ToolUtils
-import org.apache.spark.sql.rapids.tool.util.{StringUtils, ValidatableProperties}
+import org.apache.spark.sql.rapids.tool.util.{SparkRuntime, StringUtils, ValidatableProperties}
 
 /**
  * A wrapper class that stores all the GPU properties.
@@ -3165,6 +3165,8 @@ abstract class AutoTuner(
    * Calculate recommended off-heap memory size based on hybrid scan detection.
    * If hybrid scan is enabled and platform is onPrem, set off-heap size to OFFHEAP_PER_CORE *
    * executor cores.
+   * If the source application ran on Photon, use 0 because its off-heap memory belongs to the
+   * Photon engine.
    * Otherwise, use the existing logic from platform.getSparkOffHeapMemoryMB.
    *
    * @param numExecutorCores Number of executor cores
@@ -3177,6 +3179,13 @@ abstract class AutoTuner(
       // Hybrid scan will require more off-heap memory than the default value.
       configProvider.getEntry("OFFHEAP_PER_CORE")
         .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores
+    } else if (appInfoProvider.getSourceSparkRuntime.contains(SparkRuntime.PHOTON)) {
+      // Databricks enables off-heap memory by default for Photon. The GPU cluster does not run
+      // Photon, so that memory must not take space from the GPU executor.
+      platform.getSparkOffHeapMemoryMB(getPropertyValue).filter(_ > 0).foreach { sizeMB =>
+        appendComment(photonOffHeapExcludedComment(sizeMB))
+      }
+      0L
     } else {
       // Use existing logic for CSP platforms or non-hybrid scan
       platform.getSparkOffHeapMemoryMB(getPropertyValue).getOrElse(0L)
@@ -3642,6 +3651,16 @@ trait AutoTunerStaticComments {
        |We recommend either using nodes with more memory or reducing 'spark.memory.offHeap.size',
        |as off-heap memory is unused by the cuDF plugin, unless explicitly required by
        |the application. Need at least $minSizeInMB MB memory per executor.
+       |""".stripMargin.trim.replaceAll("\n", "\n  ")
+  }
+
+  def photonOffHeapExcludedComment(sizeInMB: Long): String = {
+    s"""
+       |'spark.memory.offHeap.size' ($sizeInMB MB) was not counted toward executor memory
+       |because the application ran on Photon, which Databricks gives off-heap memory by default,
+       |and the GPU cluster does not run Photon. To keep this off-heap memory, add
+       |'spark.memory.offHeap.enabled' and 'spark.memory.offHeap.size' to
+       |'sparkProperties.preserve' in the target cluster.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 

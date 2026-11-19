@@ -27,6 +27,7 @@ import com.nvidia.spark.rapids.tool.tuning.QualAppSummaryInfoProvider
 
 import org.apache.spark.sql.rapids.tool.ToolUtils
 import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
+import org.apache.spark.sql.rapids.tool.util.SparkRuntime
 
 /**
  * A base class definition that provides an empty implementation of an
@@ -69,6 +70,7 @@ class AppSummaryInfoBaseProvider extends AppInfoPropertyGetter
   def getPySparkMemoryEvidence: Seq[PySparkMemoryEvidence] = Seq.empty
   def getGpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = Seq.empty
   def hasSqlCacheEvidence: Boolean = false
+  def getSourceSparkRuntime: Option[SparkRuntime.SparkRuntime] = None
 }
 
 

@@ -258,6 +258,9 @@ abstract class AutoTuner(
   // Recommendations for these properties will not be computed, ensuring that dependent properties
   // are also affected correctly.
   private val skippedRecommendations: mutable.HashSet[String] = mutable.HashSet[String]()
+  // Source properties left out of the combined configuration because the recommended memory
+  // layout does not account for them.
+  private val droppedSourceProperties: mutable.HashSet[String] = mutable.HashSet[String]()
   // Properties that have already contributed a "was not set" comment, so a later pass recommending
   // the same key does not repeat it.
   private val keysWithMissingComment: mutable.HashSet[String] = mutable.HashSet[String]()
@@ -1509,7 +1512,7 @@ abstract class AutoTuner(
     } else {
       (executorMemRequired / executorAvailableMemFraction).toLong
     }
-    notEnoughMemComment(minTotalExecMemRequired)
+    notEnoughMemComment(minTotalExecMemRequired, includeOffHeapAdvice = sparkOffHeapMemMB > 0)
   }
 
   private lazy val reserveSpillMemory: Boolean = {
@@ -3066,7 +3069,7 @@ abstract class AutoTuner(
   // - make sure that we exclude the skipped list
   private def processPropKeys(
       srcMap: collection.Map[String, String]): collection.Map[String, String] = {
-    srcMap -- skippedRecommendations
+    srcMap -- skippedRecommendations -- droppedSourceProperties
   }
 
   // Combines the original Spark properties with the recommended ones.
@@ -3165,25 +3168,31 @@ abstract class AutoTuner(
    * Calculate recommended off-heap memory size based on hybrid scan detection.
    * If hybrid scan is enabled and platform is onPrem, set off-heap size to OFFHEAP_PER_CORE *
    * executor cores.
-   * If the source application ran on Photon, use 0 because its off-heap memory belongs to the
-   * Photon engine.
+   * If the source application ran on Photon and neither off-heap property is preserved or
+   * enforced, use 0 because its off-heap memory belongs to the Photon engine.
    * Otherwise, use the existing logic from platform.getSparkOffHeapMemoryMB.
    *
    * @param numExecutorCores Number of executor cores
    * @return Recommended off-heap memory size in MB
    */
   private def calculateOffHeapMemorySize(numExecutorCores: Int): Long = {
+    val offHeapKeys = Seq("spark.memory.offHeap.enabled", "spark.memory.offHeap.size")
     if (!platform.isPlatformCSP && isHybridScanEnabled()) {
       // For onPrem platform with hybrid scan, set off-heap size to
       // OFFHEAP_PER_CORE * executor cores
       // Hybrid scan will require more off-heap memory than the default value.
       configProvider.getEntry("OFFHEAP_PER_CORE")
         .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores
-    } else if (appInfoProvider.getSourceSparkRuntime.contains(SparkRuntime.PHOTON)) {
+    } else if (appInfoProvider.getSourceSparkRuntime.contains(SparkRuntime.PHOTON) &&
+        !offHeapKeys.exists(platform.isPropertyUserOverridden)) {
       // Databricks enables off-heap memory by default for Photon. The GPU cluster does not run
-      // Photon, so that memory must not take space from the GPU executor.
+      // Photon, so that memory must not take space from the GPU executor. Both keys are dropped
+      // together because Spark rejects off-heap enabled without a size.
       platform.getSparkOffHeapMemoryMB(getPropertyValue).filter(_ > 0).foreach { sizeMB =>
-        appendComment(photonOffHeapExcludedComment(sizeMB))
+        droppedSourceProperties ++= offHeapKeys
+        if (!offHeapKeys.exists(platform.isPropertyExcluded)) {
+          appendComment(photonOffHeapExcludedComment(sizeMB))
+        }
       }
       0L
     } else {
@@ -3644,21 +3653,26 @@ trait AutoTunerStaticComments {
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
-  def notEnoughMemComment(minSizeInMB: Long): String = {
+  def notEnoughMemComment(minSizeInMB: Long, includeOffHeapAdvice: Boolean = true): String = {
+    val advice = if (includeOffHeapAdvice) {
+      """We recommend either using nodes with more memory or reducing 'spark.memory.offHeap.size',
+        |as off-heap memory is unused by the cuDF plugin, unless explicitly required by
+        |the application.""".stripMargin
+    } else {
+      "We recommend using nodes with more memory."
+    }
     s"""
        |This node/worker configuration is not ideal for using the cuDF plugin
        |because it doesn't have enough memory for the executors.
-       |We recommend either using nodes with more memory or reducing 'spark.memory.offHeap.size',
-       |as off-heap memory is unused by the cuDF plugin, unless explicitly required by
-       |the application. Need at least $minSizeInMB MB memory per executor.
+       |$advice Need at least $minSizeInMB MB memory per executor.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
   def photonOffHeapExcludedComment(sizeInMB: Long): String = {
     s"""
        |'spark.memory.offHeap.size' ($sizeInMB MB) was not counted toward executor memory
-       |because the application ran on Photon, which Databricks gives off-heap memory by default,
-       |and the GPU cluster does not run Photon. To keep this off-heap memory, add
+       |because the application ran on Photon, which uses off-heap memory (Databricks enables it
+       |by default), and the GPU cluster does not run Photon. To keep this off-heap memory, add
        |'spark.memory.offHeap.enabled' and 'spark.memory.offHeap.size' to
        |'sparkProperties.preserve' in the target cluster.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")

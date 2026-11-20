@@ -29,13 +29,13 @@ import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
 import org.scalatest.exceptions.TestFailedException
 import org.scalatest.matchers.should.Matchers._
+import org.scalatest.prop.{TableFor3, TableFor5}
 import org.scalatest.prop.TableDrivenPropertyChecks._
-import org.scalatest.prop.TableFor3
 
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{MatchingInstanceTypeNotFoundException, RecommendedClusterInfo}
 import org.apache.spark.sql.rapids.tool.qualification.QualificationAppInfo
-import org.apache.spark.sql.rapids.tool.util.{FSUtils, RapidsToolsConfUtil}
+import org.apache.spark.sql.rapids.tool.util.{FSUtils, RapidsToolsConfUtil, SparkRuntime}
 
 /**
  * Suite to test the Qualification Tool's AutoTuner
@@ -218,17 +218,63 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       assert(!result.isFailed)
       val appId = result.appSummaries.headOption.map(_.appId)
         .getOrElse(throw new TestFailedException("No appId found in the result", 0))
-      val tuningResultPath = Paths.get(
-        QualReportGenConfProvider.getTuningReportPath(tempDir.getAbsolutePath),
-        s"$appId.log").toString
-      val tuningResults = FSUtils.readFileContentAsUTF8(tuningResultPath)
+      val tuningReportPath = QualReportGenConfProvider.getTuningReportPath(tempDir.getAbsolutePath)
+      val tuningResults =
+        FSUtils.readFileContentAsUTF8(Paths.get(tuningReportPath, s"$appId.log").toString)
+      val combinedConf =
+        FSUtils.readFileContentAsUTF8(Paths.get(tuningReportPath, s"$appId.conf").toString)
 
       assertExpectedLinesExist(Seq(
         "--conf spark.executor.memory=64g",
         "--conf spark.rapids.memory.pinnedPool.size=6553m",
         s"- ${photonOffHeapExcludedComment(16191)}"
       ), tuningResults)
-      assert(!tuningResults.contains("--conf spark.memory.offHeap"))
+      assertExpectedLinesExist(Seq(
+        "--conf spark.executor.memory=64g",
+        "--conf spark.rapids.memory.pinnedPool.size=6553m"
+      ), combinedConf)
+      assert(!combinedConf.contains("spark.memory.offHeap"))
+    }
+  }
+
+  // scalastyle:off line.size.limit
+  val photonOffHeapTestData: TableFor5[String, Option[SparkRuntime.SparkRuntime], TargetClusterProps, Boolean, Boolean] = Table(
+    ("testName", "sourceRuntime", "targetCluster", "offHeapExcluded", "expectComment"),
+    ("Photon", Some(SparkRuntime.PHOTON), ToolTestUtils.buildTargetClusterInfo(), true, true),
+    ("non-Photon", None, ToolTestUtils.buildTargetClusterInfo(), false, false),
+    ("Photon with off-heap enforced", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true")), false, false),
+    ("Photon with off-heap excluded", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size")), true, false)
+  )
+  // scalastyle:on line.size.limit
+
+  forAll(photonOffHeapTestData) {
+      (testName, sourceRuntime, targetCluster, offHeapExcluded, expectComment) =>
+    test(s"Databricks off-heap sizing for case: $testName") {
+      // Databricks defaults for a Photon application on Standard_E8_v3.
+      val logEventsProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.memory" -> "11754m",
+        "spark.memory.offHeap.enabled" -> "true",
+        "spark.memory.offHeap.size" -> "36974886912")
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
+        logEventsProps, Some(testSparkVersion))
+      infoProvider.sourceSparkRuntime = sourceRuntime
+      val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
+        Some(targetCluster))
+      configureEventLogClusterInfoForTest(platform, numCores = 8,
+        sparkProperties = logEventsProps.toMap)
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform)
+      val (properties, comments) = autoTuner.getRecommendedProperties()
+      val output = Profiler.getAutoTunerResultsAsString(properties, comments)
+      val combinedKeys = autoTuner.combineSparkProperties(properties).map(_.property)
+
+      assert(output.contains("--conf spark.executor.memory=16g") == offHeapExcluded)
+      assert(output.contains(photonOffHeapExcludedComment(35262)) == expectComment)
+      assert(combinedKeys.contains("spark.memory.offHeap.size") == !offHeapExcluded)
     }
   }
 
@@ -285,7 +331,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         s"- ${notEnoughMemCommentForKey("spark.executor.memory")}",
         s"- ${notEnoughMemCommentForKey("spark.executor.memoryOverhead")}",
         s"- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}",
-        s"- ${notEnoughMemComment(22118)}"
+        s"- ${notEnoughMemComment(22118, includeOffHeapAdvice = false)}"
       )),
     ("sufficient memory available for executors",
       "44g",
@@ -1892,7 +1938,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
         |- ${classPathComments("rapids.jars.missing")}
         |- ${classPathComments("rapids.shuffle.jars")}
-        |- ${notEnoughMemComment(22118)}
+        |- ${notEnoughMemComment(22118, includeOffHeapAdvice = false)}
         |- $additionalSparkPluginsComment
         |""".stripMargin
     // scalastyle:on line.size.limit

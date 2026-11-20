@@ -440,7 +440,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(89600)}
+          |- ${notEnoughMemComment(89600, includeOffHeapAdvice = false)}
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
@@ -533,7 +533,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(121855)}
+          |- ${notEnoughMemComment(121855, includeOffHeapAdvice = false)}
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
@@ -978,7 +978,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(24371)}
+          |- ${notEnoughMemComment(24371, includeOffHeapAdvice = false)}
           |- $missingGpuDiscoveryScriptComment
           |""".stripMargin
     // scalastyle:on line.size.limit

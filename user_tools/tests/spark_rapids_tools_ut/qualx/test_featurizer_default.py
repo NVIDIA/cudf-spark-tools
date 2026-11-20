@@ -47,7 +47,8 @@ def _rows(**cols) -> pd.DataFrame:
 def _write_app(root: str, app_id: str, ds_mode: str) -> list:
     """Write minimal profiler CSVs for one app (one job, stage and plan node per SQL); return its toc rows.
 
-    ds_mode controls data_source_information.csv: 'absent', 'zero_byte', 'header_only', 'scans' or 'malformed'.
+    ds_mode controls data_source_information.csv: 'absent', 'zero_byte', 'header_only', 'scans', 'malformed'
+    (missing scan_time) or 'unparseable' (a row with extra fields).
     """
     metrics = {col: 10 for col in TASK_METRICS}
     tables = {
@@ -85,19 +86,28 @@ def _write_app(root: str, app_id: str, ds_mode: str) -> list:
     paths = {name: os.path.join(app_dir, f'{name}.csv') for name in tables}
     for name, tbl in tables.items():
         tbl.to_csv(paths[name], index=False)
-    if ds_mode == 'zero_byte':
+    raw_ds = {'zero_byte': '',
+              'unparseable': 'sqlID,scan_time,data_size,decode_time\n0,10,100,5\n1,10,100,5,EXTRA,FIELD\n'}
+    if ds_mode in raw_ds:
         paths['data_source_information'] = os.path.join(app_dir, 'data_source_information.csv')
-        open(paths['data_source_information'], 'w', encoding='utf-8').close()  # pylint: disable=consider-using-with
+        with open(paths['data_source_information'], 'w', encoding='utf-8') as f:
+            f.write(raw_ds[ds_mode])
     return [{'filepath': p, 'ds_name': 'test', 'appId': app_id, 'table_name': n} for n, p in paths.items()]
 
 
-def _extract(tmp_path, apps: dict) -> pd.DataFrame:
+def _extract(tmp_path, apps: dict, qualtool_filter: str = None) -> pd.DataFrame:
     toc = pd.DataFrame([row for app_id, mode in apps.items() for row in _write_app(str(tmp_path), app_id, mode)])
-    return extract_raw_features(toc, node_level_supp=None, qualtool_filter=None)
+    node_level_supp = None
+    if qualtool_filter == 'stage':
+        # the qualification path: every plan node (nodeID 1) is supported
+        node_level_supp = pd.DataFrame([{'App ID': app_id, 'SQL ID': sql_id, 'SQL Node Id': 1,
+                                         'Exec Is Supported': True} for app_id in apps for sql_id in SQL_IDS])
+    return extract_raw_features(toc, node_level_supp=node_level_supp, qualtool_filter=qualtool_filter)
 
 
 def _ds_features(features: pd.DataFrame) -> dict:
-    """Data source features keyed by (appId, sqlID), after checking they are finite numbers."""
+    """Data source features keyed by (appId, sqlID), after checking they are unique per key and finite numbers."""
+    assert not features.duplicated(DS_KEY_COLS).any()
     for col in DS_FEATURES:
         assert pd.api.types.is_numeric_dtype(features[col]), col
         assert np.isfinite(features[col].to_numpy(dtype=float)).all(), col
@@ -121,10 +131,11 @@ class TestDefaultFeaturizer(SparkRapidsToolsUT):
         required = (set(DS_KEY_COLS) - {'appId'}) | set(DS_METRIC_COLS)
         assert required <= report_columns, f'missing from core report: {required - report_columns}'
 
-    def test_apps_without_data_source_rows(self, tmp_path):
+    @pytest.mark.parametrize('qualtool_filter', [None, 'stage'])
+    def test_apps_without_data_source_rows(self, tmp_path, qualtool_filter):
         # no app in the batch has scans: previously failed with KeyError: 'appId'
         apps = {'app-1': 'absent', 'app-2': 'zero_byte', 'app-3': 'header_only'}
-        features = _ds_features(_extract(tmp_path, apps))
+        features = _ds_features(_extract(tmp_path, apps, qualtool_filter))
         assert features == {(app_id, sql_id): NO_SCAN for app_id in apps for sql_id in SQL_IDS}
 
     @pytest.mark.parametrize('scan_first', [True, False])
@@ -138,7 +149,9 @@ class TestDefaultFeaturizer(SparkRapidsToolsUT):
             ('app-noscan', 0): NO_SCAN, ('app-noscan', 1): NO_SCAN,
         }
 
-    def test_malformed_data_source_rows_still_fail(self, tmp_path):
-        # non-empty data source rows without the expected metric columns are not silently zero-filled
-        with pytest.raises(KeyError, match='scan_time'):
-            _extract(tmp_path, {'app-scan': 'malformed'})
+    @pytest.mark.parametrize('bad_mode', ['malformed', 'unparseable'])
+    def test_bad_data_source_file_falls_back(self, tmp_path, caplog, bad_mode):
+        # a bad data_source_information.csv drops its app (prediction falls back to 1.0) instead of zero scan features
+        features = _ds_features(_extract(tmp_path, {'app-bad': bad_mode, 'app-noscan': 'absent'}))
+        assert features == {('app-noscan', sql_id): NO_SCAN for sql_id in SQL_IDS}
+        assert 'Predicted speedup will be 1.0 for app-bad' in caplog.text

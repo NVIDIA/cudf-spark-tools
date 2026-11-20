@@ -439,7 +439,7 @@ def extract_raw_features(
 
     # add data source features
     ds_tbl = combine_tables('ds_tbl')
-    grouped_ds_tbl = ds_tbl.groupby(DS_KEY_COLS, as_index=False).sum()
+    grouped_ds_tbl = ds_tbl.groupby(DS_KEY_COLS, as_index=False)[DS_METRIC_COLS].sum()
     grouped_ds_tbl['scan_bw'] = (
         1.0 * grouped_ds_tbl['data_size'] / grouped_ds_tbl['scan_time']
     )
@@ -518,6 +518,40 @@ def extract_raw_features(
 
 class ScanTblError(Exception):
     pass
+
+
+def empty_data_source_tbl() -> pd.DataFrame:
+    """Typed empty data_source_information table, so the per-(appId, sqlID) aggregation works without rows."""
+    return pd.DataFrame(columns=DS_KEY_COLS + DS_METRIC_COLS).astype(
+        {'appId': str, 'sqlID': int, **dict.fromkeys(DS_METRIC_COLS, int)}
+    )
+
+
+def load_data_source_tbl(sgl_app: pd.DataFrame, app_id: str) -> Optional[pd.DataFrame]:
+    """Load data_source_information for one app.
+
+    Apps without scans have no rows: the CSV is absent, zero-byte or header-only. These get a typed empty table,
+    so their SQLs get zero-valued data source features. Returns None if the CSV cannot be parsed or lacks a
+    required numeric column, so the caller can fall back for the app instead of predicting with zero scan features.
+    """
+    paths = sgl_app.loc[sgl_app['table_name'] == 'data_source_information', 'filepath']
+    if paths.empty:
+        return empty_data_source_tbl()
+    try:
+        ds_tbl = pd.read_csv(paths.iloc[0], encoding_errors='replace')
+    except pd.errors.EmptyDataError:
+        return empty_data_source_tbl()
+    except Exception as ex:  # pylint: disable=broad-except
+        logger.warning('Failed to load data_source_information for %s: %s', app_id, ex)
+        return None
+    required_cols = [col for col in DS_KEY_COLS + DS_METRIC_COLS if col != 'appId']
+    bad_cols = [col for col in required_cols
+                if col not in ds_tbl.columns or not (ds_tbl.empty or pd.api.types.is_numeric_dtype(ds_tbl[col]))]
+    if bad_cols:
+        logger.warning('data_source_information for %s has missing or non-numeric columns: %s',
+                       app_id, ', '.join(bad_cols))
+        return None
+    return ds_tbl if not ds_tbl.empty else empty_data_source_tbl()
 
 
 def load_csv_files(
@@ -905,16 +939,13 @@ def load_csv_files(
         ).astype({'sqlID': int, 'failed_tasks': int})
 
     # Read data_source_information table
-    ds_tbl = scan_tbl('data_source_information')
-    if not ds_tbl.empty:
+    ds_tbl = load_data_source_tbl(sgl_app, app_id)
+    if ds_tbl is None:
+        # unreadable data_source_information: drop the app so it falls back instead of getting zero scan features
+        app_info_mg = app_info_mg.iloc[0:0]
+        ds_tbl = empty_data_source_tbl()
+    elif not ds_tbl.empty:
         ds_tbl['appId'] = app_info['appId'].iloc[0]
-    else:
-        # Apps without scans have no data_source_information rows (the CSV is absent, zero-byte or header-only).
-        # Use a typed empty frame so the per-(appId, sqlID) aggregation in extract_raw_features still works when
-        # no app in the batch has scans; those SQLs then get zero-valued data source features.
-        ds_tbl = pd.DataFrame(columns=DS_KEY_COLS + DS_METRIC_COLS).astype(
-            {'appId': str, 'sqlID': int, **dict.fromkeys(DS_METRIC_COLS, int)}
-        )
 
     out = {
         'app_tbl': app_info_mg,

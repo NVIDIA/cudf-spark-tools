@@ -552,7 +552,8 @@ def load_data_source_tbl(sgl_app: pd.DataFrame) -> pd.DataFrame:
     except pd.errors.EmptyDataError:
         return empty_data_source_tbl()
     except Exception as ex:  # pylint: disable=broad-except
-        raise DataSourceError(f'Failed to load data_source_information ({type(ex).__name__})') from ex
+        reason = f'{type(ex).__name__}: {str(ex).strip()}'
+        raise DataSourceError(f'Failed to load data_source_information ({reason})') from ex
     if ds_tbl.empty and set(ds_tbl.columns) >= set(DS_KEY_COLS + DS_METRIC_COLS) - {'appId'}:
         return empty_data_source_tbl()
     # the profiler writes these as Long, so valid rows never have empty or non-numeric values

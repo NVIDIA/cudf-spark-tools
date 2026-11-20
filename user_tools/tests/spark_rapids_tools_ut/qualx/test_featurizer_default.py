@@ -158,3 +158,5 @@ class TestDefaultFeaturizer(SparkRapidsToolsUT):
         fallbacks = [r.getMessage() for r in caplog.records if 'Predicted speedup will be 1.0' in r.getMessage()]
         assert len(fallbacks) == 2
         assert all('for app-bad. Reason:' in msg and 'data_source_information' in msg for msg in fallbacks)
+        if bad_mode == 'unparseable':
+            assert all('Expected 4 fields in line 3, saw 6' in msg for msg in fallbacks)

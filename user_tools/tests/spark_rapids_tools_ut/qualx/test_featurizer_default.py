@@ -48,7 +48,7 @@ def _write_app(root: str, app_id: str, ds_mode: str) -> list:
     """Write minimal profiler CSVs for one app (one job, stage and plan node per SQL); return its toc rows.
 
     ds_mode controls data_source_information.csv: 'absent', 'zero_byte', 'header_only', 'scans', 'malformed'
-    (missing scan_time) or 'unparseable' (a row with extra fields).
+    (missing scan_time), 'unparseable' (a row with extra fields) or 'truncated' (a row missing decode_time).
     """
     metrics = {col: 10 for col in TASK_METRICS}
     tables = {
@@ -86,8 +86,8 @@ def _write_app(root: str, app_id: str, ds_mode: str) -> list:
     paths = {name: os.path.join(app_dir, f'{name}.csv') for name in tables}
     for name, tbl in tables.items():
         tbl.to_csv(paths[name], index=False)
-    raw_ds = {'zero_byte': '',
-              'unparseable': 'sqlID,scan_time,data_size,decode_time\n0,10,100,5\n1,10,100,5,EXTRA,FIELD\n'}
+    header = 'sqlID,scan_time,data_size,decode_time\n0,10,100,5\n'
+    raw_ds = {'zero_byte': '', 'unparseable': header + '1,10,100,5,EXTRA,FIELD\n', 'truncated': header + '1,10,100\n'}
     if ds_mode in raw_ds:
         paths['data_source_information'] = os.path.join(app_dir, 'data_source_information.csv')
         with open(paths['data_source_information'], 'w', encoding='utf-8') as f:
@@ -149,9 +149,12 @@ class TestDefaultFeaturizer(SparkRapidsToolsUT):
             ('app-noscan', 0): NO_SCAN, ('app-noscan', 1): NO_SCAN,
         }
 
-    @pytest.mark.parametrize('bad_mode', ['malformed', 'unparseable'])
+    @pytest.mark.parametrize('bad_mode', ['malformed', 'unparseable', 'truncated'])
     def test_bad_data_source_file_falls_back(self, tmp_path, caplog, bad_mode):
-        # a bad data_source_information.csv drops its app (prediction falls back to 1.0) instead of zero scan features
-        features = _ds_features(_extract(tmp_path, {'app-bad': bad_mode, 'app-noscan': 'absent'}))
+        # a bad data_source_information.csv makes its app fall back to 1.0 instead of getting zero scan features
+        features = _ds_features(_extract(tmp_path / 'mixed', {'app-bad': bad_mode, 'app-noscan': 'absent'}))
         assert features == {('app-noscan', sql_id): NO_SCAN for sql_id in SQL_IDS}
-        assert 'Predicted speedup will be 1.0 for app-bad' in caplog.text
+        assert _extract(tmp_path / 'alone', {'app-bad': bad_mode}).empty
+        fallbacks = [r.getMessage() for r in caplog.records if 'Predicted speedup will be 1.0' in r.getMessage()]
+        assert len(fallbacks) == 2
+        assert all('for app-bad. Reason:' in msg and 'data_source_information' in msg for msg in fallbacks)

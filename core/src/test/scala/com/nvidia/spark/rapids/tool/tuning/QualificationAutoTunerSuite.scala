@@ -19,6 +19,7 @@ package com.nvidia.spark.rapids.tool.tuning
 import java.nio.file.Paths
 
 import scala.collection.mutable
+import scala.jdk.CollectionConverters._
 
 import com.nvidia.spark.rapids.tool.{ConstantGpuCountStrategy, ConstantTotalCoresStrategy, DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, SourceCoresPreservingStrategy, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
@@ -237,14 +238,29 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
+  test("off-heap enabled flag with surrounding whitespace is parsed like Spark") {
+    val props = Map(
+      "spark.memory.offHeap.enabled" -> " true ",
+      "spark.memory.offHeap.size" -> "1g")
+    PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE)
+      .getSparkOffHeapMemoryMB(props.get) shouldBe Some(1024L)
+  }
+
   // scalastyle:off line.size.limit
   val photonOffHeapTestData: TableFor5[String, Option[SparkRuntime.SparkRuntime], TargetClusterProps, Boolean, Boolean] = Table(
-    ("testName", "sourceRuntime", "targetCluster", "offHeapExcluded", "expectComment"),
+    ("testName", "sourceRuntime", "targetCluster", "offHeapDropped", "expectComment"),
     ("Photon", Some(SparkRuntime.PHOTON), ToolTestUtils.buildTargetClusterInfo(), true, true),
     ("non-Photon", None, ToolTestUtils.buildTargetClusterInfo(), false, false),
     ("Photon with off-heap enforced", Some(SparkRuntime.PHOTON),
       ToolTestUtils.buildTargetClusterInfo(
         enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true")), false, false),
+    ("Photon with off-heap preserved", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(preserveSparkProperties =
+        List("spark.memory.offHeap.enabled", "spark.memory.offHeap.size")), false, false),
+    ("Photon with off-heap tuning definition", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(tuningDefinitions = List(TuningEntryDefinition(
+        label = "spark.memory.offHeap.size", confType = ConfTypeEnum.Byte,
+        defaultUnit = Some("Byte"), level = LevelEnum.Cluster)).asJava), false, false),
     ("Photon with off-heap excluded", Some(SparkRuntime.PHOTON),
       ToolTestUtils.buildTargetClusterInfo(
         excludeSparkProperties = List("spark.memory.offHeap.size")), true, false)
@@ -252,7 +268,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   // scalastyle:on line.size.limit
 
   forAll(photonOffHeapTestData) {
-      (testName, sourceRuntime, targetCluster, offHeapExcluded, expectComment) =>
+      (testName, sourceRuntime, targetCluster, offHeapDropped, expectComment) =>
     test(s"Databricks off-heap sizing for case: $testName") {
       // Databricks defaults for a Photon application on Standard_E8_v3.
       val logEventsProps = mutable.LinkedHashMap[String, String](
@@ -272,9 +288,11 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       val output = Profiler.getAutoTunerResultsAsString(properties, comments)
       val combinedKeys = autoTuner.combineSparkProperties(properties).map(_.property)
 
-      assert(output.contains("--conf spark.executor.memory=16g") == offHeapExcluded)
+      assert(output.contains("--conf spark.executor.memory=16g") == offHeapDropped)
       assert(output.contains(photonOffHeapExcludedComment(35262)) == expectComment)
-      assert(combinedKeys.contains("spark.memory.offHeap.size") == !offHeapExcluded)
+      Seq("spark.memory.offHeap.enabled", "spark.memory.offHeap.size").foreach { key =>
+        assert(combinedKeys.contains(key) == !offHeapDropped, key)
+      }
     }
   }
 

@@ -3168,8 +3168,9 @@ abstract class AutoTuner(
    * Calculate recommended off-heap memory size based on hybrid scan detection.
    * If hybrid scan is enabled and platform is onPrem, set off-heap size to OFFHEAP_PER_CORE *
    * executor cores.
-   * If the source application ran on Photon and neither off-heap property is preserved or
-   * enforced, use 0 because its off-heap memory belongs to the Photon engine.
+   * If the source application ran on Photon and neither off-heap property is preserved,
+   * enforced or otherwise recommended, use 0 because its off-heap memory belongs to the Photon
+   * engine.
    * Otherwise, use the existing logic from platform.getSparkOffHeapMemoryMB.
    *
    * @param numExecutorCores Number of executor cores
@@ -3184,9 +3185,11 @@ abstract class AutoTuner(
       configProvider.getEntry("OFFHEAP_PER_CORE")
         .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores
     } else if (appInfoProvider.getSourceSparkRuntime.contains(SparkRuntime.PHOTON) &&
-        !offHeapKeys.exists(platform.isPropertyUserOverridden)) {
+        !offHeapKeys.exists(k =>
+          platform.isPropertyUserOverridden(k) || recommendations.contains(k))) {
       // Databricks enables off-heap memory by default for Photon. The GPU cluster does not run
-      // Photon, so that memory must not take space from the GPU executor. Both keys are dropped
+      // Photon, so that memory must not take space from the GPU executor. If either key will be
+      // emitted, it is counted instead so the output matches the sizing. Both keys are dropped
       // together because Spark rejects off-heap enabled without a size.
       platform.getSparkOffHeapMemoryMB(getPropertyValue).filter(_ > 0).foreach { sizeMB =>
         droppedSourceProperties ++= offHeapKeys

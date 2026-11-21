@@ -489,6 +489,13 @@ default:
     pluginRules: EmrThpDriverRule, EmrThpExecutorRule
   # end of EMR THP specific tuning configs
 
+  - name: PAGEABLE_POOL_MAX_SIZE
+    description: >-
+      Experimental maximum pageable pool size, carved from existing overhead after pinned memory
+      and headroom. Zero disables recommendations. Requires a pool-capable plugin.
+    default: 0m
+    usedBy: spark.rapids.memory.pageablePool.size
+
 # Qualification tool specific tuning configs
 qualification:
   - name: BATCH_SIZE_BYTES

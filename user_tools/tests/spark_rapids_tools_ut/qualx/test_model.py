@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -110,6 +110,12 @@ class TestModel(SparkRapidsToolsUT):
         assert 'feature' in feature_importance.columns
         assert 'shap_value' in feature_importance.columns
         assert len(shap_values.columns) == len(feature_cols) + 1
+
+        # Assert the model records its label, and prediction fails under a cost function with another label
+        assert model.attr('qualx_label') == label
+        model.set_attr(qualx_label='duration_sum' if label == 'Duration' else 'Duration')
+        with pytest.raises(ValueError, match='Model was trained on the label'):
+            predict(model, features, feature_cols, label_col)
 
     def test_compute_weights(self) -> None:
         """Test compute_weights function"""

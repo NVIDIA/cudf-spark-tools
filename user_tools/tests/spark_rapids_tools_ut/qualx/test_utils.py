@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest  # pylint: disable=import-error
 from spark_rapids_tools.tools.qualx.config import get_config
+from spark_rapids_tools.tools.qualx.rollup import CostFunction
 from spark_rapids_tools.tools.qualx.util import (
     ensure_directory,
     find_paths,
@@ -154,6 +155,14 @@ class TestUtils(SparkRapidsToolsUT):
         with patch('builtins.print') as mock_print:
             print_speedup_summary(data)
             mock_print.assert_called()
+
+        # the overall speedup is at the config's prices
+        cost_fn = CostFunction.load('duration.py', price_ratio=0.25)
+        with patch('spark_rapids_tools.tools.qualx.util.get_cost_function', return_value=cost_fn), \
+                patch('spark_rapids_tools.tools.qualx.util.tabulate') as mock_tabulate, patch('builtins.print'):
+            print_speedup_summary(data)
+        summary_df = mock_tabulate.call_args.args[0]
+        assert summary_df.loc['Overall estimated speedup'].iloc[0] == 0.25
 
     @pytest.mark.parametrize('label', ['Duration', 'duration_sum'])
     def test_create_row_with_default_speedup(self, label):

@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ from xgboost import Booster
 from sklearn.model_selection import train_test_split
 from scipy.optimize import least_squares
 
-from spark_rapids_tools.tools.qualx.config import get_config, get_label
+from spark_rapids_tools.tools.qualx.config import get_config, get_cost_function, get_label
 from spark_rapids_tools.tools.qualx.preprocess import expected_raw_features
 from spark_rapids_tools.tools.qualx.util import get_logger
 # Import optional packages
@@ -40,10 +40,13 @@ logger = get_logger(__name__)
 
 FILTER_SPILLS = False  # remove queries with any disk/mem spill
 LOG_LABEL = True  # use log(y) as target
+LABEL_ATTR = 'qualx_label'  # model attribute holding the label that the model was trained on
 
 # non-training features (and labels)
 ignored_features = {
     'appDuration',
+    'appTaskTime',
+    'appWallTime',
     'appId',
     'appName',
     'description',
@@ -193,6 +196,9 @@ def train(
         evals_result=evals_result,
         xgb_model=base_model,
     )
+    # record the label in the model, so that prediction can check it against the cost function
+    xgb_model.set_attr(**{LABEL_ATTR: get_label()})
+
     return xgb_model
 
 
@@ -311,6 +317,14 @@ def predict(
     calib_params: Dict[str, float] = None,
 ) -> pd.DataFrame:
     """Use model to predict on feature data."""
+    cost_fn = get_cost_function()
+    label = cost_fn.label  # Duration, duration_sum, or the LABEL of a plugin
+    model_label = xgb_model.attr(LABEL_ATTR)
+    if model_label is not None and model_label != label:
+        # Check the model label against the cost function label, only if it was set.
+        # Older QualX models may not have the model_label attribute.
+        raise ValueError(f'Model was trained on the label {model_label}, but the cost function has the label {label}')
+
     model_features = xgb_model.feature_names
 
     missing = set(model_features) - set(feature_cols)
@@ -342,7 +356,6 @@ def predict(
         preds['y'] = y
     preds_df = pd.DataFrame(preds)
 
-    label = get_label()  # Duration, duration_sum
     select_columns = [
         'appName',
         'appId',
@@ -353,6 +366,8 @@ def predict(
         'fraction_supported',
         'description',
     ]
+    # carry the columns that the cost function reads to the rollup
+    select_columns += [col for col in cost_fn.input_columns if col not in select_columns]
     if 'split' in cpu_aug_tbl:
         select_columns.append('split')
 
@@ -381,7 +396,6 @@ def predict(
     # compute adjusted speedup (vs. raw speedup prediction: 'y_pred')
     # without qual data, this should be the same as the raw 'y_pred'
     results_df['speedup_pred'] = results_df[label] / results_df[f'{label}_pred']
-    results_df = results_df.drop(columns=['fraction_supported'])
 
     return results_df
 
@@ -391,12 +405,17 @@ def extract_model_features(
     split_functions: Mapping[str, Callable[[pd.DataFrame], pd.DataFrame]] = None,
 ) -> Tuple[pd.DataFrame, List[str], str]:
     """Extract model features from raw features."""
-    label = get_label()
-    expected_model_features = expected_raw_features() - ignored_features
-    expected_model_features.remove(label)
+    cost_fn = get_cost_function()
+    label = cost_fn.label
+    expected_model_features = expected_raw_features() - ignored_features - {label}
     missing = expected_raw_features() - set(df.columns)
     if missing:
         logger.warning('Input dataframe is missing expected raw features: %s', missing)
+
+    # Compute each SQL's cost, and the app-level cost, based on the cost function.
+    # `label` is the SQL-level cost, and appDuration is the app-level cost.
+    df = cost_fn.with_label(df)
+    df['appDuration'] = cost_fn.app_cost(df)
 
     if FILTER_SPILLS:
         df = df[

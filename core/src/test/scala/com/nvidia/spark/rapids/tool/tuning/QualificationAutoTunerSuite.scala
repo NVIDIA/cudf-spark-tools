@@ -246,6 +246,19 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       .getSparkOffHeapMemoryMB(props.get) shouldBe Some(1024L)
   }
 
+  test("target cluster cannot keep one off-heap property and exclude the other") {
+    val exception = intercept[IllegalArgumentException] {
+      ToolTestUtils.buildTargetClusterInfo(
+        enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true"),
+        excludeSparkProperties = List("spark.memory.offHeap.size"))
+    }
+    exception.getMessage should include("Off-heap properties must be kept or excluded together")
+  }
+
+  private def offHeapEnabledTuningDefinition(bootstrapEntry: Boolean): TuningEntryDefinition =
+    TuningEntryDefinition(label = "spark.memory.offHeap.enabled",
+      confType = ConfTypeEnum.Boolean, level = LevelEnum.Cluster, bootstrapEntry = bootstrapEntry)
+
   // scalastyle:off line.size.limit
   val photonOffHeapTestData: TableFor5[String, Option[SparkRuntime.SparkRuntime], TargetClusterProps, Boolean, Boolean] = Table(
     ("testName", "sourceRuntime", "targetCluster", "offHeapDropped", "expectComment"),
@@ -263,7 +276,18 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         defaultUnit = Some("Byte"), level = LevelEnum.Cluster)).asJava), false, false),
     ("Photon with off-heap excluded", Some(SparkRuntime.PHOTON),
       ToolTestUtils.buildTargetClusterInfo(
-        excludeSparkProperties = List("spark.memory.offHeap.size")), true, false)
+        excludeSparkProperties = List("spark.memory.offHeap.size")), true, false),
+    ("non-Photon with off-heap excluded", None,
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size")), true, false),
+    ("Photon with off-heap excluded and an enabled tuning definition", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size"),
+        tuningDefinitions = List(offHeapEnabledTuningDefinition(bootstrapEntry = false)).asJava), true, false),
+    ("Photon with off-heap excluded and an enabled bootstrap tuning definition", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size"),
+        tuningDefinitions = List(offHeapEnabledTuningDefinition(bootstrapEntry = true)).asJava), true, false)
   )
   // scalastyle:on line.size.limit
 
@@ -284,7 +308,8 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       configureEventLogClusterInfoForTest(platform, numCores = 8,
         sparkProperties = logEventsProps.toMap)
       val autoTuner = buildAutoTunerForTests(infoProvider, platform)
-      val (properties, comments) = autoTuner.getRecommendedProperties()
+      val (properties, comments) = autoTuner.getRecommendedProperties(
+        showOnlyUpdatedProps = QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
       val output = Profiler.getAutoTunerResultsAsString(properties, comments)
       val combinedKeys = autoTuner.combineSparkProperties(properties).map(_.property)
 

@@ -258,9 +258,6 @@ abstract class AutoTuner(
   // Recommendations for these properties will not be computed, ensuring that dependent properties
   // are also affected correctly.
   private val skippedRecommendations: mutable.HashSet[String] = mutable.HashSet[String]()
-  // Source properties left out of the combined configuration because the recommended memory
-  // layout does not account for them.
-  private val droppedSourceProperties: mutable.HashSet[String] = mutable.HashSet[String]()
   // Properties that have already contributed a "was not set" comment, so a later pass recommending
   // the same key does not repeat it.
   private val keysWithMissingComment: mutable.HashSet[String] = mutable.HashSet[String]()
@@ -3069,7 +3066,7 @@ abstract class AutoTuner(
   // - make sure that we exclude the skipped list
   private def processPropKeys(
       srcMap: collection.Map[String, String]): collection.Map[String, String] = {
-    srcMap -- skippedRecommendations -- droppedSourceProperties
+    srcMap -- skippedRecommendations
   }
 
   // Combines the original Spark properties with the recommended ones.
@@ -3168,6 +3165,7 @@ abstract class AutoTuner(
    * Calculate recommended off-heap memory size based on hybrid scan detection.
    * If hybrid scan is enabled and platform is onPrem, set off-heap size to OFFHEAP_PER_CORE *
    * executor cores.
+   * If either off-heap property is excluded, use 0 because the off-heap cannot be in the output.
    * If the source application ran on Photon and neither off-heap property is preserved,
    * enforced or otherwise recommended, use 0 because its off-heap memory belongs to the Photon
    * engine.
@@ -3177,25 +3175,30 @@ abstract class AutoTuner(
    * @return Recommended off-heap memory size in MB
    */
   private def calculateOffHeapMemorySize(numExecutorCores: Int): Long = {
-    val offHeapKeys = Seq("spark.memory.offHeap.enabled", "spark.memory.offHeap.size")
+    val offHeapKeys = AutoTuner.OFF_HEAP_PROPERTIES
+    // Spark rejects off-heap enabled without a size, so both keys are dropped together.
+    def dropOffHeapProperties(): Unit = offHeapKeys.foreach { key =>
+      skippedRecommendations += key
+      recommendations.remove(key)
+    }
     if (!platform.isPlatformCSP && isHybridScanEnabled()) {
       // For onPrem platform with hybrid scan, set off-heap size to
       // OFFHEAP_PER_CORE * executor cores
       // Hybrid scan will require more off-heap memory than the default value.
       configProvider.getEntry("OFFHEAP_PER_CORE")
         .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores
+    } else if (offHeapKeys.exists(platform.isPropertyExcluded)) {
+      dropOffHeapProperties()
+      0L
     } else if (appInfoProvider.getSourceSparkRuntime.contains(SparkRuntime.PHOTON) &&
         !offHeapKeys.exists(k =>
           platform.isPropertyUserOverridden(k) || recommendations.contains(k))) {
       // Databricks enables off-heap memory by default for Photon. The GPU cluster does not run
       // Photon, so that memory must not take space from the GPU executor. If either key will be
-      // emitted, it is counted instead so the output matches the sizing. Both keys are dropped
-      // together because Spark rejects off-heap enabled without a size.
+      // emitted, it is counted instead so the output matches the sizing.
       platform.getSparkOffHeapMemoryMB(getPropertyValue).filter(_ > 0).foreach { sizeMB =>
-        droppedSourceProperties ++= offHeapKeys
-        if (!offHeapKeys.exists(platform.isPropertyExcluded)) {
-          appendComment(photonOffHeapExcludedComment(sizeMB))
-        }
+        dropOffHeapProperties()
+        appendComment(photonOffHeapExcludedComment(sizeMB))
       }
       0L
     } else {
@@ -3266,6 +3269,8 @@ abstract class AutoTuner(
 
 object AutoTuner {
   private[tuning] val CACHE_SERIALIZER_PROPERTY = "spark.sql.cache.serializer"
+  private[tuning] val OFF_HEAP_PROPERTIES =
+    Seq("spark.memory.offHeap.enabled", "spark.memory.offHeap.size")
   private[tuning] val CACHE_SERIALIZER_CONFIG = "CACHE_SERIALIZER"
   private[tuning] val IN_MEMORY_TABLE_SCAN_PROPERTY =
     "spark.rapids.sql.exec.InMemoryTableScanExec"

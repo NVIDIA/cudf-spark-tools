@@ -29,7 +29,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.tool.{RecommendedClusterInfo, ToolUtils}
-import org.apache.spark.sql.rapids.tool.util.CacheablePropsHandler
+import org.apache.spark.sql.rapids.tool.util.{CacheablePropsHandler, SparkRuntime}
 
 
 case class DriverInfoProviderMockTest(unsupportedOps: Seq[DriverLogUnsupportedOperators])
@@ -83,6 +83,8 @@ class AppInfoProviderMockTest(val maxInput: Double,
   override def hasSqlCacheEvidence: Boolean = hasSqlCache
   override def getShuffleStageInputAnalysis: ShuffleStageInputAnalysis = shuffleStageInputAnalysis
   override def getGpuStageAggMetrics: Seq[StageAggGpuMetricsProfileResult] = gpuStageAggMetrics
+  var sourceSparkRuntime: Option[SparkRuntime.SparkRuntime] = None
+  override def getSourceSparkRuntime: Option[SparkRuntime.SparkRuntime] = sourceSparkRuntime
 
   /**
    * Sets the spark master property in the properties map.

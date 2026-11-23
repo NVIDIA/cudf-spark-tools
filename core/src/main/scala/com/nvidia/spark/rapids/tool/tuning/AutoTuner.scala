@@ -461,7 +461,7 @@ abstract class AutoTuner(
     }
 
     // Add or update tuning definitions for user-enforced properties
-    platform.userEnforcedRecommendations.keys.foreach { key =>
+    platform.userEnforcedRecommendations.keys.filterNot(isDroppedOffHeapProperty).foreach { key =>
       // All user-enforced properties should be enabled and have bootstrap entries.
       val tuningDefn = baseMap.getOrElseUpdate(key, TuningEntryDefinition(key))
       tuningDefn.markAsEnable()
@@ -507,7 +507,9 @@ abstract class AutoTuner(
     }
 
     // Add the enforced properties to the recommendations.
-    platform.userEnforcedRecommendations.foreach {
+    platform.userEnforcedRecommendations.filterNot { case (key, _) =>
+      isDroppedOffHeapProperty(key)
+    }.foreach {
       case (key, value) =>
         val recomRecord = recommendations.getOrElseUpdate(key,
           buildTuningEntry(key, getPropertyValueFromSource(key), None, finalTuningTable.get(key)))
@@ -3014,7 +3016,8 @@ abstract class AutoTuner(
     if (appInfoProvider.isAppInfoAvailable) {
       limitedLogicList.foreach(limitedSeq => limitedLogicRecommendations ++= limitedSeq)
       platform.targetCluster.foreach { cluster =>
-        cluster.getSparkProperties.preservePropertiesSet.foreach { property =>
+        cluster.getSparkProperties.preservePropertiesSet.filterNot(isDroppedOffHeapProperty)
+            .foreach { property =>
           getPropertyValueFromSource(property) match {
             case Some(_) =>
               // If the property is found in the source properties, add a comment and
@@ -3036,6 +3039,9 @@ abstract class AutoTuner(
       }
       if (offHeapExcluded) {
         skippedRecommendations ++= AutoTuner.OFF_HEAP_PROPERTIES
+        if (getBaselineSparkProperty("spark.memory.offHeap.enabled").isDefined) {
+          appendComment(offHeapEnabledDroppedComment)
+        }
       }
       initRecommendations()
       // configured GPU recommended instance type NEEDS to happen before any of the other
@@ -3166,13 +3172,17 @@ abstract class AutoTuner(
 
   /**
    * In Qualification, excluding either off-heap property drops both (Spark rejects enabled without
-   * a size), unless spark.memory.offHeap.enabled is enforced or preserved. Profiling still counts
-   * it, because the source off-heap stays on the cluster.
+   * a size), unless spark.memory.offHeap.enabled is enforced or preserved as false. Profiling
+   * still counts it, because the source off-heap stays on the cluster.
    */
   private lazy val offHeapExcluded: Boolean =
     autoTunerHelper != ProfilingAutoTunerHelper &&
       AutoTuner.OFF_HEAP_PROPERTIES.exists(platform.isPropertyExcluded) &&
-      !platform.isPropertyUserOverridden("spark.memory.offHeap.enabled")
+      !getBaselineSparkProperty("spark.memory.offHeap.enabled")
+        .exists(_.trim.equalsIgnoreCase("false"))
+
+  private def isDroppedOffHeapProperty(key: String): Boolean =
+    offHeapExcluded && AutoTuner.OFF_HEAP_PROPERTIES.contains(key)
 
   /**
    * Calculate recommended off-heap memory size based on hybrid scan detection.
@@ -3693,6 +3703,10 @@ trait AutoTunerStaticComments {
        |'sparkProperties.preserve' in the target cluster.
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
+
+  def offHeapEnabledDroppedComment: String =
+    "'spark.memory.offHeap.enabled' was dropped because 'spark.memory.offHeap.size' is " +
+      "excluded, and Spark rejects off-heap enabled without a size."
 
   def notEnoughMemCommentForKey(key: String): String = {
     s"Not enough memory to set '$key'. See comments for more details."

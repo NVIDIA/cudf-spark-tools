@@ -289,22 +289,44 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     output should not include "--conf spark.memory.offHeap"
   }
 
-  test("enforced off-heap disabled with excluded size keeps the enforced value") {
+  /** Runs Qualification on Databricks Azure with Photon default memory settings. */
+  private def runWithPhotonDefaultMemory(targetCluster: TargetClusterProps):
+      (String, Map[String, String]) = {
     val props = mutable.LinkedHashMap[String, String](
       "spark.executor.cores" -> "8",
       "spark.executor.memory" -> "11754m",
       "spark.memory.offHeap.enabled" -> "true",
       "spark.memory.offHeap.size" -> "36974886912")
     val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
-      Some(ToolTestUtils.buildTargetClusterInfo(
-        enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "false"),
-        excludeSparkProperties = List("spark.memory.offHeap.size"))))
+      Some(targetCluster))
     configureEventLogClusterInfoForTest(platform, numCores = 8,
       sparkProperties = props.toMap)
-    val (output, combined) = runQualificationTuning(platform, props)
+    runQualificationTuning(platform, props)
+  }
+
+  test("enforced off-heap disabled with excluded size keeps the enforced value") {
+    val (output, combined) = runWithPhotonDefaultMemory(ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "false"),
+      excludeSparkProperties = List("spark.memory.offHeap.size")))
     output should include("--conf spark.executor.memory=16g")
     combined.get("spark.memory.offHeap.enabled") shouldBe Some("false")
     combined.get("spark.memory.offHeap.size") shouldBe None
+  }
+
+  Seq(
+    "enforced" -> ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true"),
+      excludeSparkProperties = List("spark.memory.offHeap.size")),
+    "preserved" -> ToolTestUtils.buildTargetClusterInfo(
+      preserveSparkProperties = List("spark.memory.offHeap.enabled"),
+      excludeSparkProperties = List("spark.memory.offHeap.size"))
+  ).foreach { case (control, targetCluster) =>
+    test(s"$control off-heap enabled with excluded size drops both off-heap properties") {
+      val (output, combined) = runWithPhotonDefaultMemory(targetCluster)
+      output should include("--conf spark.executor.memory=16g")
+      output should include(offHeapEnabledDroppedComment)
+      combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
+    }
   }
 
   private def offHeapEnabledTuningDefinition(bootstrapEntry: Boolean): TuningEntryDefinition =

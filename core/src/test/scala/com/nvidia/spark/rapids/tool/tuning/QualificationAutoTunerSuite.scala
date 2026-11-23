@@ -21,7 +21,7 @@ import java.nio.file.Paths
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
-import com.nvidia.spark.rapids.tool.{ConstantGpuCountStrategy, ConstantTotalCoresStrategy, DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, SourceCoresPreservingStrategy, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{ConstantGpuCountStrategy, ConstantTotalCoresStrategy, DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, Platform, PlatformFactory, PlatformNames, SourceCoresPreservingStrategy, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence, ShuffleInputProvenance, ShuffleStageInputAnalysis}
 import com.nvidia.spark.rapids.tool.qualification.{PluginTypeChecker, QualificationArgs, QualificationMain}
@@ -246,13 +246,65 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
       .getSparkOffHeapMemoryMB(props.get) shouldBe Some(1024L)
   }
 
-  test("target cluster cannot keep one off-heap property and exclude the other") {
-    val exception = intercept[IllegalArgumentException] {
-      ToolTestUtils.buildTargetClusterInfo(
-        enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true"),
-        excludeSparkProperties = List("spark.memory.offHeap.size"))
-    }
-    exception.getMessage should include("Off-heap properties must be kept or excluded together")
+  /** Runs Qualification tuning and returns the tuning output and the combined configuration. */
+  private def runQualificationTuning(platform: Platform, props: mutable.Map[String, String]):
+      (String, Map[String, String]) = {
+    val autoTuner = buildAutoTunerForTests(
+      getMockInfoProvider(0, Seq(0), Seq(0.0), props, Some(testSparkVersion)), platform)
+    val (properties, comments) = autoTuner.getRecommendedProperties(
+      showOnlyUpdatedProps = QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+    (Profiler.getAutoTunerResultsAsString(properties, comments),
+      autoTuner.combineSparkProperties(properties).map(r => r.property -> r.value).toMap)
+  }
+
+  private val excludeOffHeapSize = ToolTestUtils.buildTargetClusterInfo(
+    excludeSparkProperties = List("spark.memory.offHeap.size"))
+
+  test("excluded off-heap size drops both off-heap properties when sizing is skipped") {
+    // No cluster information, so executor memory is not sized.
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.memory.offHeap.enabled" -> "true",
+      "spark.memory.offHeap.size" -> "36974886912")
+    val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
+      Some(excludeOffHeapSize))
+    val (_, combined) = runQualificationTuning(platform, props)
+    combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
+  }
+
+  test("excluded off-heap size drops both off-heap properties with hybrid scan") {
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.memory.offHeap.enabled" -> "true",
+      "spark.memory.offHeap.size" -> "8g",
+      "spark.sql.sources.useV1SourceList" -> "parquet",
+      "spark.rapids.sql.hybrid.parquet.enabled" -> "true")
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(ToolTestUtils.buildTargetClusterInfo(cpuCores = Some(8), memoryGB = Some(64L),
+        gpuCount = Some(1), gpuDevice = Some(GpuTypes.L4.toString),
+        excludeSparkProperties = List("spark.memory.offHeap.size"))))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = props.toMap)
+    val (output, combined) = runQualificationTuning(platform, props)
+    combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
+    output should not include "--conf spark.memory.offHeap"
+  }
+
+  test("enforced off-heap disabled with excluded size keeps the enforced value") {
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.memory" -> "11754m",
+      "spark.memory.offHeap.enabled" -> "true",
+      "spark.memory.offHeap.size" -> "36974886912")
+    val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
+      Some(ToolTestUtils.buildTargetClusterInfo(
+        enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "false"),
+        excludeSparkProperties = List("spark.memory.offHeap.size"))))
+    configureEventLogClusterInfoForTest(platform, numCores = 8,
+      sparkProperties = props.toMap)
+    val (output, combined) = runQualificationTuning(platform, props)
+    output should include("--conf spark.executor.memory=16g")
+    combined.get("spark.memory.offHeap.enabled") shouldBe Some("false")
+    combined.get("spark.memory.offHeap.size") shouldBe None
   }
 
   private def offHeapEnabledTuningDefinition(bootstrapEntry: Boolean): TuningEntryDefinition =

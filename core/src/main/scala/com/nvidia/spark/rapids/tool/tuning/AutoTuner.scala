@@ -3034,6 +3034,9 @@ abstract class AutoTuner(
           skippedRecommendations += property
         }
       }
+      if (offHeapExcluded) {
+        skippedRecommendations ++= AutoTuner.OFF_HEAP_PROPERTIES
+      }
       initRecommendations()
       // configured GPU recommended instance type NEEDS to happen before any of the other
       // recommendations as they are based on
@@ -3162,10 +3165,20 @@ abstract class AutoTuner(
   }
 
   /**
+   * In Qualification, excluding either off-heap property drops both (Spark rejects enabled without
+   * a size), unless spark.memory.offHeap.enabled is enforced or preserved. Profiling still counts
+   * it, because the source off-heap stays on the cluster.
+   */
+  private lazy val offHeapExcluded: Boolean =
+    autoTunerHelper != ProfilingAutoTunerHelper &&
+      AutoTuner.OFF_HEAP_PROPERTIES.exists(platform.isPropertyExcluded) &&
+      !platform.isPropertyUserOverridden("spark.memory.offHeap.enabled")
+
+  /**
    * Calculate recommended off-heap memory size based on hybrid scan detection.
    * If hybrid scan is enabled and platform is onPrem, set off-heap size to OFFHEAP_PER_CORE *
    * executor cores.
-   * If either off-heap property is excluded, use 0 because the off-heap cannot be in the output.
+   * If the off-heap properties are excluded (see offHeapExcluded), use 0.
    * If the source application ran on Photon and neither off-heap property is preserved,
    * enforced or otherwise recommended, use 0 because its off-heap memory belongs to the Photon
    * engine.
@@ -3176,28 +3189,23 @@ abstract class AutoTuner(
    */
   private def calculateOffHeapMemorySize(numExecutorCores: Int): Long = {
     val offHeapKeys = AutoTuner.OFF_HEAP_PROPERTIES
-    // Spark rejects off-heap enabled without a size, so both keys are dropped together.
-    def dropOffHeapProperties(): Unit = offHeapKeys.foreach { key =>
-      skippedRecommendations += key
-      recommendations.remove(key)
-    }
-    if (!platform.isPlatformCSP && isHybridScanEnabled()) {
+    if (offHeapExcluded) {
+      0L
+    } else if (!platform.isPlatformCSP && isHybridScanEnabled()) {
       // For onPrem platform with hybrid scan, set off-heap size to
       // OFFHEAP_PER_CORE * executor cores
       // Hybrid scan will require more off-heap memory than the default value.
       configProvider.getEntry("OFFHEAP_PER_CORE")
         .getDefaultAsMemory(ByteUnit.MiB) * numExecutorCores
-    } else if (offHeapKeys.exists(platform.isPropertyExcluded)) {
-      dropOffHeapProperties()
-      0L
     } else if (appInfoProvider.getSourceSparkRuntime.contains(SparkRuntime.PHOTON) &&
         !offHeapKeys.exists(k =>
           platform.isPropertyUserOverridden(k) || recommendations.contains(k))) {
       // Databricks enables off-heap memory by default for Photon. The GPU cluster does not run
       // Photon, so that memory must not take space from the GPU executor. If either key will be
-      // emitted, it is counted instead so the output matches the sizing.
+      // emitted, it is counted instead so the output matches the sizing. Both keys are dropped
+      // together because Spark rejects off-heap enabled without a size.
       platform.getSparkOffHeapMemoryMB(getPropertyValue).filter(_ > 0).foreach { sizeMB =>
-        dropOffHeapProperties()
+        skippedRecommendations ++= offHeapKeys
         appendComment(photonOffHeapExcludedComment(sizeMB))
       }
       0L

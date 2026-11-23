@@ -207,17 +207,6 @@ class SparkProperties(
           "Found overlapping keys in preserve, exclude and enforced properties: " +
             s"$overlappingKeys. Please remove the overlapping keys.")
       }
-      // Spark rejects off-heap enabled without a size, so the off-heap properties cannot be
-      // split between keeping and excluding.
-      val offHeapKeys = AutoTuner.OFF_HEAP_PROPERTIES.toSet
-      val keptOffHeapKeys =
-        offHeapKeys & (preservePropertiesSet ++ enforcedPropertiesMap.keySet)
-      val excludedOffHeapKeys = offHeapKeys & excludePropertiesSet
-      if (keptOffHeapKeys.nonEmpty && excludedOffHeapKeys.nonEmpty) {
-        throw new IllegalArgumentException(
-          s"Off-heap properties must be kept or excluded together: $keptOffHeapKeys are " +
-            s"preserved or enforced, but $excludedOffHeapKeys are excluded.")
-      }
     }
   }
 }

@@ -19,8 +19,9 @@ package com.nvidia.spark.rapids.tool.tuning
 import java.nio.file.Paths
 
 import scala.collection.mutable
+import scala.jdk.CollectionConverters._
 
-import com.nvidia.spark.rapids.tool.{ConstantGpuCountStrategy, ConstantTotalCoresStrategy, DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, PlatformFactory, PlatformNames, SourceCoresPreservingStrategy, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{ConstantGpuCountStrategy, ConstantTotalCoresStrategy, DynamicAllocationInfo, EventLogPathProcessor, GpuTypes, Platform, PlatformFactory, PlatformNames, SourceCoresPreservingStrategy, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.{AppSQLPlanAnalyzer, QualSparkMetricsAggregator}
 import com.nvidia.spark.rapids.tool.profiling.{Profiler, PySparkMemoryEvidence, ShuffleInputProvenance, ShuffleStageInputAnalysis}
 import com.nvidia.spark.rapids.tool.qualification.{PluginTypeChecker, QualificationArgs, QualificationMain}
@@ -29,13 +30,13 @@ import com.nvidia.spark.rapids.tool.views.CLUSTER_INFORMATION_LABEL
 import com.nvidia.spark.rapids.tool.views.qualification.QualReportGenConfProvider
 import org.scalatest.exceptions.TestFailedException
 import org.scalatest.matchers.should.Matchers._
+import org.scalatest.prop.{TableFor3, TableFor5}
 import org.scalatest.prop.TableDrivenPropertyChecks._
-import org.scalatest.prop.TableFor3
 
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{MatchingInstanceTypeNotFoundException, RecommendedClusterInfo}
 import org.apache.spark.sql.rapids.tool.qualification.QualificationAppInfo
-import org.apache.spark.sql.rapids.tool.util.{FSUtils, RapidsToolsConfUtil}
+import org.apache.spark.sql.rapids.tool.util.{FSUtils, RapidsToolsConfUtil, SparkRuntime}
 
 /**
  * Suite to test the Qualification Tool's AutoTuner
@@ -202,6 +203,203 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
     }
   }
 
+  test("qualification sizes GPU executor memory without Photon off-heap") {
+    // The event log has the Databricks Photon default of 16191 MB spark.memory.offHeap.size.
+    val eventLog = s"$qualLogDir/nds_q88_photon_db_13_3.zstd"
+
+    TrampolineUtil.withTempDir { tempDir =>
+      val result = QualificationMain.mainInternal(new QualificationArgs(Array(
+        "--platform",
+        PlatformNames.DATABRICKS_AWS,
+        "--output-directory",
+        tempDir.getAbsolutePath,
+        "--auto-tuner",
+        eventLog)))
+
+      assert(!result.isFailed)
+      val appId = result.appSummaries.headOption.map(_.appId)
+        .getOrElse(throw new TestFailedException("No appId found in the result", 0))
+      val tuningReportPath = QualReportGenConfProvider.getTuningReportPath(tempDir.getAbsolutePath)
+      val tuningResults =
+        FSUtils.readFileContentAsUTF8(Paths.get(tuningReportPath, s"$appId.log").toString)
+      val combinedConf =
+        FSUtils.readFileContentAsUTF8(Paths.get(tuningReportPath, s"$appId.conf").toString)
+
+      assertExpectedLinesExist(Seq(
+        "--conf spark.executor.memory=64g",
+        "--conf spark.rapids.memory.pinnedPool.size=6553m",
+        s"- ${photonOffHeapExcludedComment(16191)}"
+      ), tuningResults)
+      assertExpectedLinesExist(Seq(
+        "--conf spark.executor.memory=64g",
+        "--conf spark.rapids.memory.pinnedPool.size=6553m"
+      ), combinedConf)
+      assert(!combinedConf.contains("spark.memory.offHeap"))
+    }
+  }
+
+  test("off-heap enabled flag with surrounding whitespace is parsed like Spark") {
+    val props = Map(
+      "spark.memory.offHeap.enabled" -> " true ",
+      "spark.memory.offHeap.size" -> "1g")
+    PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE)
+      .getSparkOffHeapMemoryMB(props.get) shouldBe Some(1024L)
+  }
+
+  /** Runs Qualification tuning and returns the tuning output and the combined configuration. */
+  private def runQualificationTuning(platform: Platform, props: mutable.Map[String, String]):
+      (String, Map[String, String]) = {
+    val autoTuner = buildAutoTunerForTests(
+      getMockInfoProvider(0, Seq(0), Seq(0.0), props, Some(testSparkVersion)), platform)
+    val (properties, comments) = autoTuner.getRecommendedProperties(
+      showOnlyUpdatedProps = QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+    (Profiler.getAutoTunerResultsAsString(properties, comments),
+      autoTuner.combineSparkProperties(properties).map(r => r.property -> r.value).toMap)
+  }
+
+  private val excludeOffHeapSize = ToolTestUtils.buildTargetClusterInfo(
+    excludeSparkProperties = List("spark.memory.offHeap.size"))
+
+  test("excluded off-heap size drops both off-heap properties when sizing is skipped") {
+    // No cluster information, so executor memory is not sized.
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.memory.offHeap.enabled" -> "true",
+      "spark.memory.offHeap.size" -> "36974886912")
+    val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
+      Some(excludeOffHeapSize))
+    val (_, combined) = runQualificationTuning(platform, props)
+    combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
+  }
+
+  test("excluded off-heap size drops both off-heap properties with hybrid scan") {
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.memory.offHeap.enabled" -> "true",
+      "spark.memory.offHeap.size" -> "8g",
+      "spark.sql.sources.useV1SourceList" -> "parquet",
+      "spark.rapids.sql.hybrid.parquet.enabled" -> "true")
+    val platform = PlatformFactory.createInstance(PlatformNames.ONPREM,
+      Some(ToolTestUtils.buildTargetClusterInfo(cpuCores = Some(8), memoryGB = Some(64L),
+        gpuCount = Some(1), gpuDevice = Some(GpuTypes.L4.toString),
+        excludeSparkProperties = List("spark.memory.offHeap.size"))))
+    configureEventLogClusterInfoForTest(platform, numCores = 8, numWorkers = 2,
+      sparkProperties = props.toMap)
+    val (output, combined) = runQualificationTuning(platform, props)
+    combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
+    output should not include "--conf spark.memory.offHeap"
+  }
+
+  /** Runs Qualification on Databricks Azure with Photon default memory settings. */
+  private def runWithPhotonDefaultMemory(targetCluster: TargetClusterProps):
+      (String, Map[String, String]) = {
+    val props = mutable.LinkedHashMap[String, String](
+      "spark.executor.cores" -> "8",
+      "spark.executor.memory" -> "11754m",
+      "spark.memory.offHeap.enabled" -> "true",
+      "spark.memory.offHeap.size" -> "36974886912")
+    val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
+      Some(targetCluster))
+    configureEventLogClusterInfoForTest(platform, numCores = 8,
+      sparkProperties = props.toMap)
+    runQualificationTuning(platform, props)
+  }
+
+  test("enforced off-heap disabled with excluded size keeps the enforced value") {
+    val (output, combined) = runWithPhotonDefaultMemory(ToolTestUtils.buildTargetClusterInfo(
+      enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "false"),
+      excludeSparkProperties = List("spark.memory.offHeap.size")))
+    output should include("--conf spark.executor.memory=16g")
+    combined.get("spark.memory.offHeap.enabled") shouldBe Some("false")
+    combined.get("spark.memory.offHeap.size") shouldBe None
+  }
+
+  Seq(
+    ("enforced", "spark.memory.offHeap.enabled", "true", "spark.memory.offHeap.size"),
+    ("preserved", "spark.memory.offHeap.enabled", "true", "spark.memory.offHeap.size"),
+    ("enforced", "spark.memory.offHeap.size", "35g", "spark.memory.offHeap.enabled"),
+    ("preserved", "spark.memory.offHeap.size", "35g", "spark.memory.offHeap.enabled")
+  ).foreach { case (control, keptKey, enforcedValue, excludedKey) =>
+    test(s"$control $keptKey with $excludedKey excluded drops both off-heap properties") {
+      val targetCluster = if (control == "enforced") {
+        ToolTestUtils.buildTargetClusterInfo(enforcedSparkProperties =
+          Map(keptKey -> enforcedValue), excludeSparkProperties = List(excludedKey))
+      } else {
+        ToolTestUtils.buildTargetClusterInfo(preserveSparkProperties = List(keptKey),
+          excludeSparkProperties = List(excludedKey))
+      }
+      val (output, combined) = runWithPhotonDefaultMemory(targetCluster)
+      output should include("--conf spark.executor.memory=16g")
+      output should include(offHeapDroppedComment(keptKey))
+      combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
+    }
+  }
+
+  private def offHeapEnabledTuningDefinition(bootstrapEntry: Boolean): TuningEntryDefinition =
+    TuningEntryDefinition(label = "spark.memory.offHeap.enabled",
+      confType = ConfTypeEnum.Boolean, level = LevelEnum.Cluster, bootstrapEntry = bootstrapEntry)
+
+  // scalastyle:off line.size.limit
+  val photonOffHeapTestData: TableFor5[String, Option[SparkRuntime.SparkRuntime], TargetClusterProps, Boolean, Boolean] = Table(
+    ("testName", "sourceRuntime", "targetCluster", "offHeapDropped", "expectComment"),
+    ("Photon", Some(SparkRuntime.PHOTON), ToolTestUtils.buildTargetClusterInfo(), true, true),
+    ("non-Photon", None, ToolTestUtils.buildTargetClusterInfo(), false, false),
+    ("Photon with off-heap enforced", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true")), false, false),
+    ("Photon with off-heap preserved", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(preserveSparkProperties =
+        List("spark.memory.offHeap.enabled", "spark.memory.offHeap.size")), false, false),
+    ("Photon with off-heap tuning definition", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(tuningDefinitions = List(TuningEntryDefinition(
+        label = "spark.memory.offHeap.size", confType = ConfTypeEnum.Byte,
+        defaultUnit = Some("Byte"), level = LevelEnum.Cluster)).asJava), false, false),
+    ("Photon with off-heap excluded", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size")), true, false),
+    ("non-Photon with off-heap excluded", None,
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size")), true, false),
+    ("Photon with off-heap excluded and an enabled tuning definition", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size"),
+        tuningDefinitions = List(offHeapEnabledTuningDefinition(bootstrapEntry = false)).asJava), true, false),
+    ("Photon with off-heap excluded and an enabled bootstrap tuning definition", Some(SparkRuntime.PHOTON),
+      ToolTestUtils.buildTargetClusterInfo(
+        excludeSparkProperties = List("spark.memory.offHeap.size"),
+        tuningDefinitions = List(offHeapEnabledTuningDefinition(bootstrapEntry = true)).asJava), true, false)
+  )
+  // scalastyle:on line.size.limit
+
+  forAll(photonOffHeapTestData) {
+      (testName, sourceRuntime, targetCluster, offHeapDropped, expectComment) =>
+    test(s"Databricks off-heap sizing for case: $testName") {
+      // Databricks defaults for a Photon application on Standard_E8_v3.
+      val logEventsProps = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "8",
+        "spark.executor.memory" -> "11754m",
+        "spark.memory.offHeap.enabled" -> "true",
+        "spark.memory.offHeap.size" -> "36974886912")
+      val infoProvider = getMockInfoProvider(0, Seq(0), Seq(0.0),
+        logEventsProps, Some(testSparkVersion))
+      infoProvider.sourceSparkRuntime = sourceRuntime
+      val platform = PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE,
+        Some(targetCluster))
+      configureEventLogClusterInfoForTest(platform, numCores = 8,
+        sparkProperties = logEventsProps.toMap)
+      val autoTuner = buildAutoTunerForTests(infoProvider, platform)
+      val (properties, comments) = autoTuner.getRecommendedProperties(
+        showOnlyUpdatedProps = QualificationAutoTunerRunner.filterByUpdatedPropsEnabled)
+      val output = Profiler.getAutoTunerResultsAsString(properties, comments)
+      val combinedKeys = autoTuner.combineSparkProperties(properties).map(_.property)
+
+      assert(output.contains("--conf spark.executor.memory=16g") == offHeapDropped)
+      assert(output.contains(photonOffHeapExcludedComment(35262)) == expectComment)
+      Seq("spark.memory.offHeap.enabled", "spark.memory.offHeap.size").foreach { key =>
+        assert(combinedKeys.contains(key) == !offHeapDropped, key)
+      }
+    }
+  }
+
   test("test AutoTuner for Qualification sets batch size to 1GB") {
     val autoTuner = buildDefaultAutoTuner()
     val (properties, comments) = autoTuner.getRecommendedProperties(showOnlyUpdatedProps =
@@ -255,7 +453,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         s"- ${notEnoughMemCommentForKey("spark.executor.memory")}",
         s"- ${notEnoughMemCommentForKey("spark.executor.memoryOverhead")}",
         s"- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}",
-        s"- ${notEnoughMemComment(22118)}"
+        s"- ${notEnoughMemComment(22118, includeOffHeapAdvice = false)}"
       )),
     ("sufficient memory available for executors",
       "44g",
@@ -1862,7 +2060,7 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
         |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
         |- ${classPathComments("rapids.jars.missing")}
         |- ${classPathComments("rapids.shuffle.jars")}
-        |- ${notEnoughMemComment(22118)}
+        |- ${notEnoughMemComment(22118, includeOffHeapAdvice = false)}
         |- $additionalSparkPluginsComment
         |""".stripMargin
     // scalastyle:on line.size.limit

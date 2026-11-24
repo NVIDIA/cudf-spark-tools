@@ -23,6 +23,7 @@ import com.nvidia.spark.rapids.tool.profiling.{DataSourceProfileResult, PySparkM
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.tool.plangraph.ToolsPlanGraph
 import org.apache.spark.sql.rapids.tool.qualification.{QualificationAppInfo, QualificationSummaryInfo}
+import org.apache.spark.sql.rapids.tool.util.SparkRuntime
 
 /**
  * Implementation of AppInfoPropertyGetter to wrap the output of the Qualification analysis.
@@ -48,6 +49,8 @@ class QualAppSummaryInfoProvider(
   private lazy val distinctLocations = dsInfo.groupBy(_.location)
 
   override def isAppInfoAvailable = true
+  override def getSourceSparkRuntime: Option[SparkRuntime.SparkRuntime] =
+    Option(appInfo).map(_.getSparkRuntime)
   private def findPropertyInternal(
       key: String, props: collection.Map[String, String]): Option[String] = {
     props.get(key)

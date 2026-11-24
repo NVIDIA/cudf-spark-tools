@@ -608,7 +608,7 @@ abstract class Platform(var gpuDevice: Option[GpuDevice],
 
   def getSparkOffHeapMemoryMB(sparkPropertiesFn: String => Option[String]): Option[Long] = {
     // Return if offHeap is not enabled
-    if (!sparkPropertiesFn("spark.memory.offHeap.enabled").getOrElse("false").toBoolean) {
+    if (!sparkPropertiesFn("spark.memory.offHeap.enabled").getOrElse("false").trim.toBoolean) {
       return None
     }
 

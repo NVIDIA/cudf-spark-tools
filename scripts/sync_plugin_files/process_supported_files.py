@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -81,6 +81,39 @@ def is_greater(elem1, elem2):
         return SupportLevel[elem1] > SupportLevel[elem2]
 
     return len(elem1) > len(elem2)
+
+
+def get_sql_func_aliases(sql_func_value):
+    """
+    Return SQL function aliases from a semicolon-separated SQL Func cell.
+    """
+    if pd.isna(sql_func_value):
+        return set()
+    sql_func_str = str(sql_func_value).strip()
+    if sql_func_str == "" or sql_func_str.lower() in ("none", "nan"):
+        return set()
+    return {
+        alias.strip() for alias in sql_func_str.split(";")
+        if alias.strip() and alias.strip() not in SupportLevel.__members__
+    }
+
+
+def should_preserve_tools_string(column_name, tools_value, plugin_value):
+    """
+    Preserve tools-side expression aliases when plugin generated metadata is less informative.
+    SQL function aliases are parser lookup keys in tools, and the generated plugin CSV can omit
+    aliases for newer Spark versions even though older-version aliases should still be recognized.
+    Preserve only when the plugin aliases are blank or a strict subset of the tools aliases, so an
+    intentional plugin alias rename is accepted instead of being hidden by a string-length heuristic.
+    """
+    if column_name != "SQL Func":
+        return False
+
+    tools_aliases = get_sql_func_aliases(tools_value)
+    plugin_aliases = get_sql_func_aliases(plugin_value)
+    if not tools_aliases:
+        return False
+    return not plugin_aliases or plugin_aliases < tools_aliases
 
 
 def check_df_rows(row1, row2, keys):
@@ -248,8 +281,17 @@ def compare_csv_file(union_df, tools_df, keys, report_file, override_configs_jso
                 exists_in_tools = True
                 for tools_column in tools_df.columns:
                     if (tools_column in union_row) and (not tools_row[tools_column] == union_row[tools_column]):
-                        report_file.write(f"Row is changed: {', '.join(tools_row.astype(str))}\n    " +
-                                          f"{tools_column}: {tools_row[tools_column]} -> {union_row[tools_column]}\n")
+                        if should_preserve_tools_string(
+                                tools_column, tools_row[tools_column], union_row[tools_column]):
+                            report_file.write(
+                                f"Row keeps tools value: {', '.join(tools_row.astype(str))}\n    " +
+                                f"{tools_column}: preserving {tools_row[tools_column]} instead of " +
+                                f"{union_row[tools_column]}\n")
+                            union_df.at[union_idx, tools_column] = tools_row[tools_column]
+                        else:
+                            report_file.write(f"Row is changed: {', '.join(tools_row.astype(str))}\n    " +
+                                              f"{tools_column}: {tools_row[tools_column]} -> " +
+                                              f"{union_row[tools_column]}\n")
         if not exists_in_tools:
             for column_name in union_df.columns:
                 if is_support_level(union_row[column_name]):

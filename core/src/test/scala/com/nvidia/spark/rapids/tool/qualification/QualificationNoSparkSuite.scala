@@ -860,6 +860,21 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
       .build()
   }
 
+  test("transition penalty never makes unsupported duration exceed the stage task time") {
+    // 343764ms unsupported with the 1.5x penalty is 515646ms, above the 429705ms stage task time.
+    val penalized = QualificationAppInfo.finalUnsupportedDuration(343764L, 429705L, true)
+    assert(penalized == 429705L)
+    assert(429705L - penalized >= 0)
+    // Below the cap the 50% penalty is still applied.
+    assert(QualificationAppInfo.finalUnsupportedDuration(100L, 1000L, true) == 150L)
+  }
+
+  test("unsupported duration without transitions never exceeds the stage task time") {
+    // The unsupported time split evenly among stages can be above a short stage task time.
+    assert(QualificationAppInfo.finalUnsupportedDuration(500L, 400L, false) == 400L)
+    assert(QualificationAppInfo.finalUnsupportedDuration(300L, 400L, false) == 300L)
+  }
+
   // The fixture is an NDS Delta MERGE (merge.tpl query 4) whose write path uses Photon nodes that
   // databricks-13_3.json did not map before #2159 (#2158). Every Photon node in it now has a
   // mapping, so the expected set of unmapped operators is empty. It is held to the same #2161

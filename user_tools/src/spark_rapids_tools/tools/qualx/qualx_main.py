@@ -35,6 +35,7 @@ from spark_rapids_tools.api_v1 import (
 from spark_rapids_tools.tools.qualx.config import (
     get_cache_dir,
     get_config,
+    get_cost_function,
     get_label,
 )
 from spark_rapids_tools.tools.qualx.preprocess import (
@@ -272,7 +273,8 @@ def _get_split_fn(split_fn: Union[str, dict]) -> Callable[[pd.DataFrame], pd.Dat
 
 def _compute_summary(results: pd.DataFrame) -> pd.DataFrame:
     # summarize speedups per appId
-    label = get_label()
+    cost_fn = get_cost_function()
+    label = cost_fn.label
     result_cols = [
         # qualx
         'appName',
@@ -299,23 +301,17 @@ def _compute_summary(results: pd.DataFrame) -> pd.DataFrame:
             }
         )
         .reset_index()
+        # The rollup computes each app's cost, predicted GPU cost, fraction w/supported ops, and speedup,
+        # under the cost function. Without qual tool output, the fraction is the entire SQL cost.
+        # With qual tool output, it is the fraction of the SQL w/supported ops.
+        .merge(cost_fn.rollup(results, group_by_cols), on=group_by_cols)
     )
 
-    # compute the fraction of app duration w/ supported ops
-    # without qual tool output, this is the entire SQL duration
-    # with qual tool output, this is the fraction of SQL w/ supported ops
-    summary['appDuration'] = summary['appDuration'].clip(lower=summary[label])
-    summary['fraction_supported'] = (
-        summary[f'{label}_supported'] / summary['appDuration']
-    )
-
-    # compute the predicted app duration from original app duration and predicted SQL duration
-    # note: this assumes a non-SQL speedup of 1.0
-    summary['appDuration_pred'] = (
-        summary['appDuration'] - summary[label] + summary[f'{label}_pred']
-    )
-    # compute the per-app speedup
-    summary['speedup'] = summary['appDuration'] / summary['appDuration_pred']
+    # The app duration and the predicted app duration are the app's cost and its predicted GPU cost.
+    # The per-app speedup is their ratio, times the price ratio if the config proivdes prices
+    summary['appDuration'] = summary['cost']
+    summary['appDuration_pred'] = summary['gpuCost']
+    summary['speedup'] = summary.pop('speedup')  # as the last column
 
     # fix dtypes
     long_cols = [
@@ -843,9 +839,10 @@ def predict(
         per_app_summary = _add_entries_for_missing_apps(default_preds_df, summary)
         if INTERMEDIATE_DATA_ENABLED:
             print_summary(per_app_summary)
-            # compute speedup for the entire dataset
+            # compute speedup for the entire dataset, at the config's prices if provided
             dataset_speedup = (
                 per_app_summary['appDuration'].sum() / per_app_summary['appDuration_pred'].sum()
+                * get_cost_function().price_ratio
             )
             print(f'Dataset estimated speedup: {dataset_speedup:.2f}')
     except Exception as e:  # pylint: disable=broad-except
@@ -1058,9 +1055,11 @@ def evaluate(
         calib_params=calib_params
     )
 
-    # app level ground truth
+    # app level ground truth: each GPU app's cost under the cost function
+    cost_fn = get_cost_function()
+    gpu_profile_df = profile_df.loc[profile_df.runType == 'GPU']
     app_durations = (
-        profile_df.loc[profile_df.runType == 'GPU'][
+        gpu_profile_df.assign(appDuration=cost_fn.app_cost(gpu_profile_df))[
             ['appName', 'appDuration', 'description', 'scaleFactor']
         ]
         .groupby(['appName', 'appDuration', 'scaleFactor'])
@@ -1083,7 +1082,7 @@ def evaluate(
         raw_app = raw_app.loc[~raw_app.gpu_appDuration.isna()]
 
     raw_app = raw_app.rename({'gpu_appDuration': 'appDuration_actual'}, axis=1)
-    raw_app['speedup_actual'] = raw_app['appDuration'] / raw_app['appDuration_actual']
+    raw_app['speedup_actual'] = raw_app['cost'] / raw_app['appDuration_actual'] * cost_fn.price_ratio
 
     # adjusted prediction on filtered data
     filtered_sql, filtered_app = _predict(

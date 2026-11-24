@@ -228,6 +228,9 @@ class Qualification(QualificationCore):
             notes = 'Apps with the same name are grouped together and their metrics are averaged'
 
         # recalculate estimated GPU speedup. If no GPU-speedup; then set GPU speedup to 1.0
+        # TODO: The groupColumns speedup does not work with cost rollup. It drops the price ratio, and
+        # mixes units (divides wall time by a GPU cost in the cost function's unit).
+        # The QualX's cost and gpuCost should be used instead.
         result_df = subset_data.copy()
         result_df.loc[:, 'Estimated GPU Speedup'] = np.where(
             result_df['Estimated GPU Duration'] != 0,

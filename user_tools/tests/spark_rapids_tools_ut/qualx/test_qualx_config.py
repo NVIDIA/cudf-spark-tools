@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -57,7 +57,38 @@ class TestQualxConfig(SparkRapidsToolsUT):
         config = QualxConfig(**qualx_config_params)
         assert config.cache_dir == 'qualx_cache'
         assert config.label == 'Duration'
+        assert config.cost_function == 'duration.py'
         assert config.alignment_dir is None
+
+    def test_cost_function(self, qualx_config_params):
+        """Test that cost_function is a path or a dictionary of path and args, and that a label stands for a
+        built-in one"""
+        args = {'non_sql_speedup': 0.5}
+        own = {'path': 'non_sql_speedup.py', 'args': args}
+        config = QualxConfig(**qualx_config_params, cost_function='duration_sum.py')
+        assert config.cost_function == 'duration_sum.py'
+        assert config.label is None
+        assert QualxConfig(**qualx_config_params, cost_function=own).cost_function == own
+        for invalid in [{'args': args}, {**own, 'label': 'Duration'}]:
+            with pytest.raises(ValidationError, match='Invalid cost_function'):
+                QualxConfig(**qualx_config_params, cost_function=invalid)
+
+        # a label stands for its built-in cost function
+        assert QualxConfig(**qualx_config_params, label='Duration').cost_function == 'duration.py'
+        assert QualxConfig(**qualx_config_params, label='duration_sum').cost_function == 'duration_sum.py'
+        with pytest.raises(ValidationError, match='not both'):
+            QualxConfig(**qualx_config_params, label='Duration', cost_function='duration.py')
+
+    def test_prices(self, qualx_config_params):
+        """Test that cpu_cost and gpu_cost are optional, positive and set together"""
+        config = QualxConfig(**qualx_config_params)
+        assert (config.cpu_cost, config.gpu_cost) == (None, None)
+        config = QualxConfig(**qualx_config_params, label='duration_sum', cpu_cost=14.60, gpu_cost=15.96)
+        assert (config.cpu_cost, config.gpu_cost) == (14.60, 15.96)
+        for invalid in [{'cpu_cost': 14.60}, {'gpu_cost': 15.96}, {'cpu_cost': 14.60, 'gpu_cost': 0},
+                        {'cpu_cost': -1, 'gpu_cost': 15.96}]:
+            with pytest.raises(ValidationError, match='Set both cpu_cost and gpu_cost'):
+                QualxConfig(**qualx_config_params, **invalid)
 
     def test_environment_variable_overrides(self, monkeypatch, qualx_config_params):
         """Test that environment variables override default values"""
@@ -70,6 +101,8 @@ class TestQualxConfig(SparkRapidsToolsUT):
         monkeypatch.setenv('QUALX_LABEL', 'duration_sum')
         config = QualxConfig(**qualx_config_params)
         assert config.label == 'duration_sum'
+        assert config.cost_function == 'duration_sum.py'
+        assert QualxConfig(**qualx_config_params, cost_function='duration.py').cost_function == 'duration_sum.py'
 
         # Test QUALX_LABEL override with invalid value
         monkeypatch.setenv('QUALX_LABEL', 'invalid_label')
@@ -82,6 +115,7 @@ class TestQualxConfig(SparkRapidsToolsUT):
         config = QualxConfig(**qualx_config_params)
         assert config.cache_dir == 'qualx_cache'
         assert config.label == 'Duration'
+        assert config.cost_function == 'duration.py'
 
     def test_load_from_file(self):
         """Test loading configuration from a file"""

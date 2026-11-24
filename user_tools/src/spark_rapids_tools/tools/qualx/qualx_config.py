@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +22,13 @@ from pydantic import Field, model_validator
 from spark_rapids_tools import CspPathT
 from spark_rapids_tools.configuration.common import BaseConfig
 from spark_rapids_tools.utils import AbstractPropContainer
+
+
+# These labels are aliases for built-in cost functions.
+LABEL_COST_FUNCTIONS = {
+    'Duration': 'duration.py',
+    'duration_sum': 'duration_sum.py',
+}
 
 
 class QualxConfig(BaseConfig):
@@ -51,13 +58,50 @@ class QualxConfig(BaseConfig):
         description='List of modifier modules to use.',
         examples=[['align_hash.py']])
 
-    label: Literal['Duration', 'duration_sum'] = Field(
+    label: Optional[Literal['Duration', 'duration_sum']] = Field(
         default='Duration',
         description=(
-            'Targeted label column for XGBoost model. '
+            'Targeted label column for XGBoost model, as a shorthand for its built-in cost function: '
+            'Duration for duration.py, and duration_sum for duration_sum.py. '
+            'See cost_function to provide a custom cost function with optional args. '
             'Can be overridden by QUALX_LABEL environment variable.'
         ),
         examples=['Duration', 'duration_sum'])
+
+    cost_function: Optional[Union[dict, str]] = Field(
+        default=None,
+        description=(
+            'OPTIONAL: Path to the cost function that describes app costs, or dictionary of path and args. '
+            'This describes the cost of each SQL, the app-level cost, and how SQLs are rolled up to an '
+            'app-level speedup. By default, the model is expected to predict the cost of each SQL as '
+            'specified by the LABEL. The cost function can optionally override how model predictions '
+            'are translated into GPU SQL and non-SQL costs for custom post-processing.'
+        ),
+        examples=[
+            'my_cost_function.py',
+            {
+                'path': 'my_cost_function.py',
+                'args': {'non_sql_speedup': 1.0},
+            },
+        ])
+
+    cpu_cost: Optional[float] = Field(
+        default=None,
+        description=(
+            'OPTIONAL: Price of one unit of the cost function\'s cost in a CPU run. This must be set with '
+            'gpu_cost. The app\'s predicted speedup is multiplied by cpu_cost / gpu_cost. '
+            'This is not used in training. '
+        ),
+        examples=[14.60])
+
+    gpu_cost: Optional[float] = Field(
+        default=None,
+        description=(
+            'OPTIONAL: Price of one unit of the cost function\'s cost in a GPU run. This must be set with '
+            'cpu_cost. The app\'s predicted speedup is multiplied by cpu_cost / gpu_cost. '
+            'This is not used in training. '
+        ),
+        examples=[15.96])
 
     split_functions: Union[dict, str] = Field(
         description='Path to split function, or dictionary of path and args',
@@ -106,6 +150,31 @@ class QualxConfig(BaseConfig):
         examples=['tools-config.yaml'])
 
     @model_validator(mode='after')
+    def check_cost_function(self):
+        """Resolve the cost function from the label, unless it is set by the config."""
+        if self.cost_function is None:
+            self.label = self.label or 'Duration'
+            self.cost_function = LABEL_COST_FUNCTIONS[self.label]
+            return self
+
+        if 'label' in self.model_fields_set:
+            raise ValueError('Set label or cost_function, not both')
+
+        # the label comes from the cost function, through get_label
+        self.label = None
+        if isinstance(self.cost_function, dict) and not {'path'} <= set(self.cost_function) <= {'path', 'args'}:
+            raise ValueError(f'Invalid cost_function: {self.cost_function}')
+        return self
+
+    @model_validator(mode='after')
+    def check_prices(self):
+        """The prices are set together, since only their ratio is used."""
+        prices = [self.cpu_cost, self.gpu_cost]
+        if prices != [None, None] and not all(price is not None and price > 0 for price in prices):
+            raise ValueError(f'Set both cpu_cost and gpu_cost to positive prices, got: {prices}')
+        return self
+
+    @model_validator(mode='after')
     def check_env_overrides(self):
         """Check for environment variable overrides after model initialization."""
         # Check for QUALX_CACHE_DIR environment variable
@@ -116,11 +185,12 @@ class QualxConfig(BaseConfig):
         # Check for QUALX_LABEL environment variable
         env_label = os.environ.get('QUALX_LABEL')
         if env_label:
-            if env_label not in ['Duration', 'duration_sum']:
+            if env_label not in LABEL_COST_FUNCTIONS:
                 raise ValueError(
-                    f"QUALX_LABEL environment variable must be either 'Duration' or 'duration_sum', got '{env_label}'"
+                    f"QUALX_LABEL environment variable must be one of {list(LABEL_COST_FUNCTIONS)}, got '{env_label}'"
                 )
             self.label = env_label
+            self.cost_function = LABEL_COST_FUNCTIONS[env_label]
 
         return self
 

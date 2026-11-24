@@ -1,6 +1,19 @@
 
 <br/>
 
+## Release [v26.10.3](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.10.3)
+Generated on 2026-11-24
+### Autotuner
+
+- Exclude Photon off-heap memory when sizing GPU executors ([#2228](https://github.com/NVIDIA/cudf-spark-tools/pull/2228))
+
+### QualX
+
+- Fix QualX prediction for apps without data sources ([#2225](https://github.com/NVIDIA/cudf-spark-tools/pull/2225))
+
+
+<br/>
+
 ## Release [v26.10.2](https://github.com/NVIDIA/cudf-spark-tools/tree/v26.10.2)
 Generated on 2026-11-10
 - no changes

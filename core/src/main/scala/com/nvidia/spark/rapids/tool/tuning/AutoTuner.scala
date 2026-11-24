@@ -1614,9 +1614,12 @@ abstract class AutoTuner(
       totalMemForExecutors * executorAvailableMemFraction
     }.toLong
     // Calculate off-heap memory size using new hybrid scan detection logic
-    val sparkOffHeapMemMB: Long = baselineMemorySettings.sparkOffHeapMem.getOrElse(
-      calculateOffHeapMemorySize(numExecutorCores)
-    )
+    val sparkOffHeapMemMB: Long = if (offHeapExcluded) {
+      0L
+    } else {
+      baselineMemorySettings.sparkOffHeapMem.getOrElse(
+        calculateOffHeapMemorySize(numExecutorCores))
+    }
     val pySparkMemMB = pySparkMemoryAdjustment.map(_.layoutCurrentMB)
       .getOrElse(platform.getPySparkMemoryMB(getPropertyValue).getOrElse(0L))
     // Keep this calculation and final overhead selection on the same sizing path. Otherwise a CSP
@@ -3039,9 +3042,8 @@ abstract class AutoTuner(
       }
       if (offHeapExcluded) {
         skippedRecommendations ++= AutoTuner.OFF_HEAP_PROPERTIES
-        if (getBaselineSparkProperty("spark.memory.offHeap.enabled").isDefined) {
-          appendComment(offHeapEnabledDroppedComment)
-        }
+        AutoTuner.OFF_HEAP_PROPERTIES.filter(getBaselineSparkProperty(_).isDefined)
+          .foreach(key => appendComment(offHeapDroppedComment(key)))
       }
       initRecommendations()
       // configured GPU recommended instance type NEEDS to happen before any of the other
@@ -3188,7 +3190,6 @@ abstract class AutoTuner(
    * Calculate recommended off-heap memory size based on hybrid scan detection.
    * If hybrid scan is enabled and platform is onPrem, set off-heap size to OFFHEAP_PER_CORE *
    * executor cores.
-   * If the off-heap properties are excluded (see offHeapExcluded), use 0.
    * If the source application ran on Photon and neither off-heap property is preserved,
    * enforced or otherwise recommended, use 0 because its off-heap memory belongs to the Photon
    * engine.
@@ -3199,9 +3200,7 @@ abstract class AutoTuner(
    */
   private def calculateOffHeapMemorySize(numExecutorCores: Int): Long = {
     val offHeapKeys = AutoTuner.OFF_HEAP_PROPERTIES
-    if (offHeapExcluded) {
-      0L
-    } else if (!platform.isPlatformCSP && isHybridScanEnabled()) {
+    if (!platform.isPlatformCSP && isHybridScanEnabled()) {
       // For onPrem platform with hybrid scan, set off-heap size to
       // OFFHEAP_PER_CORE * executor cores
       // Hybrid scan will require more off-heap memory than the default value.
@@ -3704,9 +3703,11 @@ trait AutoTunerStaticComments {
        |""".stripMargin.trim.replaceAll("\n", "\n  ")
   }
 
-  def offHeapEnabledDroppedComment: String =
-    "'spark.memory.offHeap.enabled' was dropped because 'spark.memory.offHeap.size' is " +
-      "excluded, and Spark rejects off-heap enabled without a size."
+  def offHeapDroppedComment(key: String): String = {
+    val excludedKey = AutoTuner.OFF_HEAP_PROPERTIES.filterNot(_ == key).head
+    s"'$key' was dropped because '$excludedKey' is excluded, and the off-heap properties " +
+      "are kept or dropped together."
+  }
 
   def notEnoughMemCommentForKey(key: String): String = {
     s"Not enough memory to set '$key'. See comments for more details."

@@ -314,17 +314,22 @@ class QualificationAutoTunerSuite extends BaseAutoTunerSuite {
   }
 
   Seq(
-    "enforced" -> ToolTestUtils.buildTargetClusterInfo(
-      enforcedSparkProperties = Map("spark.memory.offHeap.enabled" -> "true"),
-      excludeSparkProperties = List("spark.memory.offHeap.size")),
-    "preserved" -> ToolTestUtils.buildTargetClusterInfo(
-      preserveSparkProperties = List("spark.memory.offHeap.enabled"),
-      excludeSparkProperties = List("spark.memory.offHeap.size"))
-  ).foreach { case (control, targetCluster) =>
-    test(s"$control off-heap enabled with excluded size drops both off-heap properties") {
+    ("enforced", "spark.memory.offHeap.enabled", "true", "spark.memory.offHeap.size"),
+    ("preserved", "spark.memory.offHeap.enabled", "true", "spark.memory.offHeap.size"),
+    ("enforced", "spark.memory.offHeap.size", "35g", "spark.memory.offHeap.enabled"),
+    ("preserved", "spark.memory.offHeap.size", "35g", "spark.memory.offHeap.enabled")
+  ).foreach { case (control, keptKey, enforcedValue, excludedKey) =>
+    test(s"$control $keptKey with $excludedKey excluded drops both off-heap properties") {
+      val targetCluster = if (control == "enforced") {
+        ToolTestUtils.buildTargetClusterInfo(enforcedSparkProperties =
+          Map(keptKey -> enforcedValue), excludeSparkProperties = List(excludedKey))
+      } else {
+        ToolTestUtils.buildTargetClusterInfo(preserveSparkProperties = List(keptKey),
+          excludeSparkProperties = List(excludedKey))
+      }
       val (output, combined) = runWithPhotonDefaultMemory(targetCluster)
       output should include("--conf spark.executor.memory=16g")
-      output should include(offHeapEnabledDroppedComment)
+      output should include(offHeapDroppedComment(keptKey))
       combined.keySet.intersect(AutoTuner.OFF_HEAP_PROPERTIES.toSet) shouldBe empty
     }
   }

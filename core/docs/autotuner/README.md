@@ -20,6 +20,7 @@ Each page identifies the properties the heuristic recommends, the inputs it read
 
 | Heuristic | Recommends | Summary |
 | --- | --- | --- |
+| [Dynamic allocation](dynamic-allocation.md) | `spark.dynamicAllocation.minExecutors`, `initialExecutors`, `maxExecutors`, `spark.executor.instances` | Scales the source executor counts to the target executor cores, treats an enforced `spark.executor.instances` as the target cluster size, and sets the starting executor count. |
 | [GPU task concurrency](gpu-concurrency.md) | `spark.rapids.sql.concurrentGpuTasks` | Selects the legacy device-capacity calculation or a profiling evidence path that seeds GPU memory admission from the largest historical task footprint. |
 
 This catalog is intentionally incremental and is not an exhaustive inventory of AutoTuner behavior.

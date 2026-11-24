@@ -2160,6 +2160,33 @@ abstract class AutoTuner(
     appendRecommendation("spark.locality.wait",
       configProvider.getEntry("LOCALITY_WAIT").getDefault)
     recommendPySparkMemoryReservationConfig()
+    recommendPageablePool()
+  }
+
+  private def recommendPageablePool(): Unit = {
+    val key = "spark.rapids.memory.pageablePool.size"
+    val capMB = configProvider.getEntry("PAGEABLE_POOL_MAX_SIZE").getDefaultAsMemory(ByteUnit.MiB)
+    // Opt-in requires a pool-capable plugin. Honor explicit zero as well as explicit sizes.
+    if (capMB > 0 && getPropertyValue(key).isEmpty && isCalculationEnabled(key) &&
+        !skippedRecommendations.contains(key) &&
+        getPropertyValue("spark.rapids.memory.host.offHeapLimit.enabled").contains("true")) {
+      for {
+        overhead <- getPropertyValue("spark.executor.memoryOverhead")
+        pinned <- getPropertyValue("spark.rapids.memory.pinnedPool.size")
+      } {
+        val overheadMB = StringUtils.convertToMB(overhead, Some(ByteUnit.MiB))
+        val pinnedMB = StringUtils.convertToMB(pinned, Some(ByteUnit.BYTE))
+        val explicitLimitMB = getPropertyValue("spark.rapids.memory.host.offHeapLimit.size")
+          .map(v => StringUtils.convertToMB(v, Some(ByteUnit.BYTE))).filter(_ > 0)
+        // Keep at least a quarter of overhead outside the pools, and half the remaining
+        // non-pinned budget for raw allocations. Pools are not additional container memory.
+        PageablePoolSizing.sizeMiB(overheadMB, pinnedMB, capMB, explicitLimitMB).foreach { sizeMB =>
+          appendRecommendationForMemoryMB(key, sizeMB.toString)
+          appendComment(key, "Experimental pageable pool carved from existing overhead; " +
+            "retains headroom for untracked native allocations. Requires a pool-capable plugin.")
+        }
+      }
+    }
   }
 
   def calculateJobLevelRecommendations(): Unit = {

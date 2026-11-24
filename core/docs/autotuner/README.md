@@ -23,3 +23,18 @@ Each page identifies the properties the heuristic recommends, the inputs it read
 | [GPU task concurrency](gpu-concurrency.md) | `spark.rapids.sql.concurrentGpuTasks` | Selects the legacy device-capacity calculation or a profiling evidence path that seeds GPU memory admission from the largest historical task footprint. |
 
 This catalog is intentionally incremental and is not an exhaustive inventory of AutoTuner behavior.
+
+
+### Experimental pageable host pool
+
+`PAGEABLE_POOL_MAX_SIZE` is an opt-in cap (default `0m`, disabled) for recommending
+`spark.rapids.memory.pageablePool.size`. Use it only with a pool-capable plugin and
+`spark.rapids.memory.host.offHeapLimit.enabled=true` in the target configuration.
+Explicit pool sizes, including zero, are preserved.
+
+The initial policy reserves at least one quarter of executor overhead outside the pools,
+then assigns at most half of the remaining budget after pinned memory to the pageable pool.
+It also honors an explicit host allocation limit, caps the recommendation, and omits sizes
+below 256 MiB. The pool is part of overhead, not an additional container reservation.
+This is an experimental sizing policy; untracked native allocations and workload-specific
+buffer sizes still require validation. No task-concurrency policy is enabled by this option.

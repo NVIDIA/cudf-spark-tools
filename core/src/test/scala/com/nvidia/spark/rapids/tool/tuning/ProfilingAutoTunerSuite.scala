@@ -2512,8 +2512,9 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |--conf spark.rapids.sql.multiThreadedRead.numThreads=80
           |--conf spark.sql.adaptive.advisoryPartitionSizeInBytes=128m
           |--conf spark.sql.adaptive.autoBroadcastJoinThreshold=[FILL_IN_VALUE]
-          |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=200
+          |--conf spark.sql.adaptive.coalescePartitions.initialPartitionNum=400
           |--conf spark.sql.files.maxPartitionBytes=3669m
+          |--conf spark.sql.shuffle.partitions=400
           |
           |Comments:
           |- 'spark.dataproc.enhanced.execution.enabled' should be disabled. WARN: Turning this property on might case the GPU accelerated Dataproc cluster to hang.
@@ -2530,9 +2531,8 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
           |- 'spark.sql.adaptive.coalescePartitions.initialPartitionNum' was not set.
           |- Average JVM GC time is very high. Other Garbage Collectors can be used for better performance.
           |- ${classPathComments("rapids.jars.missing")}
-          |- Shuffle skew exists (when task's Shuffle Read Size > 3 * Avg Stage-level size) in
-          |  stages with spilling. Increasing shuffle partitions is not recommended in this
-          |  case since keys will still hash to the same task.
+          |- Shuffle partitions should be increased since spilling occurred in shuffle stages.
+          |- Skewed spilling stages may retain large partitions after a partition increase; they do not veto an increase for other non-skewed spilling stages.
           |- ${classPathComments("rapids.shuffle.jars")}
           |""".stripMargin
     // scalastyle:on line.size.limit

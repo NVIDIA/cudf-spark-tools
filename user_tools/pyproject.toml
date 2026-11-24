@@ -124,7 +124,7 @@ test = [
     'flake8-pydantic',
     # Use pylint for static code analysis.
     # Set specific version to avoid breaking test with newer pylint releases. Python [3.9-3.13]
-    'pylint==3.3.7'
+    'pylint==4.0.9'
 ]
 qualx = [
     # optional dependencies for qualx plotting
@@ -147,7 +147,7 @@ dev-env = [
     'flake8-pydantic',
     # Use pylint for static code analysis.
     # Set specific version to avoid breaking test with newer pylint releases. Python [3.9-3.13]
-    'pylint==3.3.7',
+    'pylint==4.0.9',
     # optional dependencies for qualx plotting
     'holoviews',
     'matplotlib',

@@ -179,6 +179,42 @@ class StatisticsMetricsSuite extends AnyFunSuite {
       s"merged stddev ${merged.stddev} != $expected")
   }
 
+  test("combined minimum excludes stages without task samples in any stage order") {
+    for (sampledStage <- 1 to 3) {
+      val info = AccumInfo(AccumMetaRef(1L, Some("gpuTime")))
+      (1 to 3).foreach(stageEvent(info, _, 100L))
+      feed(info, sampledStage, Seq(10L, 20L))
+      val stats = info.calculateAccStats()
+      assert(stats.min == 10L)
+      assert(stats.max == 20L)
+      assert(stats.count == 2L && stats.sampleTotal == 30L)
+      assert(stats.total == 330L, "unsampled stages still contribute published totals")
+      assert(stats.stddev.exists(v => Math.abs(v - referenceStddev(Seq(10L, 20L))) < 1e-9))
+    }
+  }
+
+  test("combined minimum keeps observed zeros and compares all sampled stages") {
+    for (minimum <- Seq(0L, 5L)) {
+      val info = AccumInfo(AccumMetaRef(1L, Some("gpuTime")))
+      stageEvent(info, 1, 100L)
+      feed(info, 2, Seq(10L, 20L))
+      feed(info, 3, Seq(minimum, 30L))
+      val stats = info.calculateAccStats()
+      assert(stats.min == minimum)
+      assert(stats.count == 4L)
+    }
+  }
+
+  test("combined minimum preserves the placeholder when every stage is unsampled") {
+    val info = AccumInfo(AccumMetaRef(1L, Some("gpuTime")))
+    stageEvent(info, 1, 100L)
+    stageEvent(info, 2, 200L)
+    val stats = info.calculateAccStats()
+    assert(stats.min == 0L && stats.count == 0L)
+    assert(stats.sampleMin.isEmpty)
+    assert(stats.total == 300L)
+  }
+
   test("the report path refuses a standard deviation below two samples") {
     // Emitted rows call MetricCatalog.stddevOf, a different entry point from the record's own
     // stddev. A one sample row here divides by zero and renders NaN, which the CSV formatter

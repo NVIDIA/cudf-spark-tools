@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -133,6 +133,16 @@ local:
       summary:
         name: qualification_summary.csv
         outputComment: "Summarized speedups CSV report"
+      instancePredictions:
+        name: instance_predictions.csv
+        outputComment: "Per-instance GPU speedup estimates CSV report"
+        columns:
+          appId: 'App ID'
+          instanceType: 'Instance Type'
+          speedup: 'Estimated GPU Speedup'
+          appDuration_pred: 'Estimated GPU Duration'
+          status: 'Status'
+          source: 'Source'
       statistics:
         name: qualification_statistics.csv
         outputComment: "Statistics CSV report"
@@ -274,6 +284,7 @@ local:
       categoryColumnName: 'Estimated GPU Speedup Category'
       heuristicsColumnName: 'Skip by Heuristics'
       sparkRuntimeColumnName: 'Spark Runtime'
+      eligibilityColumnName: 'GPU Eligible'
       defaultCategory: 'Not Recommended'
       strategies:
         spark:  # Spark specific speedup categories

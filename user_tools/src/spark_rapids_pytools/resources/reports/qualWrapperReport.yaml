@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 # ├── qual_core_stderr.log
 # ├── qualification_statistics.csv
 # ├── qualification_summary.csv
+# ├── instance_predictions.csv (only when target instance types are given)
 # ├── xgboost_predictions/*
 # ├── intermediate_output/*
 # ├── qual_core_output (qualCoreReport)
@@ -141,3 +142,40 @@ reportDefinitions:
             dataType: String
             description: >-
               TBD
+          - name: GPU Eligible
+            dataType: Boolean
+            description: >-
+              Whether the app meets the eligibility conditions other than the speedup bound, and is
+              not skipped by heuristics.
+      - label: qualWrapperCSVInstancePredictions
+        description: >-
+          Estimated GPU speedup per app and target GPU instance type, written only when target
+          instance types are given. Each estimate is derived from the prediction model's estimate,
+          using the instance type's adjustment in the instance adjustments file.
+        fileName: instance_predictions.csv
+        scope: global
+        columns:
+          - name: App ID
+            dataType: String
+            description: >-
+              The application ID.
+          - name: Instance Type
+            dataType: String
+            description: >-
+              A target GPU instance type.
+          - name: Estimated GPU Speedup
+            dataType: Float
+            description: >-
+              Estimated speedup on the instance type; empty when Status is failed.
+          - name: Estimated GPU Duration
+            dataType: Long
+            description: >-
+              Estimated application duration on the instance type; empty when Status is failed.
+          - name: Status
+            dataType: String
+            description: >-
+              ok, or failed when the prediction model could not predict the application.
+          - name: Source
+            dataType: String
+            description: >-
+              How the estimate was derived from the prediction model's estimate, for example linear(0.7, sql).

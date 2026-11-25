@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -133,6 +133,41 @@ class SpeedupCategory:
 
             return single_row
         all_apps = all_apps.apply(process_row, axis=1)
+        return all_apps
+
+    def build_eligibility_column(self, all_apps: pd.DataFrame) -> pd.DataFrame:
+        """
+        Build the eligibility column: whether the app meets its runtime's eligibility conditions other than the
+        condition on the speedup column, and is not skipped by heuristics. Callers that compare speedups with
+        their own bound, for example per-instance speedups, use it in place of the category.
+        Example:
+        props['eligibilityConditions'] = [
+            {'columnName': 'Estimated GPU Speedup', 'lowerBound': 1.3, 'upperBound': 1000000.0},
+            {'columnName': 'Unsupported Operators Stage Duration Percent', 'lowerBound': 0, 'upperBound': 25}
+        ]
+        1. input: row_1 = pd.Series({'Estimated GPU Speedup': 1.1, 'Unsupported Operators Stage Duration Percent': 5})
+           output: 'GPU Eligible' is True, because only the speedup condition fails.
+        2. input: row_2 = pd.Series({'Estimated GPU Speedup': 4.0, 'Unsupported Operators Stage Duration Percent': 40})
+           output: 'GPU Eligible' is False, because the unsupported operators condition fails.
+        """
+        eligibility_col_name = self.props.get('eligibilityColumnName')
+        speedup_col_name = self.props.get('speedupColumnName')
+        heuristics_col_name = self.props.get('heuristicsColumnName')
+        spark_runtime_col_name = self.props.get('sparkRuntimeColumnName')
+
+        def is_eligible(single_row: pd.Series) -> bool:
+            spark_runtime = single_row.get(spark_runtime_col_name).lower()
+            eligibility_conditions = self.speedup_strategies.get(spark_runtime).get_eligibility_conditions()
+            for entry in eligibility_conditions:
+                if entry.get('columnName') == speedup_col_name:
+                    continue
+                col_value = single_row[entry.get('columnName')]
+                if not float(entry.get('lowerBound')) <= col_value <= float(entry.get('upperBound')):
+                    return False
+            return single_row.get(heuristics_col_name) is not True
+
+        all_apps[eligibility_col_name] = all_apps.apply(is_eligible, axis=1).astype(bool) if not all_apps.empty \
+            else pd.Series(dtype=bool)
         return all_apps
 
     def build_category_column(self, all_apps: pd.DataFrame) -> pd.DataFrame:

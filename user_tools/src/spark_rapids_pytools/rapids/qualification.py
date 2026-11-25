@@ -33,7 +33,8 @@ from spark_rapids_tools.enums import QualFilterApp, QualEstimationModel, Submiss
 from spark_rapids_tools.tools.additional_heuristics import AdditionalHeuristics
 from spark_rapids_tools.tools.cluster_config_recommender import ClusterConfigRecommender
 from spark_rapids_tools.tools.qualification_stats_report import SparkQualificationStats
-from spark_rapids_tools.tools.qualx.qualx_main import predict
+from spark_rapids_tools.tools.qualx.instance_adjustments import InstanceAdjustments
+from spark_rapids_tools.tools.qualx.qualx_main import predict_for_instances
 from spark_rapids_tools.tools.speedup_category import SpeedupCategory
 from spark_rapids_tools.tools.top_candidates import TopCandidates
 from spark_rapids_tools.tools.unsupported_ops_stage_duration import UnsupportedOpsStageDuration
@@ -324,6 +325,9 @@ class Qualification(QualificationCore):
         # Also processes the SpeedUp assigned using some eligibility conditions present in the qualification-conf.yaml
         # in case that needs to be updated
         df_final_result = speedup_category_ob.build_category_column(apps_with_runtime_df)
+        # Adds the GPU Eligible column: the eligibility conditions other than the speedup bound, for callers
+        # that compare per-instance speedups with their own bound.
+        df_final_result = speedup_category_ob.build_eligibility_column(df_final_result)
         # Fill the missing values in 'Not Recommended Reason' with N/A
         df_final_result['Not Recommended Reason'] = df_final_result['Not Recommended Reason'].fillna('N/A')
 
@@ -423,7 +427,8 @@ class Qualification(QualificationCore):
         if not df.empty and self.ctxt.get_ctxt('estimationModelArgs')['xgboostEnabled']:
             try:
                 df = self.__update_apps_with_prediction_info(df,
-                                                             self.ctxt.get_ctxt('estimationModelArgs'))
+                                                             self.ctxt.get_ctxt('estimationModelArgs'),
+                                                             output_files_info)
             except Exception as e:  # pylint: disable=broad-except
                 # If an error occurs while updating the apps with prediction info (speedups and durations),
                 # raise an error and stop the execution as the tool cannot continue without this information.
@@ -578,23 +583,32 @@ class Qualification(QualificationCore):
 
     def __update_apps_with_prediction_info(self,
                                            all_apps: pd.DataFrame,
-                                           estimation_model_args: dict) -> pd.DataFrame:
+                                           estimation_model_args: dict,
+                                           output_files_info: JSONPropertiesContainer) -> pd.DataFrame:
         """
         Executes the prediction model, merges prediction data into the apps df, and applies transformations
-        based on the prediction model's output and specified mappings.
+        based on the prediction model's output and specified mappings. When target instance types are given,
+        also writes the per-instance estimates.
         """
         # Execute the prediction model
         model_name = self.ctxt.platform.get_prediction_model_name()
         output_info = self.__build_prediction_output_files_info()
+        instance_estimation = estimation_model_args.get('instanceEstimation')
+        target_instance_types = instance_estimation['targetInstanceTypes'] if instance_estimation else []
+        instance_adjustments = None
         try:
             # use the qual_core_handler to read qual-core reports and raise exception if the result is empty
             if self.core_handler.is_empty():
                 raise RuntimeError('QualCoreHandler has no data to process. '
                                    'Please ensure the qualification tool has run successfully.')
-            predictions_df = predict(
+            if instance_estimation:
+                instance_adjustments = InstanceAdjustments.load_from_file(instance_estimation['instanceAdjustments'])
+            predictions_df, instance_predictions_df = predict_for_instances(
                 platform=model_name,
                 qual=self.csp_output_path,
                 output_info=output_info,
+                target_instance_types=target_instance_types,
+                instance_adjustments=instance_adjustments,
                 model=estimation_model_args['customModelFile'],
                 config=estimation_model_args['qualxConfig'],
                 qual_handlers=[
@@ -603,9 +617,15 @@ class Qualification(QualificationCore):
             )
         except Exception as e:  # pylint: disable=broad-except
             predictions_df = pd.DataFrame()
+            instance_predictions_df = pd.DataFrame()
             self.logger.error(
                 'Failed to execute the prediction model. Using default speed up of 1.0 for all apps. '
                 'Reason - %s:%s', type(e).__name__, e)
+
+        if instance_estimation:
+            self.__write_instance_predictions(all_apps, target_instance_types, instance_adjustments,
+                                              instance_predictions_df,
+                                              output_files_info.get_value('instancePredictions', 'path'))
 
         if predictions_df.empty:
             result_df = all_apps.copy()
@@ -632,6 +652,31 @@ class Qualification(QualificationCore):
         # We need to be careful about other columns that depend on remapped columns
         result_df['Estimated GPU Time Saved'] = result_df['App Duration'] - result_df['Estimated GPU Duration']
         return result_df
+
+    def __write_instance_predictions(self,
+                                     all_apps: pd.DataFrame,
+                                     target_instance_types: List[str],
+                                     instance_adjustments: Optional[InstanceAdjustments],
+                                     instance_predictions: pd.DataFrame,
+                                     csv_out: str) -> None:
+        """
+        Write one row per app and target instance type. An app without an estimate for an instance type,
+        for example because the prediction model failed, is reported with status 'failed' and no speedup.
+        """
+        report = pd.MultiIndex.from_product(
+            [all_apps['App ID'].unique(), target_instance_types], names=['appId', 'instanceType']).to_frame(index=False)
+        if not instance_predictions.empty:
+            report = report.merge(instance_predictions.drop(columns=['source']), on=['appId', 'instanceType'],
+                                  how='left')
+        else:
+            report = report.assign(speedup=np.nan, appDuration_pred=pd.NA, status=None)
+        report['status'] = report['status'].fillna('failed')
+        report['source'] = report['instanceType'].map(
+            lambda instance_type: instance_adjustments.describe(instance_type) if instance_adjustments else '')
+        report_columns = self.ctxt.get_value('local', 'output', 'files', 'instancePredictions', 'columns')
+        report = report.rename(columns=report_columns)[list(report_columns.values())]
+        self.logger.info('Generating per-instance GPU speedup estimates: as %s', csv_out)
+        report.to_csv(csv_out, float_format='%.2f', index=False)
 
     def _write_app_metadata(self, tools_processed_apps: pd.DataFrame,
                             metadata_file_info: dict, config_recommendations_dir_info: dict) -> None:

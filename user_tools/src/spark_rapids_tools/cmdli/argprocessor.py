@@ -19,7 +19,7 @@ from collections import defaultdict
 from enum import IntEnum
 from functools import partial
 from logging import Logger
-from typing import Optional, Any, ClassVar, Callable, Type, Dict, Union
+from typing import Optional, Any, ClassVar, Callable, Type, Dict, List, Union
 
 from pydantic import model_validator, ValidationError
 from pydantic.dataclasses import dataclass
@@ -34,6 +34,7 @@ from ..configuration.submission.local_config import LocalToolsConfig
 from ..configuration.tools_config import ToolsConfig
 from ..enums import QualFilterApp, CspEnv, QualEstimationModel, SubmissionMode
 from ..storagelib.csppath import CspPath
+from ..tools.qualx.instance_adjustments import InstanceAdjustments
 
 from ..utils.util import dump_tool_usage, Utilities
 
@@ -307,6 +308,8 @@ class EstimationModelArgProcessor(AbsToolUserArgModel):
     estimation_model: Optional[QualEstimationModel] = None
     custom_model_file: Optional[str] = None
     qualx_config: Optional[str] = None
+    target_instance_types: Optional[Union[str, List[str]]] = None
+    instance_adjustments: Optional[str] = None
 
     def init_tool_args(self) -> None:
         if self.estimation_model is None:
@@ -314,6 +317,42 @@ class EstimationModelArgProcessor(AbsToolUserArgModel):
         else:
             self.p_args['toolArgs']['estimationModel'] = self.estimation_model
         self.p_args['toolArgs']['qualxConfig'] = self.qualx_config
+        self.p_args['toolArgs']['instanceEstimation'] = self.process_instance_estimation_args()
+
+    def process_instance_estimation_args(self) -> Optional[dict]:
+        """
+        Validate the target instance types and the instance adjustments file, which go together, before
+        any eventlog is processed.
+        :return: the target instance types and the adjustments file path, or None if neither is set.
+        """
+        if self.target_instance_types is None and self.instance_adjustments is None:
+            return None
+        if self.target_instance_types is None or self.instance_adjustments is None:
+            raise PydanticCustomError(
+                'invalid_argument',
+                'target_instance_types and instance_adjustments must be set together.\n  Error:')
+        raw_types = (self.target_instance_types.split(',') if isinstance(self.target_instance_types, str)
+                     else self.target_instance_types)
+        instance_types = [str(instance_type).strip() for instance_type in raw_types if str(instance_type).strip()]
+        if not instance_types or len(set(instance_types)) != len(instance_types):
+            raise PydanticCustomError(
+                'invalid_argument',
+                f'target_instance_types must list distinct instance types, got [{self.target_instance_types}].'
+                '\n  Error:')
+        if not CspPath.is_file_path(self.instance_adjustments,
+                                    extensions=['yaml', 'yml', 'json'],
+                                    raise_on_error=False):
+            raise PydanticCustomError(
+                'instance_adjustments',
+                f'instance adjustments file path {self.instance_adjustments} is not valid. '
+                'It is expected to be a valid YAML or JSON file.\n  Error:')
+        try:
+            InstanceAdjustments.load_from_file(self.instance_adjustments).check_targets(instance_types)
+        except ValueError as e:
+            raise PydanticCustomError(
+                'instance_adjustments',
+                f'instance adjustments file {self.instance_adjustments} is not valid: {e}\n  Error:') from e
+        return {'targetInstanceTypes': instance_types, 'instanceAdjustments': self.instance_adjustments}
 
     def init_arg_cases(self):
         # currently, the estimation model is set to XGBOOST by default.

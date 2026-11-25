@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -163,6 +163,10 @@ expected_raw_features = {
 
 supported_levels = ('sql', 'app')
 
+# data_source_information columns aggregated per (appId, sqlID) into data source features
+DS_KEY_COLS = ['appId', 'sqlID']
+DS_METRIC_COLS = ['scan_time', 'decode_time', 'data_size']
+
 
 # Features are built in two steps. The first reduces the profiler's rows to totals: sums, minima and maxima.
 # The second derives ratios, per-task means and bandwidths from the totals, and drops the sums it used.
@@ -192,9 +196,6 @@ TIME_FEATURES = [
     'sw_writeTime',
 ]
 
-# totals of the data sources
-DATA_SOURCE_TOTALS = ['scan_time', 'decode_time', 'data_size']
-
 # totals that are only inputs of derived features, and are not features themselves
 CACHE_HITS = 'cacheHitsSize_sum'
 CACHE_MISSES = 'cacheMissesSize_sum'
@@ -202,7 +203,7 @@ SUPPORTED_DURATION = 'supportedDuration_sum'
 UNSUPPORTED_DURATION = 'unsupportedDuration_sum'
 
 # totals without a reducer in their name, which are sums
-SUM_TOTALS = ['Duration', 'failed_tasks'] + DATA_SOURCE_TOTALS
+SUM_TOTALS = ['Duration', 'failed_tasks'] + DS_METRIC_COLS
 
 
 def _reduce_to_app(sql_totals: pd.DataFrame, app_cols: List[str]) -> pd.DataFrame:
@@ -310,7 +311,7 @@ def _derive_features(totals: pd.DataFrame, leading_cols: List[str]) -> pd.DataFr
     full_tbl.drop(columns=[cc + '_sum' for cc in TIME_FEATURES], inplace=True)
 
     # impute inf/nan
-    ds_cols = ['scan_bw'] + DATA_SOURCE_TOTALS
+    ds_cols = ['scan_bw'] + DS_METRIC_COLS
     full_tbl[ds_cols] = full_tbl[ds_cols].replace([np.inf, -np.inf], 0).fillna(0)
 
     # order the columns: the leading columns, and then the features in the order that they were added
@@ -355,18 +356,24 @@ def extract_raw_features(
         derived from the totals of the SQLs that have SQL-level features.
     """
     # read all tables per appId
-    unique_app_ids = toc['appId'].unique()
-    app_id_tables = [
-        load_csv_files(
-            toc,
-            app_id,
-            node_level_supp=node_level_supp,
-            qualtool_filter=qualtool_filter,
-            qualtool_output=qualtool_output,
-            remove_failed_sql=remove_failed_sql
-        )
-        for app_id in unique_app_ids
-    ]
+    unique_app_ids = []
+    app_id_tables = []
+    for app_id in toc['appId'].unique():
+        try:
+            app_id_tables.append(load_csv_files(
+                toc,
+                app_id,
+                node_level_supp=node_level_supp,
+                qualtool_filter=qualtool_filter,
+                qualtool_output=qualtool_output,
+                remove_failed_sql=remove_failed_sql
+            ))
+            unique_app_ids.append(app_id)
+        except DataSourceError as ex:
+            # fall back for this app instead of predicting it with zero scan features
+            log_fallback(logger, [app_id], fallback_reason=str(ex))
+    if not app_id_tables:
+        return pd.DataFrame(columns=list(expected_raw_features))
 
     def combine_tables(table_name: str) -> pd.DataFrame:
         """Combine csv tables (by name) across all appIds."""
@@ -595,9 +602,9 @@ def extract_raw_features(
 
     # add data source totals
     ds_tbl = combine_tables('ds_tbl')
-    grouped_ds_tbl = ds_tbl.groupby(['appId', 'sqlID'], as_index=False).sum()
+    grouped_ds_tbl = ds_tbl.groupby(DS_KEY_COLS, as_index=False)[DS_METRIC_COLS].sum()
     full_tbl = full_tbl.merge(
-        grouped_ds_tbl[['appId', 'sqlID'] + DATA_SOURCE_TOTALS], on=['appId', 'sqlID'], how='left'
+        grouped_ds_tbl[DS_KEY_COLS + DS_METRIC_COLS], on=DS_KEY_COLS, how='left'
     )
 
     # the table now has the totals of each SQL: reduce them to the totals of each app, if asked
@@ -618,6 +625,44 @@ def extract_raw_features(
 
 class ScanTblError(Exception):
     pass
+
+
+class DataSourceError(Exception):
+    """data_source_information exists but cannot be used."""
+
+
+def empty_data_source_tbl() -> pd.DataFrame:
+    """Typed empty data_source_information table, so the per-(appId, sqlID) aggregation works without rows."""
+    return pd.DataFrame(columns=DS_KEY_COLS + DS_METRIC_COLS).astype(
+        {'appId': str, 'sqlID': int, **dict.fromkeys(DS_METRIC_COLS, int)}
+    )
+
+
+def load_data_source_tbl(sgl_app: pd.DataFrame) -> pd.DataFrame:
+    """Load data_source_information for one app.
+
+    Apps without scans have no rows: the CSV is absent, zero-byte or header-only. These get a typed empty table,
+    so their SQLs get zero-valued data source features. Raises DataSourceError if the CSV cannot be parsed or a
+    required column is missing, non-numeric or has empty values, so the app falls back instead.
+    """
+    paths = sgl_app.loc[sgl_app['table_name'] == 'data_source_information', 'filepath']
+    if paths.empty:
+        return empty_data_source_tbl()
+    try:
+        ds_tbl = pd.read_csv(paths.iloc[0], encoding_errors='replace')
+    except pd.errors.EmptyDataError:
+        return empty_data_source_tbl()
+    except Exception as ex:  # pylint: disable=broad-except
+        reason = f'{type(ex).__name__}: {str(ex).strip()}'
+        raise DataSourceError(f'Failed to load data_source_information ({reason})') from ex
+    if ds_tbl.empty and set(ds_tbl.columns) >= set(DS_KEY_COLS + DS_METRIC_COLS) - {'appId'}:
+        return empty_data_source_tbl()
+    # the profiler writes these as Long, so valid rows never have empty or non-numeric values
+    bad_cols = [col for col in DS_KEY_COLS + DS_METRIC_COLS if col != 'appId' and (
+        col not in ds_tbl.columns or not pd.api.types.is_numeric_dtype(ds_tbl[col]) or ds_tbl[col].isna().any())]
+    if bad_cols:
+        raise DataSourceError('Invalid data_source_information columns: ' + ', '.join(bad_cols))
+    return ds_tbl
 
 
 def load_csv_files(
@@ -1005,7 +1050,7 @@ def load_csv_files(
         ).astype({'sqlID': int, 'failed_tasks': int})
 
     # Read data_source_information table
-    ds_tbl = scan_tbl('data_source_information')
+    ds_tbl = load_data_source_tbl(sgl_app)
     if not ds_tbl.empty:
         ds_tbl['appId'] = app_info['appId'].iloc[0]
 

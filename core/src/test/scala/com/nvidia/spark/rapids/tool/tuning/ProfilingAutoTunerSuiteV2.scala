@@ -114,6 +114,31 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
       .map(_.getTuneValue())
   }
 
+  test("profiling counts excluded off-heap that stays on the cluster") {
+    def memoryRecommendations(exclude: List[String]): Map[String, String] = {
+      val props = mutable.LinkedHashMap[String, String](
+        "spark.executor.cores" -> "16",
+        "spark.executor.memory" -> "32g",
+        "spark.executor.resource.gpu.amount" -> "1",
+        "spark.plugins" -> "com.nvidia.spark.SQLPlugin",
+        "spark.memory.offHeap.enabled" -> "true",
+        "spark.memory.offHeap.size" -> "8g")
+      val platform = PlatformFactory.createInstance(PlatformNames.DATAPROC,
+        Some(ToolTestUtils.buildTargetClusterInfo(excludeSparkProperties = exclude)))
+      configureEventLogClusterInfoForTest(platform, numCores = 16, numWorkers = 1,
+        sparkProperties = props.toMap)
+      val autoTuner = buildAutoTunerForTests(
+        getMockInfoProvider(0, Seq(0), Seq(0.0), props, Some(testSparkVersion)), platform)
+      val memoryKeys = Set("spark.executor.memoryOverhead", "spark.rapids.memory.pinnedPool.size")
+      autoTuner.getRecommendedProperties(showOnlyUpdatedProps = false)._1
+        .filter(p => memoryKeys.contains(p.name)).map(p => p.name -> p.getTuneValue()).toMap
+    }
+    val withoutExclude = memoryRecommendations(List.empty)
+    withoutExclude.keySet shouldBe Set(
+      "spark.executor.memoryOverhead", "spark.rapids.memory.pinnedPool.size")
+    memoryRecommendations(List("spark.memory.offHeap.size")) shouldBe withoutExclude
+  }
+
   test("profiling does not derive maxPartitionBytes from CI34 cache-only input") {
     val ci34CacheInput = 3292825256.0
 
@@ -440,7 +465,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(89600)}
+          |- ${notEnoughMemComment(89600, includeOffHeapAdvice = false)}
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
@@ -533,7 +558,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(121855)}
+          |- ${notEnoughMemComment(121855, includeOffHeapAdvice = false)}
           |""".stripMargin
     // scalastyle:on line.size.limit
     compareOutput(expectedResults, autoTunerOutput)
@@ -978,7 +1003,7 @@ class ProfilingAutoTunerSuiteV2 extends ProfilingAutoTunerSuiteBase {
           |- ${notEnoughMemCommentForKey("spark.rapids.memory.pinnedPool.size")}
           |- ${classPathComments("rapids.jars.missing")}
           |- ${classPathComments("rapids.shuffle.jars")}
-          |- ${notEnoughMemComment(24371)}
+          |- ${notEnoughMemComment(24371, includeOffHeapAdvice = false)}
           |- $missingGpuDiscoveryScriptComment
           |""".stripMargin
     // scalastyle:on line.size.limit

@@ -3098,7 +3098,7 @@ class ProfilingAutoTunerSuite extends ProfilingAutoTunerSuiteBase {
             |- $shufflePartitionsCommentForSpilling
             |- ${classPathComments("rapids.jars.outdated")}
             |- ${classPathComments("rapids.shuffle.jars")}
-            |- ${notEnoughMemComment(40140)}
+            |- ${notEnoughMemComment(40140, includeOffHeapAdvice = false)}
             |- $missingGpuDiscoveryScriptComment
             |""".stripMargin.trim
       // scalastyle:on line.size.limit

@@ -343,6 +343,61 @@ class TestToolArgProcessor(SparkRapidsToolsUT):  # pylint: disable=too-few-publi
         uri_args = self.create_estimation_model_args_should_pass(custom_model_file=existing_model.as_uri())
         assert uri_args['customModelFile'] == existing_model.as_uri()
 
+    @staticmethod
+    def create_instance_estimation_args(target_instance_types, instance_adjustments, should_pass: bool = True):
+        def create():
+            return AbsToolUserArgModel.create_tool_args(
+                {'toolName': 'qualification', 'validatorName': 'estimation_model_args'},
+                estimation_model=None,
+                custom_model_file=None,
+                qualx_config=None,
+                target_instance_types=target_instance_types,
+                instance_adjustments=instance_adjustments,
+            )
+        if should_pass:
+            return create()
+        with pytest.raises(SystemExit):
+            create()
+        return None
+
+    def test_instance_estimation_args(self, tmp_path):
+        adjustments = tmp_path / 'instances.yaml'
+        adjustments.write_text(
+            'adjustments:\n'
+            '  g6.4xlarge: {type: linear, level: sql, factor: 1.0}\n'
+            '  g4dn.4xlarge: {type: linear, level: sql, factor: 0.7}\n',
+            encoding='utf-8')
+
+        args = self.create_instance_estimation_args('g6.4xlarge, g4dn.4xlarge', str(adjustments))
+        assert args['instanceEstimation'] == {
+            'targetInstanceTypes': ['g6.4xlarge', 'g4dn.4xlarge'],
+            'instanceAdjustments': str(adjustments),
+        }
+        # Fire parses comma-separated bare words as a tuple
+        args = self.create_instance_estimation_args(('g4dn.4xlarge',), str(adjustments))
+        assert args['instanceEstimation']['targetInstanceTypes'] == ['g4dn.4xlarge']
+        assert self.create_estimation_model_args_should_pass()['instanceEstimation'] is None
+
+    def test_instance_estimation_args_are_validated(self, tmp_path):
+        g6_only = 'adjustments:\n  g6.4xlarge: {type: linear, level: sql, factor: 1.0}\n'
+        adjustments = tmp_path / 'instances.yaml'
+        adjustments.write_text(g6_only, encoding='utf-8')
+        invalid = tmp_path / 'invalid.yaml'
+        invalid.write_text('reference_instance_type: g6.4xlarge\n' + g6_only, encoding='utf-8')
+        not_yaml = tmp_path / 'instances.txt'
+        not_yaml.write_text(g6_only, encoding='utf-8')
+
+        # the two arguments go together
+        self.create_instance_estimation_args('g6.4xlarge', None, should_pass=False)
+        self.create_instance_estimation_args(None, str(adjustments), should_pass=False)
+        # every target must have an adjustment
+        self.create_instance_estimation_args('g6.4xlarge,g4dn.4xlarge', str(adjustments), should_pass=False)
+        # targets must be distinct, and the file must be a valid adjustments file
+        self.create_instance_estimation_args('g6.4xlarge,g6.4xlarge', str(adjustments), should_pass=False)
+        self.create_instance_estimation_args('g6.4xlarge', str(invalid), should_pass=False)
+        self.create_instance_estimation_args('g6.4xlarge', str(not_yaml), should_pass=False)
+        self.create_instance_estimation_args('g6.4xlarge', str(tmp_path / 'missing.yaml'), should_pass=False)
+
     def test_arg_cases_coverage(self):
         """
         This test ensures that above tests have covered all possible states of the `platform`, `cluster`,

@@ -52,6 +52,8 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                       target_cluster_info: str = None,
                       tuning_configs: str = None,
                       qualx_config: str = None,
+                      target_instance_types: str = None,
+                      instance_adjustments: str = None,
                       **rapids_options) -> Optional[str]:
         """The Qualification cmd provides estimated speedups by migrating Apache Spark applications
         to GPU accelerated clusters.
@@ -105,6 +107,11 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
         :param qualx_config: Path to a qualx-conf.yaml file to use for configuration.
                If not provided, the wrapper will use the default:
                https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+        :param target_instance_types: Comma-separated GPU instance types to estimate a speedup for, in addition
+               to the summary's estimate. Requires instance_adjustments. The estimates are written to
+               instance_predictions.csv.
+        :param instance_adjustments: Path to a YAML file that gives, for each target instance type, how to derive
+               its speedup estimate from the prediction model's estimate. Requires target_instance_types.
         :return: The output folder where the qualification tool output is stored.
         :rtype: Optional[str]
         """
@@ -124,7 +131,9 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
         estimation_model_args = AbsToolUserArgModel.create_tool_args(estimation_arg_valid,
                                                                      estimation_model=None,
                                                                      custom_model_file=custom_model_file,
-                                                                     qualx_config=qualx_config)
+                                                                     qualx_config=qualx_config,
+                                                                     target_instance_types=target_instance_types,
+                                                                     instance_adjustments=instance_adjustments)
         if estimation_model_args is None:
             return None
         qual_args = AbsToolUserArgModel.create_tool_args('qualification',

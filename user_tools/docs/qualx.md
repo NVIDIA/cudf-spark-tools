@@ -30,6 +30,29 @@ Output files:
 - xgboost_predictions/feature_importance.csv: shapley feature importance values for prediction dataset.
 - xgboost_predictions/shap_values: per-sql shapley values for prediction dataset.
 
+### Per-Instance Speedup Estimates
+
+A model's speedup estimate describes the GPU instance type its training runs used. To estimate the speedup on each GPU instance type you may run on, pass both of these arguments to `spark_rapids qualification`:
+
+- target_instance_types: Comma-separated GPU instance types to estimate a speedup for.
+- instance_adjustments: Path to an instance adjustments file. For each target instance type, it gives how to derive that type's estimate from the estimate of the model in use (the custom model, or the platform's built-in model). The instance type the model was trained on has a factor of 1.0.
+
+```yaml
+adjustments:
+  g6.4xlarge: {type: linear, level: sql, factor: 1.0}  # the model's training instance type
+  g4dn.4xlarge: {type: linear, level: sql, factor: 0.70}
+```
+
+A `linear` adjustment multiplies a speedup by `factor`. Its `level` says where it applies, and should match how the factor was measured:
+- `sql`: each SQL query's predicted speedup of its supported part, after calibration and before the per-app rollup. Time outside supported SQL is unchanged on every instance type.
+- `app`: the per-app speedup. Factors above 1 are rejected at this level, because they would also speed up time outside supported SQL.
+
+Every target instance type must have an adjustment. The tool validates the file before processing any eventlog.
+
+Output files:
+- instance_predictions.csv: one row per app and target instance type, with the estimated speedup and duration, a status (`ok`, or `failed` when the model could not predict the app), and how the estimate was derived.
+- qualification_summary.csv always has a `GPU Eligible` column: whether the app meets the eligibility conditions other than the speedup bound, and is not skipped by heuristics. Callers that compare per-instance speedups with their own bound use it in place of the speedup category.
+
 ### Training
 
 To train an XGBoost model on a specific dataset, follow these steps below. Refer to [Getting Started](https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/README.md#getting-started) section for installing the required dependencies for training.

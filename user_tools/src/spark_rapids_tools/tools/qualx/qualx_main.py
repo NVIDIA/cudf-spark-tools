@@ -37,6 +37,7 @@ from spark_rapids_tools.tools.qualx.config import (
     get_config,
     get_label,
 )
+from spark_rapids_tools.tools.qualx.instance_adjustments import InstanceAdjustments, LinearAdjustment
 from spark_rapids_tools.tools.qualx.preprocess import (
     load_datasets,
     load_profiles,
@@ -716,6 +717,130 @@ def predict(
     qual_handlers:
         List of QualCoreResultHandler instances for reading qualification data.
     """
+    _, per_app_summary = _predict_sql_and_app(
+        platform,
+        qual,
+        output_info,
+        model=model,
+        qual_tool_filter=qual_tool_filter,
+        config=config,
+        qual_handlers=qual_handlers,
+    )
+    return per_app_summary
+
+
+def predict_for_instances(
+    platform: str,
+    qual: str,
+    output_info: dict,
+    *,
+    target_instance_types: List[str],
+    instance_adjustments: Optional[InstanceAdjustments],
+    model: Optional[str] = None,
+    qual_tool_filter: Optional[str] = None,
+    config: Optional[str] = None,
+    qual_handlers: List[QualCore]
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Predict GPU speedup given CPU logs, and estimate it for each target GPU instance type.
+
+    Parameters are those of predict(), plus:
+
+    target_instance_types:
+        GPU instance types to estimate a speedup for. Each must have an adjustment in instance_adjustments.
+    instance_adjustments:
+        How to derive each instance type's estimate from the model's estimate.
+
+    Returns the per-app predictions, as predict() does, and the per-instance estimates from estimate_instances().
+    """
+    per_sql_summary, per_app_summary = _predict_sql_and_app(
+        platform,
+        qual,
+        output_info,
+        model=model,
+        qual_tool_filter=qual_tool_filter,
+        config=config,
+        qual_handlers=qual_handlers,
+    )
+    instance_estimates = estimate_instances(per_sql_summary, per_app_summary, target_instance_types,
+                                            instance_adjustments)
+    return per_app_summary, instance_estimates
+
+
+def estimate_instances(
+    per_sql: Optional[pd.DataFrame],
+    per_app: Optional[pd.DataFrame],
+    target_instance_types: List[str],
+    instance_adjustments: Optional[InstanceAdjustments],
+) -> pd.DataFrame:
+    """Estimate each app's speedup on each target instance type from the model's estimates.
+
+    Returns one row per predicted app and target instance type, with columns appId, instanceType,
+    speedup, appDuration_pred, status ('ok', or 'failed' when QualX did not predict the app), and source
+    (how the estimate was derived).
+    """
+    columns = ['appId', 'instanceType', 'speedup', 'appDuration_pred', 'status', 'source']
+    if not target_instance_types or per_app is None or per_app.empty:
+        return pd.DataFrame(columns=columns)
+    instance_adjustments.check_targets(target_instance_types)
+
+    rows = []
+    for instance_type in target_instance_types:
+        adjustment = instance_adjustments.adjustments[instance_type]
+        if adjustment.is_identity:
+            estimates = per_app
+        elif adjustment.level == 'sql':
+            estimates = _adjust_per_sql(per_sql, adjustment)
+        else:
+            estimates = _adjust_per_app(per_app, adjustment)
+        rows.append(_instance_rows(per_app, estimates, instance_type, instance_adjustments.describe(instance_type)))
+    return pd.concat(rows, ignore_index=True)[columns]
+
+
+def _adjust_per_sql(per_sql: Optional[pd.DataFrame], adjustment: LinearAdjustment) -> pd.DataFrame:
+    """Adjust each SQL query's predicted speedup of its supported part, then roll up per app as model.predict does."""
+    if per_sql is None or per_sql.empty:
+        return pd.DataFrame(columns=['appId', 'speedup', 'appDuration_pred'])
+    label = get_label()
+    adjusted = per_sql.copy()
+    supported = adjusted[f'{label}_supported']
+    adjusted[f'{label}_pred'] = adjusted[label] - supported + supported / adjustment.apply(adjusted['y_pred'])
+    return _compute_summary(adjusted)
+
+
+def _adjust_per_app(per_app: pd.DataFrame, adjustment: LinearAdjustment) -> pd.DataFrame:
+    """Scale each app's speedup, and derive its predicted duration from the result."""
+    adjusted = per_app[['appId', 'appDuration', 'speedup']].copy()
+    adjusted['speedup'] = adjustment.apply(adjusted['speedup'])
+    adjusted['appDuration_pred'] = adjusted['appDuration'] / adjusted['speedup']
+    return adjusted
+
+
+def _instance_rows(per_app: pd.DataFrame, estimates: pd.DataFrame, instance_type: str, source: str) -> pd.DataFrame:
+    """Rows for one instance type; apps QualX did not predict are 'failed' with no estimate."""
+    rows = per_app[['appId', 'wasPredicted']].merge(
+        estimates[['appId', 'speedup', 'appDuration_pred']], on='appId', how='left')
+    speedup = pd.to_numeric(rows['speedup'], errors='coerce')
+    ok = rows['wasPredicted'].fillna(False).astype(bool) & speedup.notna()
+    rows['speedup'] = speedup.where(ok)
+    duration = pd.to_numeric(rows['appDuration_pred'], errors='coerce')
+    rows['appDuration_pred'] = duration.where(ok).round().astype('Int64')
+    rows['status'] = np.where(ok, 'ok', 'failed')
+    rows['instanceType'] = instance_type
+    rows['source'] = source
+    return rows
+
+
+def _predict_sql_and_app(
+    platform: str,
+    qual: str,
+    output_info: dict,
+    *,
+    model: Optional[str] = None,
+    qual_tool_filter: Optional[str] = None,
+    config: Optional[str] = None,
+    qual_handlers: List[QualCore]
+) -> Tuple[Optional[pd.DataFrame], pd.DataFrame]:
+    """The body of predict(), also returning its per-SQL predictions (None when prediction failed)."""
     # load config from command line argument, or use default
     cfg = get_config(config)
     model_type = cfg.model_type
@@ -728,7 +853,7 @@ def predict(
     # log a warning and return an empty DataFrame if no qual handlers can be processed.
     if not qual_handlers:
         logger.warning('All qualification handlers are empty - no apps to predict')
-        return pd.DataFrame()
+        return None, pd.DataFrame()
     node_level_supp, qual_tool_output, qual_metrics = _get_combined_qual_data(qual_handlers)
     # create a DataFrame with default predictions for all app IDs.
     # this will be used for apps without predictions.
@@ -736,7 +861,7 @@ def predict(
 
     if len(qual_metrics) == 0:
         logger.warning('Qualification tool metrics are missing. Speedup predictions will be skipped.')
-        return pd.DataFrame()
+        return None, pd.DataFrame()
 
     # construct mapping of appIds to original appNames
     app_id_name_map = default_preds_df.set_index('appId')['appName'].to_dict()
@@ -816,6 +941,7 @@ def predict(
         logger.error(e)
 
     # write output files
+    per_sql_summary = None
     per_app_summary = None
     try:
         per_sql_summary = predictions
@@ -856,7 +982,7 @@ def predict(
     write_csv_reports(per_sql_summary, per_app_summary, output_info)
     if INTERMEDIATE_DATA_ENABLED:
         print_speedup_summary(per_app_summary)
-    return per_app_summary
+    return per_sql_summary, per_app_summary
 
 
 def _predict_cli(

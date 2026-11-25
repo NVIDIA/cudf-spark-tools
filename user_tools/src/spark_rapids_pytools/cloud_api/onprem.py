@@ -225,7 +225,7 @@ class OnPremCluster(ClusterBase):
                 worker_nodes.append(worker)
         raw_master_props = self.props.get_value_silent('config', 'masterConfig')
         master_node = None
-        # master/driver node configuration is optional for on-prem
+        # driver node configuration is optional for on-prem
         if raw_master_props:
             master_props = {
                 'name': 'master',
@@ -290,7 +290,7 @@ class OnPremCluster(ClusterBase):
         """
         Overrides to provide the cluster configuration which is specific to OnPrem.
         """
-        # Driver/Master node type may not be present for OnPrem
+        # Driver node type may not be present for OnPrem
         driver_node_type = self.get_master_node().instance_type if self.get_master_node() else 'N/A'
         cluster_config = self._get_cluster_configuration(driver_node_type=driver_node_type,
                                                          worker_node_type=self.get_worker_node().instance_type,

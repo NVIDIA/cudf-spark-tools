@@ -32,7 +32,7 @@ class CliDataprocLocalMode:  # pylint: disable=too-few-public-methods
                   verbose: bool = False) -> None:
         """
         Bootstrap tool analyzes the CPU and GPU configuration of the Dataproc cluster
-        and updates the Spark default configuration on the cluster's master nodes
+        and updates the Spark default configuration on the cluster's primary nodes
         :param cluster: Name of the Dataproc cluster running an accelerated computing instance class
         :param output_folder: Local path where the final recommendations will be saved.
                Note that this argument only accepts local filesystem. If the argument is NONE,

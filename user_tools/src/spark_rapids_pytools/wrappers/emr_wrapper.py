@@ -35,7 +35,7 @@ class CliEmrLocalMode:  # pylint: disable=too-few-public-methods
                   verbose: bool = False) -> None:
         """
         Bootstrap tool analyzes the CPU and GPU configuration of the EMR cluster
-        and updates the Spark default configuration on the cluster's master nodes.
+        and updates the Spark default configuration on the cluster's primary nodes.
 
         :param cluster: Name of the EMR cluster running an accelerated computing instance class g4dn.*
         :param profile: A named AWS profile to get the settings/credentials of the AWS account.
@@ -43,7 +43,7 @@ class CliEmrLocalMode:  # pylint: disable=too-few-public-methods
                Note that this argument only accepts local filesystem. If the argument is NONE,
                the default value is the env variable "RAPIDS_USER_TOOLS_OUTPUT_DIRECTORY" if any;
                or the current working directory.
-        :param dry_run: True or False to update the Spark config settings on EMR master node.
+        :param dry_run: True or False to update the Spark config settings on EMR primary node.
         :param key_pair_path: A '.pem' file path that enables to connect to EC2 instances using SSH.
                If missing, the wrapper reads the env variable 'RAPIDS_USER_TOOLS_KEY_PAIR_PATH' if any.
                For more details on creating key pairs,

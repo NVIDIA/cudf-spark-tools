@@ -32,11 +32,14 @@ from spark_rapids_tools.api_v1 import (
     CombinedCSVBuilder,
     QualCore
 )
+from spark_rapids_tools.tools.qualx.calibration import get_calibration
 from spark_rapids_tools.tools.qualx.config import (
+    default_config_path,
     get_cache_dir,
     get_config,
     get_label,
 )
+from spark_rapids_tools.tools.qualx.qualx_config import QualxConfig
 from spark_rapids_tools.tools.qualx.preprocess import (
     load_datasets,
     load_profiles,
@@ -67,6 +70,9 @@ from spark_rapids_pytools.common.utilities import Utils
 
 
 logger = get_logger(__name__)
+
+# The output files that hold the raw features of a prediction, by the level of their rows.
+RAW_FEATURES_FILES = {'sql': 'rawFeatures', 'app': 'rawFeaturesApp'}
 
 
 def _get_model_path(platform: str, model: Optional[str], variant: Optional[str] = None) -> Path:
@@ -329,6 +335,65 @@ def _compute_summary(results: pd.DataFrame) -> pd.DataFrame:
     ]
     cols = [col for col in long_cols if col in summary.columns]
     summary[cols] = summary[cols].fillna(-1).astype('long')
+    return summary
+
+
+def _compute_app_summary(results: pd.DataFrame) -> pd.DataFrame:
+    if results['appId'].duplicated().any():
+        raise ValueError('App-level prediction needs one feature row per app')
+
+    label = get_label()
+    result_cols = [
+        'appName',
+        'appId',
+        'appDuration',
+        'scaleFactor',
+        label,
+        f'{label}_pred',
+        f'{label}_supported',
+        'description',
+        'fraction_supported',
+    ]
+    summary = results[[col for col in result_cols if col in results.columns]].reset_index(drop=True)
+    speedup = results['speedup_pred'].to_numpy()
+    summary['appDuration_pred'] = summary['appDuration'] / speedup
+    summary['speedup'] = speedup
+
+    # fix dtypes
+    long_cols = ['appDuration', 'appDuration_pred', label, f'{label}_pred', f'{label}_supported']
+    cols = [col for col in long_cols if col in summary.columns]
+    summary[cols] = summary[cols].fillna(-1).astype('long')
+    return summary
+
+
+def _calibrate_summary(summary: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply the config's calibration, if it has one, to the per-app speedups.
+    speedup_raw keeps each app's speedup without calibration. The predicted duration is scaled with the
+    speedup, so that the two columns stay consistent.
+    """
+    summary['speedup_raw'] = summary['speedup']
+    calibration = get_calibration()
+    if calibration is None or summary.empty:
+        return summary
+
+    raw = summary['speedup_raw'].astype(float)
+    usable = np.isfinite(raw) & (raw > 0)
+    if not usable.any():
+        return summary
+    summary.loc[usable, 'speedup'] = calibration.apply(raw[usable])
+    scaled_duration = summary.loc[usable, 'appDuration_pred'] * raw[usable] / summary.loc[usable, 'speedup']
+    summary.loc[usable, 'appDuration_pred'] = scaled_duration.round().astype('long')
+    return summary
+
+
+def _summarize(predictions: pd.DataFrame, level: str) -> pd.DataFrame:
+    """App predictions from per-SQL or per-app predictions, calibrated and tagged with the model id."""
+    summary = _compute_app_summary(predictions) if level == 'app' else _compute_summary(predictions)
+    summary = _calibrate_summary(summary)
+    model_id = get_config().model_id
+    if model_id is not None:
+        summary['modelId'] = model_id
     return summary
 
 
@@ -697,7 +762,7 @@ def predict(
     config: Optional[str] = None,
     qual_handlers: List[QualCore]
 ) -> pd.DataFrame:
-    """Predict GPU speedup given CPU logs.
+    """Predict GPU speedup given CPU logs, extracting features and then predicting with the model.
 
     Parameters
     ----------
@@ -710,36 +775,218 @@ def predict(
     model:
         Name of a pre-trained model or path to a model on disk to use for prediction.
     qual_tool_filter:
-        Filter to apply to the qualification tool output: 'stage' (default), 'sqlId', or 'none'.
+        Filter to apply to the qualification tool output: 'stage' (default), 'sqlId', or 'none'. It applies to
+        the feature rows per SQL only: the feature rows per app, which the config's aggregation or feature_levels
+        ask for, always cover the whole app, as with 'none'.
     config:
         Path to a qualx-conf.yaml file to use for configuration.
     qual_handlers:
         List of QualCoreResultHandler instances for reading qualification data.
     """
     # load config from command line argument, or use default
-    cfg = get_config(config)
-    model_type = cfg.model_type
-    model_config = cfg.__dict__.get(model_type, {})
-    qual_filter = qual_tool_filter if qual_tool_filter else model_config.get('qual_tool_filter', 'stage')
+    cfg = _prediction_config(config)
+    qual_filter = _qual_filter(cfg, qual_tool_filter)
+    level = cfg.aggregation
 
+    # log a warning and return an empty DataFrame if no qual handlers can be processed.
+    qual_data = _load_qual_data(qual_handlers)
+    if qual_data is None:
+        return pd.DataFrame()
+    # create a DataFrame with default predictions for all app IDs.
+    # this will be used for apps without predictions.
+    default_preds_df = qual_data[1].apply(create_row_with_default_speedup, axis=1)
+
+    profile_df = _load_raw_features(platform, qual, qual_data, qual_filter, level)
+    dataset_name = Path(qual).name
+    node_level_supp = qual_data[0]
+
+    # raw features at the level of the prediction, and at any other level that the config asks to keep
+    raw_features = {level: profile_df}
+    for other_level in cfg.feature_levels or []:
+        if other_level not in raw_features:
+            try:
+                raw_features[other_level] = _load_raw_features(platform, qual, qual_data, qual_filter, other_level)
+            except Exception as e:  # pylint: disable=broad-except
+                # these rows are kept for later use, and the prediction does not need them
+                logger.error('Failed to extract %s-level raw features: %s', other_level, e)
+
+    filter_str = (
+        f'with {qual_tool_filter} filtering'
+        if node_level_supp is not None and any(profile_df['fraction_supported'] != 1.0)
+        else 'raw'
+    )
+    logger.debug('Predicting dataset (%s): %s', filter_str, dataset_name)
+
+    features, predictions, xgb_model = _predict_raw_features(profile_df, platform, model)
+
+    # write output files
+    per_app_summary = None
+    try:
+        # one row per SQL, or one row per app if the config aggregates to the app before predicting
+        per_sql_summary = predictions
+
+        # save features, feature importance, and shapley values per dataset name
+        if output_info:
+            # save features for troubleshooting
+            output_file = output_info['features']['path']
+            logger.debug('Writing features to: %s', output_file)
+            features.to_csv(output_file, index=False)
+
+            # save the raw features, used by predict_features, with their column types
+            for raw_level, raw_df in raw_features.items():
+                raw_features_info = output_info.get(RAW_FEATURES_FILES[raw_level])
+                if raw_features_info:
+                    logger.debug('Writing %s-level raw features to: %s', raw_level, raw_features_info['path'])
+                    try:
+                        raw_df.to_parquet(raw_features_info['path'], index=False)
+                    except Exception as e:  # pylint: disable=broad-except
+                        logger.error('Failed to write %s-level raw features: %s', raw_level, e)
+
+            feature_importance, shapley_values = compute_shapley_values(xgb_model, features)
+
+            output_file = output_info['featureImportance']['path']
+            logger.debug('Writing shapley feature importances to: %s', output_file)
+            feature_importance.to_csv(output_file)
+
+            output_file = output_info['shapValues']['path']
+            logger.debug('Writing shapley values to: %s', output_file)
+            shapley_values.to_csv(output_file, index=False)
+
+        # compute per-app speedups
+        summary = _summarize(per_sql_summary, level)
+        # combine calculated summary with default predictions for missing apps
+        per_app_summary = _add_entries_for_missing_apps(default_preds_df, summary)
+        # an app without a prediction has the default speedup, before and after calibration
+        per_app_summary['speedup_raw'] = per_app_summary['speedup_raw'].fillna(per_app_summary['speedup'])
+        if cfg.model_id is not None:
+            per_app_summary['modelId'] = cfg.model_id
+        if INTERMEDIATE_DATA_ENABLED:
+            print_summary(per_app_summary)
+            # compute speedup for the entire dataset
+            dataset_speedup = (
+                per_app_summary['appDuration'].sum() / per_app_summary['appDuration_pred'].sum()
+            )
+            print(f'Dataset estimated speedup: {dataset_speedup:.2f}')
+    except Exception as e:  # pylint: disable=broad-except
+        # ignore and continue
+        logger.error(e)
+        traceback.print_exc()
+
+    write_csv_reports(per_sql_summary, per_app_summary, output_info)
+    if INTERMEDIATE_DATA_ENABLED:
+        print_speedup_summary(per_app_summary)
+    return per_app_summary
+
+
+def featurize(
+    platform: str,
+    qual: str,
+    *,
+    config: Optional[str] = None,
+    qual_handlers: List[QualCore],
+    qual_tool_filter: Optional[str] = None,
+    level: str = 'sql',
+) -> pd.DataFrame:
+    """Extract the raw feature rows of the apps in a qualification output.
+
+    Parameters
+    ----------
+    platform: str
+        Platform name supported by Profiler tool, e.g. 'onprem'
+    qual: str
+        Path to a directory containing one or more qual output directories.
+    config:
+        Path to a qualx-conf.yaml file to use for configuration.
+    qual_handlers:
+        List of QualCoreResultHandler instances for reading qualification data.
+    qual_tool_filter:
+        Filter to apply to the qualification tool output: 'stage' (default), 'sqlId', or 'none'. It applies to
+        the rows per SQL only: the rows per app always cover the whole app, as with 'none'.
+    level:
+        'sql' for one row per SQL, or 'app' for one row per app.
+
+    Returns
+    -------
+    The raw feature rows, or an empty DataFrame if there are no apps to predict.
+    """
+    cfg = _prediction_config(config)
+    qual_data = _load_qual_data(qual_handlers)
+    if qual_data is None:
+        return pd.DataFrame()
+    return _load_raw_features(platform, qual, qual_data, _qual_filter(cfg, qual_tool_filter), level)
+
+
+def predict_features(
+    features: pd.DataFrame,
+    *,
+    platform: str,
+    model: Optional[str] = None,
+    config: Optional[str] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Predict GPU speedups from raw feature rows.
+
+    Parameters
+    ----------
+    features: pd.DataFrame
+        Raw feature rows from featurize, at the level of the config's aggregation.
+    platform: str
+        Platform name supported by Profiler tool, e.g. 'onprem'
+    model:
+        Name of a pre-trained model or path to a model on disk to use for prediction.
+    config:
+        Path to a qualx-conf.yaml file to use for configuration.
+
+    Returns
+    -------
+    The prediction for each row, and the prediction for each app.
+    """
+    cfg = _prediction_config(config)
+    _, predictions, _ = _predict_raw_features(features, platform, model)
+    # predictions is the raw output of predict_model, with one row per input feature row.
+    # per_app is always one row per app, either after SQL rollups or matching predictions
+    # if the prediction is already at the app-level.
+    return predictions, _summarize(predictions, cfg.aggregation)
+
+
+def _prediction_config(config: Optional[str]) -> QualxConfig:
+    """Load the config for a prediction: the given file, otherwise the default config."""
+    return get_config(config if config else default_config_path())
+
+
+def _qual_filter(cfg: QualxConfig, qual_tool_filter: Optional[str]) -> str:
+    model_config = cfg.__dict__.get(cfg.model_type, {})
+    return qual_tool_filter if qual_tool_filter else model_config.get('qual_tool_filter', 'stage')
+
+
+def _load_qual_data(
+    qual_handlers: List[QualCore]
+) -> Optional[Tuple[Optional[pd.DataFrame], pd.DataFrame, List[str]]]:
+    """Read what a prediction needs from the qualification output, or None if there are no apps to predict."""
     if qual_handlers:
         # filter out empty handlers
         qual_handlers = [q_core_h for q_core_h in qual_handlers if not q_core_h.is_empty()]
-    # log a warning and return an empty DataFrame if no qual handlers can be processed.
     if not qual_handlers:
         logger.warning('All qualification handlers are empty - no apps to predict')
-        return pd.DataFrame()
+        return None
     node_level_supp, qual_tool_output, qual_metrics = _get_combined_qual_data(qual_handlers)
-    # create a DataFrame with default predictions for all app IDs.
-    # this will be used for apps without predictions.
-    default_preds_df = qual_tool_output.apply(create_row_with_default_speedup, axis=1)
-
     if len(qual_metrics) == 0:
         logger.warning('Qualification tool metrics are missing. Speedup predictions will be skipped.')
-        return pd.DataFrame()
+        return None
+    return node_level_supp, qual_tool_output, qual_metrics
 
-    # construct mapping of appIds to original appNames
-    app_id_name_map = default_preds_df.set_index('appId')['appName'].to_dict()
+
+def _load_raw_features(
+    platform: str,
+    qual: str,
+    qual_data: Tuple[Optional[pd.DataFrame], pd.DataFrame, List[str]],
+    qual_filter: str,
+    level: str = 'sql',
+) -> pd.DataFrame:
+    """Load the raw features of the apps in a qualification output at the specified aggregation level.
+
+    qual_filter applies to the rows per SQL only. load_profiles extracts the rows per app from the whole app.
+    """
+    node_level_supp, qual_tool_output, qual_metrics = qual_data
 
     # if qualification metrics are provided, load metrics and apply filtering
     datasets = {}                       # create a dummy dataset
@@ -757,13 +1004,23 @@ def predict(
         qual_tool_filter=qual_filter,
         qual_tool_output=qual_tool_output,
         remove_failed_sql=False,
+        level=level,
     )
     if profile_df.empty:
         raise ValueError('Data preprocessing resulted in an empty dataset. Speedup predictions will default to 1.0.')
 
     # reset appName to original
+    app_id_name_map = qual_tool_output.set_index('App ID')['App Name'].to_dict()
     profile_df['appName'] = profile_df['appId'].map(app_id_name_map)
+    return profile_df
 
+
+def _predict_raw_features(
+    profile_df: pd.DataFrame,
+    platform: str,
+    model: Optional[str] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, Booster]:
+    """Predict from raw features. Returns the model features, the prediction for each row, and the model."""
     # handle platform variants (for CPU eventlogs)
     variants = profile_df.loc[profile_df.runType == 'CPU']['sparkRuntime'].unique().tolist()
     if len(variants) > 1:
@@ -790,73 +1047,21 @@ def predict(
             xgb_model: (profile_df, calib_params)
         }
 
-    filter_str = (
-        f'with {qual_tool_filter} filtering'
-        if node_level_supp is not None and any(profile_df['fraction_supported'] != 1.0)
-        else 'raw'
-    )
-    logger.debug('Predicting dataset (%s): %s', filter_str, dataset_name)
+    features_list = []
+    predictions_list = []
+    for xgb_model, (prof_df, calib_params) in prediction_groups.items():
+        features, feature_cols, label_col = extract_model_features(prof_df)
+        features_index = features.index
+        features_list.append(features)
+        predictions = predict_model(xgb_model, features, feature_cols, label_col, calib_params)
+        predictions.index = features_index
+        predictions_list.append(predictions)
+    features = pd.concat(features_list)
+    features.sort_index(inplace=True)
+    predictions = pd.concat(predictions_list)
+    predictions.sort_index(inplace=True)
 
-    try:
-        features_list = []
-        predictions_list = []
-        for xgb_model, (prof_df, calib_params) in prediction_groups.items():
-            features, feature_cols, label_col = extract_model_features(prof_df)
-            features_index = features.index
-            features_list.append(features)
-            predictions = predict_model(xgb_model, features, feature_cols, label_col, calib_params)
-            predictions.index = features_index
-            predictions_list.append(predictions)
-        features = pd.concat(features_list)
-        features.sort_index(inplace=True)
-        predictions = pd.concat(predictions_list)
-        predictions.sort_index(inplace=True)
-    except XGBoostError as e:
-        # ignore and continue
-        logger.error(e)
-
-    # write output files
-    per_app_summary = None
-    try:
-        per_sql_summary = predictions
-
-        # save features, feature importance, and shapley values per dataset name
-        if output_info:
-            # save features for troubleshooting
-            output_file = output_info['features']['path']
-            logger.debug('Writing features to: %s', output_file)
-            features.to_csv(output_file, index=False)
-
-            feature_importance, shapley_values = compute_shapley_values(xgb_model, features)
-
-            output_file = output_info['featureImportance']['path']
-            logger.debug('Writing shapley feature importances to: %s', output_file)
-            feature_importance.to_csv(output_file)
-
-            output_file = output_info['shapValues']['path']
-            logger.debug('Writing shapley values to: %s', output_file)
-            shapley_values.to_csv(output_file, index=False)
-
-        # compute per-app speedups
-        summary = _compute_summary(per_sql_summary)
-        # combine calculated summary with default predictions for missing apps
-        per_app_summary = _add_entries_for_missing_apps(default_preds_df, summary)
-        if INTERMEDIATE_DATA_ENABLED:
-            print_summary(per_app_summary)
-            # compute speedup for the entire dataset
-            dataset_speedup = (
-                per_app_summary['appDuration'].sum() / per_app_summary['appDuration_pred'].sum()
-            )
-            print(f'Dataset estimated speedup: {dataset_speedup:.2f}')
-    except Exception as e:  # pylint: disable=broad-except
-        # ignore and continue
-        logger.error(e)
-        traceback.print_exc()
-
-    write_csv_reports(per_sql_summary, per_app_summary, output_info)
-    if INTERMEDIATE_DATA_ENABLED:
-        print_speedup_summary(per_app_summary)
-    return per_app_summary
+    return features, predictions, xgb_model
 
 
 def _predict_cli(
@@ -898,10 +1103,8 @@ def _predict_cli(
         Path to a qualx-conf.yaml file to use for configuration.
     """
     # load config from command line argument, or use default
-    cfg = get_config(config)
-    model_type = cfg.model_type
-    model_config = cfg.__dict__.get(model_type, {})
-    qual_filter = qual_tool_filter if qual_tool_filter else model_config.get('qual_tool_filter', 'stage')
+    cfg = _prediction_config(config)
+    qual_filter = _qual_filter(cfg, qual_tool_filter)
 
     # Note this function is for internal usage only. `spark_rapids predict` cmd is the public interface.
     assert eventlogs or qual_output, 'Please specify either --eventlogs or --qual_output.'
@@ -929,6 +1132,8 @@ def _predict_cli(
         'shapValues': {'path': os.path.join(output_dir, 'shap_values.csv')},
         'features': {'path': os.path.join(output_dir, 'features.csv')},
         'featureImportance': {'path': os.path.join(output_dir, 'feature_importance.csv')},
+        'rawFeatures': {'path': os.path.join(output_dir, 'raw_features.parquet')},
+        'rawFeaturesApp': {'path': os.path.join(output_dir, 'raw_features_app.parquet')},
     }
 
     if not qual_handlers:
@@ -940,6 +1145,7 @@ def _predict_cli(
         qual=qual,
         model=model,
         qual_tool_filter=qual_filter,
+        config=config,
         qual_handlers=qual_handlers
     )
 

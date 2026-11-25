@@ -27,6 +27,7 @@ Output files:
 - xgboost_predictions/per_sql.csv: per-sql speedup predictions.
 - xgboost_predictions/per_app.csv: raw (unformatted) per-application speedup predictions.
 - xgboost_predictions/features.csv: feature values used as input to model prediction.
+- xgboost_predictions/raw_features.parquet: raw feature values per sql, see [Raw Features](#raw-features).
 - xgboost_predictions/feature_importance.csv: shapley feature importance values for prediction dataset.
 - xgboost_predictions/shap_values: per-sql shapley values for prediction dataset.
 
@@ -402,4 +403,96 @@ In order to use a custom plugin, just reference it in the associated dataset JSO
         "split_function": "/path/to/custom_plugin.py"
     }
 }
+```
+
+### Prediction Settings
+
+The settings below are optional keys of the `qualx-conf.yaml` that is passed with `--qualx_config` to prediction, or to the qualification tool when it estimates speedups with QualX.
+
+#### App-level Prediction
+
+By default, QualX predicts a speedup for each SQL and rolls the SQLs up to their app. With `aggregation: app`, it instead
+predicts from one row of features per app, and the prediction is the app's speedup:
+```yaml
+aggregation: app  # default: sql
+```
+
+In this case, there is no rollup of per-SQL predictions, and the app's speedup is the model's prediction.
+
+The app-level features are derived from the totals of its SQLs: the sums, minima and maxima of their task metrics, and the per-task means, ratios and bandwidths that follow from those totals.
+
+Note that the app-level features are not filtered. The qualification tool filter, `qual_tool_filter`, applies to the rows per SQL only, and the row of an app is extracted from all of its SQLs before filtering, as with the filter `none`.
+
+Featurizers that describe single SQLs, such as `hash_plan.py`, are skipped.
+
+#### Raw Features
+
+Prediction writes the raw feature rows that it predicted from, with their column types, beside `features.csv`:
+- `xgboost_predictions/raw_features.parquet`: one row per SQL, with `aggregation: sql`.
+- `xgboost_predictions/raw_features_app.parquet`: one row per app, with `aggregation: app`.
+
+To also write the rows of the other level, list the levels:
+```yaml
+feature_levels: [sql, app]
+```
+
+Each level is extracted from the profiler output separately.
+
+#### Model ID
+
+The model ID is any string that identifies the model (e.g., platform, cost basis, version):
+
+```yaml
+model_id: emr/yarn_cost/3
+```
+
+The `model_id` of the config is forwarded into `per_app.csv` under the column `modelId`, for every app.
+
+#### Calibration
+
+A calibration maps the speedup that the model predicts for an app to a calibrated speedup.
+It can be a built-in calibration, or a custom plugin that adheres to the interface:
+
+```yaml
+calibration:
+  path: power.py  # a built-in under calibrations/, or the path of a custom plugin file
+  args: {c0: 0.51, c1: 1.0, c2: 2.52, direction: inverse, floor: 0.5}
+```
+
+The calibration is applied to the speedup of each app, after any rollup of its SQLs. The calibrated speedup is the
+`speedup` of `per_app.csv`. The predicted duration is scaled with it.
+
+`per_app.csv` keeps the speedup from before the calibration as the column `speedup_raw`. Without a
+`calibration`, the two columns are equal. An app without a prediction keeps the default speedup in both.
+
+The built-in `power.py` is a power function of the predicted speedup, or its inverse:
+- `direction: forward` (default): `max(c0 * speedup^c1 + c2, floor)`, for a curve that was fitted from predicted to
+  measured speedups.
+- `direction: inverse`: `max(((speedup - c2) / c0)^(1 / c1), floor)`, for a curve that was fitted from measured to
+  predicted speedups.
+
+A plugin is a Python file with one function, which returns a finite, positive speedup for each speedup it is given:
+```python
+def calibrate(speedup: pd.Series, **args) -> pd.Series:
+    """Map predicted speedups to calibrated speedups."""
+```
+
+This calibration is separate from `calib`, which fits parameters during training and applies them to each SQL.
+
+#### Featurizing and Predicting Separately
+
+Prediction extracts raw features and then predicts from them. The two steps can also be called as separate functions,
+so that feature rows can be stored and predicted later, or predicted again with another model or config:
+```python
+from spark_rapids_tools.api_v1 import QualCore
+from spark_rapids_tools.tools.qualx.qualx_main import featurize, predict_features
+
+qual_output = '/path/to/qual_output'
+
+# the raw feature rows of the apps in a qualification output: level is 'sql' (the default) or 'app'
+features = featurize('onprem', qual_output, config='qualx-conf.yaml', qual_handlers=[QualCore(qual_output)])
+
+# the prediction for each row, and the prediction for each app
+predictions, per_app = predict_features(features, platform='onprem', model='custom_onprem.json',
+                                        config='qualx-conf.yaml')
 ```

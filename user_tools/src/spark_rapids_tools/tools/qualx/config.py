@@ -30,12 +30,21 @@ from spark_rapids_tools.tools.qualx.qualx_config import QualxConfig
 _config = None
 
 
+def default_config_path() -> str:
+    """Get the path to the default config: resources/qualx-conf.yaml."""
+    return str(Utils.resource_path('qualx-conf.yaml'))
+
+
 def get_config(path: str = None, *, cls: Type[QualxConfig] = QualxConfig, reload: bool = False) -> QualxConfig:
+    """
+    Get the config, loading on the first call, on reload, or when given a path other than the loaded one.
+    Featurizers and modifiers derived from the config are also reloaded when the config changes.
+    """
     global _config  # pylint: disable=global-statement
 
-    if _config is None or reload:
-        # get path to resources/qualx-conf.yaml
-        config_path = path if path else str(Utils.resource_path('qualx-conf.yaml'))
+    path_changed = _config is not None and path is not None and str(path) != str(_config.file_path)
+    if _config is None or reload or path_changed:
+        config_path = path if path else default_config_path()
         _config = cls.load_from_file(config_path)
         if _config is None:
             raise ValueError(f'Failed to load Qualx configuration from: {config_path}')

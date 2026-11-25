@@ -21,7 +21,7 @@ from functools import partial
 from logging import Logger
 from typing import Optional, Any, ClassVar, Callable, Type, Dict, Union
 
-from pydantic import model_validator, ValidationError
+from pydantic import field_validator, model_validator, ValidationError
 from pydantic.dataclasses import dataclass
 from pydantic_core import PydanticCustomError
 
@@ -34,6 +34,7 @@ from ..configuration.submission.local_config import LocalToolsConfig
 from ..configuration.tools_config import ToolsConfig
 from ..enums import QualFilterApp, CspEnv, QualEstimationModel, SubmissionMode
 from ..storagelib.csppath import CspPath
+from ..tools.speedup_category import validate_speedup_threshold
 
 from ..utils.util import dump_tool_usage, Utilities
 
@@ -540,6 +541,12 @@ class QualifyUserArgModel(ToolUserArgModel):
     filter_apps: Optional[QualFilterApp] = None
     estimation_model_args: Optional[Dict] = dataclasses.field(default_factory=dict)
     submission_mode: Optional[SubmissionMode] = None
+    speedup_threshold: Optional[float] = None
+
+    @field_validator('speedup_threshold', mode='before')
+    @classmethod
+    def _validate_speedup_threshold(cls, value: Any) -> Optional[float]:
+        return None if value is None else validate_speedup_threshold(value)
 
     def init_tool_args(self) -> None:
         self.p_args['toolArgs']['platform'] = self.platform
@@ -616,6 +623,7 @@ class QualifyUserArgModel(ToolUserArgModel):
             'toolsJar': self.p_args['toolArgs']['toolsJar'],
             'estimationModelArgs': self.p_args['toolArgs']['estimationModelArgs'],
             'submissionMode': self.submission_mode,
+            'speedupThreshold': self.speedup_threshold,
             'rapidOptions': rapids_options,
         }
         return wrapped_args

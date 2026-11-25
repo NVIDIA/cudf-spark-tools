@@ -58,6 +58,68 @@ class TestQualxConfig(SparkRapidsToolsUT):
         assert config.cache_dir == 'qualx_cache'
         assert config.label == 'Duration'
         assert config.alignment_dir is None
+        assert config.aggregation == 'sql'
+        assert config.feature_levels is None
+        assert config.model_id is None
+        assert config.calibration is None
+
+    def test_aggregation(self, qualx_config_params):
+        """Test that aggregation is sql or app"""
+        for aggregation in ['sql', 'app']:
+            assert QualxConfig(**qualx_config_params, aggregation=aggregation).aggregation == aggregation
+        for invalid in ['stage', 'App', None]:
+            with pytest.raises(ValidationError):
+                QualxConfig(**qualx_config_params, aggregation=invalid)
+
+    def test_feature_levels(self, qualx_config_params):
+        """Test that feature_levels is a list of sql and app"""
+        for levels in [[], ['sql'], ['app'], ['sql', 'app'], ['app', 'sql']]:
+            assert QualxConfig(**qualx_config_params, feature_levels=levels).feature_levels == levels
+            assert QualxConfig(**qualx_config_params, aggregation='app', feature_levels=levels).feature_levels == levels
+        for invalid in [['stage'], ['sql', 'job'], 'app']:
+            with pytest.raises(ValidationError):
+                QualxConfig(**qualx_config_params, feature_levels=invalid)
+
+    def test_model_id(self, qualx_config_params):
+        """Test that model_id is a string"""
+        config = QualxConfig(**qualx_config_params, model_id='emr/yarn_cost/3')
+        assert config.model_id == 'emr/yarn_cost/3'
+        with pytest.raises(ValidationError):
+            QualxConfig(**qualx_config_params, model_id=['emr', 3])
+
+    def test_calibration(self, qualx_config_params):
+        """Test that calibration is a path with optional args"""
+        assert QualxConfig(**qualx_config_params).calibration is None
+        args = {'c0': 0.51, 'c1': 1.0, 'c2': 2.52, 'direction': 'inverse', 'floor': 0.5}
+        for calibration in [{'path': 'power.py'}, {'path': 'power.py', 'args': args}, {'path': 'x.py', 'args': None}]:
+            assert QualxConfig(**qualx_config_params, calibration=calibration).calibration == calibration
+
+        for invalid in [{}, {'args': args}, {'path': 'power.py', 'level': 'app'}]:
+            with pytest.raises(ValidationError, match='calibration takes a path and optional args'):
+                QualxConfig(**qualx_config_params, calibration=invalid)
+        for invalid in [{'path': 3}, {'path': 'power.py', 'args': [0.5, 1.0]}]:
+            with pytest.raises(ValidationError, match='calibration takes a path and a dictionary of args'):
+                QualxConfig(**qualx_config_params, calibration=invalid)
+        with pytest.raises(ValidationError):
+            QualxConfig(**qualx_config_params, calibration='power.py')
+
+    def test_load_prediction_settings_from_file(self, tmp_path):
+        """Test loading the settings of a prediction from a file"""
+        config_path = tmp_path / 'qualx-conf.yaml'
+        config_path.write_text("""
+datasets: datasets
+featurizers: ['default.py', 'hash_plan.py']
+split_functions: split_train_val.py
+model_type: xgboost
+xgboost: {}
+aggregation: app
+feature_levels: [sql, app]
+model_id: emr/yarn_cost/3
+""", encoding='utf-8')
+        config = QualxConfig.load_from_file(str(config_path))
+        assert config.aggregation == 'app'
+        assert config.feature_levels == ['sql', 'app']
+        assert config.model_id == 'emr/yarn_cost/3'
 
     def test_environment_variable_overrides(self, monkeypatch, qualx_config_params):
         """Test that environment variables override default values"""

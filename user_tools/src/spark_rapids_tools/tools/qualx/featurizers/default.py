@@ -14,7 +14,7 @@
 
 """Default featurizer for Qualx."""
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -161,6 +161,171 @@ expected_raw_features = {
     'taskGpu',  # executor_information
 }
 
+supported_levels = ('sql', 'app')
+
+
+# Features are built in two steps. The first reduces the profiler's rows to totals: sums, minima and maxima.
+# The second derives ratios, per-task means and bandwidths from the totals, and drops the sums it used.
+# A total can be reduced again, from the SQLs of an app to the app. A derived feature cannot.
+
+# totals that the per-task means and the ratios to the input bytes are derived from
+BYTE_FEATURES = [
+    'diskBytesSpilled',
+    'memoryBytesSpilled',
+    'input_bytesRead',
+    'output_bytesWritten',
+    'sr_localBytesRead',
+    'sr_remoteBytesRead',
+    'sr_remoteBytesReadToDisk',
+    'sr_totalBytesRead',
+    'sw_bytesWritten',
+]
+
+# totals that the per-task means are derived from
+TIME_FEATURES = [
+    'executorCPUTime',
+    'executorDeserializeCPUTime',
+    'executorDeserializeTime',
+    'executorRunTime',
+    'jvmGCTime',
+    'sr_fetchWaitTime',
+    'sw_writeTime',
+]
+
+# totals of the data sources
+DATA_SOURCE_TOTALS = ['scan_time', 'decode_time', 'data_size']
+
+# totals that are only inputs of derived features, and are not features themselves
+CACHE_HITS = 'cacheHitsSize_sum'
+CACHE_MISSES = 'cacheMissesSize_sum'
+SUPPORTED_DURATION = 'supportedDuration_sum'
+UNSUPPORTED_DURATION = 'unsupportedDuration_sum'
+
+# totals without a reducer in their name, which are sums
+SUM_TOTALS = ['Duration', 'failed_tasks'] + DATA_SOURCE_TOTALS
+
+
+def _reduce_to_app(sql_totals: pd.DataFrame, app_cols: List[str]) -> pd.DataFrame:
+    """Reduce the totals of the SQLs of each app to the totals of the app.
+
+    A total whose name ends in _sum, _min or _max is reduced by that function, and the other totals are sums:
+    the operator flags, which become the number of SQLs with the operator, and SUM_TOTALS. The attributes of
+    the app are the same for each of its SQLs. Any other column is an error, so that a new total cannot be
+    reduced wrongly without notice.
+    """
+    reducers = {}
+    for col in sql_totals.columns:
+        suffix = col.rsplit('_', 1)[-1]
+        if col in ('appId', 'appName', 'sqlID', 'description', 'duration_mean'):
+            # the keys, the columns that describe one SQL, and the mean that is derived again from the totals
+            continue
+        if suffix in ('sum', 'min', 'max'):
+            reducers[col] = suffix
+        elif col.startswith('sqlOp_') or col in SUM_TOTALS:
+            reducers[col] = 'sum'
+        elif col == 'hasSqlID':
+            reducers[col] = 'any'
+        elif col in app_cols:
+            reducers[col] = 'first'
+        else:
+            raise ValueError(f'No app-level reducer for the column {col}')
+
+    app_totals = sql_totals.groupby(['appId', 'appName'], as_index=False, sort=False).agg(reducers)
+    # an app-level row does not describe a single SQL ID
+    app_totals['sqlID'] = -1
+    app_totals['description'] = ''
+    return app_totals
+
+
+def _derive_features(totals: pd.DataFrame, leading_cols: List[str]) -> pd.DataFrame:
+    """Derive the features from the totals of each SQL, or of each app, and drop the sums that are not features.
+
+    leading_cols are the columns that come first in the result, in their order.
+    """
+    full_tbl = totals
+
+    # mean task duration
+    full_tbl['duration_mean'] = full_tbl['duration_sum'] / full_tbl['numTasks_sum']
+
+    # add duration_ratio feature
+    full_tbl['duration_ratio'] = full_tbl['duration_sum'] / full_tbl['Duration']
+    full_tbl['duration_ratio'] = full_tbl['duration_ratio'].replace([np.inf, -np.inf], 0).fillna(0)
+
+    # add failed tasks ratio
+    full_tbl['failed_tasks_ratio'] = full_tbl['failed_tasks'] / full_tbl['numTasks_sum']
+    full_tbl.fillna({'failed_tasks_ratio': 0.0}, inplace=True)
+
+    # add cache hit ratio for Databricks
+    if CACHE_HITS in full_tbl:
+        full_tbl['cache_hit_ratio'] = full_tbl[CACHE_HITS] / (full_tbl[CACHE_HITS] + full_tbl[CACHE_MISSES])
+        full_tbl = full_tbl.drop(columns=[CACHE_HITS, CACHE_MISSES])
+        full_tbl.fillna({'cache_hit_ratio': 0.0}, inplace=True)
+    else:
+        full_tbl['cache_hit_ratio'] = 0.0
+
+    # add fraction of total task time supported, if filtering by supported stage
+    if SUPPORTED_DURATION in full_tbl:
+        full_tbl['fraction_supported'] = full_tbl[SUPPORTED_DURATION] / (
+            full_tbl[UNSUPPORTED_DURATION] + full_tbl[SUPPORTED_DURATION]
+        )
+        full_tbl = full_tbl.drop(columns=[SUPPORTED_DURATION, UNSUPPORTED_DURATION])
+
+    # add scan bandwidth
+    full_tbl['scan_bw'] = 1.0 * full_tbl['data_size'] / full_tbl['scan_time']
+
+    # add shuffle bandwidth aggregate features
+    full_tbl['shuffle_read_bw'] = (
+        (full_tbl['sr_totalBytesRead_sum'] / full_tbl['sr_fetchWaitTime_sum'])
+        .replace([np.inf, -np.inf], 0)
+        .fillna(0)
+    )
+    full_tbl['shuffle_write_bw'] = (
+        (full_tbl['sw_bytesWritten_sum'] / full_tbl['sw_writeTime_sum'])
+        .replace([np.inf, -np.inf], 0)
+        .fillna(0)
+    )
+
+    # normalize byte features
+    for cc in BYTE_FEATURES:
+        full_tbl[cc + 'Ratio'] = full_tbl[cc + '_sum'] / full_tbl['input_bytesRead_sum']
+        full_tbl[cc + 'Ratio'] = (
+            full_tbl[cc + 'Ratio'].replace([np.inf, -np.inf], 0).fillna(0)
+        )
+
+    for cc in BYTE_FEATURES:
+        full_tbl[cc + '_mean'] = full_tbl[cc + '_sum'] / full_tbl['numTasks_sum']
+        full_tbl[cc + '_mean'] = (
+            full_tbl[cc + '_mean'].replace([np.inf, -np.inf], 0).fillna(0)
+        )
+
+    # normalize time features
+    for cc in TIME_FEATURES:
+        full_tbl[cc + '_mean'] = full_tbl[cc + '_sum'] / full_tbl['numTasks_sum']
+        full_tbl[cc + '_mean'] = (
+            full_tbl[cc + '_mean'].replace([np.inf, -np.inf], 0).fillna(0)
+        )
+
+    # remove sum features
+    full_tbl.drop(columns=[cc + '_sum' for cc in BYTE_FEATURES], inplace=True)
+    full_tbl.drop(columns=[cc + '_sum' for cc in TIME_FEATURES], inplace=True)
+
+    # impute inf/nan
+    ds_cols = ['scan_bw'] + DATA_SOURCE_TOTALS
+    full_tbl[ds_cols] = full_tbl[ds_cols].replace([np.inf, -np.inf], 0).fillna(0)
+
+    # order the columns: the leading columns, and then the features in the order that they were added
+    following_cols = (
+        ['duration_ratio', 'failed_tasks', 'failed_tasks_ratio', 'cache_hit_ratio', 'fraction_supported']
+        + ds_cols
+        + ['shuffle_read_bw', 'shuffle_write_bw']
+        + [cc + 'Ratio' for cc in BYTE_FEATURES]
+        + [cc + '_mean' for cc in BYTE_FEATURES + TIME_FEATURES]
+    )
+    ordered_cols = [cc for cc in leading_cols if cc in full_tbl]
+    ordered_cols += [cc for cc in following_cols if cc in full_tbl and cc not in ordered_cols]
+    ordered_cols += [cc for cc in full_tbl.columns if cc not in ordered_cols]
+    return full_tbl[ordered_cols]
+
 
 def extract_raw_features(
     toc: pd.DataFrame,
@@ -168,8 +333,10 @@ def extract_raw_features(
     qualtool_filter: Optional[str],
     qualtool_output: Optional[pd.DataFrame] = None,
     remove_failed_sql: bool = True,
+    level: str = 'sql',
 ) -> pd.DataFrame:
-    """Given a pandas dataframe of CSV files, extract raw features into a single dataframe keyed by (appId, sqlID).
+    """Given a pandas dataframe of CSV files, extract raw features into a single dataframe keyed by (appId, sqlID),
+    or keyed by appId for level 'app'.
 
     Parameters
     ----------
@@ -183,6 +350,9 @@ def extract_raw_features(
         Qualification tool output.
     remove_failed_sql: bool
         Remove sqlIDs with high failure rates, default: True.
+    level: str
+        'sql' for the features of each SQL, or 'app' for the features of each app. The app-level features are
+        derived from the totals of the SQLs that have SQL-level features.
     """
     # read all tables per appId
     unique_app_ids = toc['appId'].unique()
@@ -361,55 +531,48 @@ def extract_raw_features(
     # filter rows w/ sqlID
     sql_job_agg_tbl['hasSqlID'] = sql_job_agg_tbl['sqlID'] >= 0
     full_tbl = sql_job_agg_tbl[sql_job_agg_tbl['hasSqlID']]
+    # the columns so far come first in the features, in this order
+    leading_cols = list(full_tbl.columns)
 
-    # add duration_ratio feature
-    full_tbl['duration_ratio'] = full_tbl['duration_sum'] / full_tbl['Duration']
-    full_tbl['duration_ratio'] = full_tbl['duration_ratio'].replace([np.inf, -np.inf], 0).fillna(0)
-
-    # add failed tasks features
+    # add failed tasks
     failed_tasks_tbl = combine_tables('failed_tasks_tbl')
     full_tbl = full_tbl.merge(failed_tasks_tbl, on=['appName', 'appId', 'sqlID'], how='left')
-    full_tbl['failed_tasks_ratio'] = full_tbl['failed_tasks'] / full_tbl['numTasks_sum']
-    full_tbl.fillna({'failed_tasks': 0, 'failed_tasks_ratio': 0.0}, inplace=True)
+    full_tbl.fillna({'failed_tasks': 0}, inplace=True)
 
     # impute missing ops and fix dtype
     full_tbl[sql_ops_list] = full_tbl[sql_ops_list].fillna(0).astype(int)
     full_tbl = full_tbl.copy()  # defragment dataframe
 
-    # correct input_bytesRead based on cache hit ratio for Databricks
+    # correct input_bytesRead based on the cache sizes for Databricks, and keep the sizes for the cache hit ratio
     cache_info = ops_tbl.loc[
         ((ops_tbl.name == 'cache hits size') | (ops_tbl.name == 'cache misses size'))
     ]
     if not cache_info.empty:
-        cache_ratio = (
+        cache_sizes = (
             cache_info[['appId', 'sqlID', 'name', 'total']]
             .set_index(['appId', 'sqlID', 'name'])
             .groupby(['appId', 'sqlID', 'name'])
             .agg('sum')
         )
-        cache_ratio = cache_ratio.reset_index().pivot(
+        cache_sizes = cache_sizes.reset_index().pivot(
             index=['appId', 'sqlID'], columns=['name'], values=['total']
         )
-        cache_ratio.columns = cache_ratio.columns.droplevel().values
-        cache_ratio['cache_hit_ratio'] = cache_ratio['cache hits size'] / (
-            cache_ratio['cache hits size'] + cache_ratio['cache misses size']
+        cache_sizes.columns = cache_sizes.columns.droplevel().values
+        cache_sizes['input_bytesRead_cache'] = (
+            cache_sizes['cache hits size'] + cache_sizes['cache misses size']
         )
-        cache_ratio['input_bytesRead_cache'] = (
-            cache_ratio['cache hits size'] + cache_ratio['cache misses size']
+        cache_sizes = cache_sizes.rename(
+            columns={'cache hits size': CACHE_HITS, 'cache misses size': CACHE_MISSES}
         )
-        cache_ratio = cache_ratio.drop(columns=['cache hits size', 'cache misses size'])
-        full_tbl = full_tbl.merge(cache_ratio, on=['appId', 'sqlID'], how='left')
+        full_tbl = full_tbl.merge(cache_sizes, on=['appId', 'sqlID'], how='left')
         full_tbl['input_bytesRead_sum'] = full_tbl[
             ['input_bytesRead_sum', 'input_bytesRead_cache']
         ].max(axis=1)
         full_tbl = full_tbl.drop(columns=['input_bytesRead_cache'])
-        full_tbl.fillna({'cache_hit_ratio': 0.0}, inplace=True)
-    else:
-        full_tbl['cache_hit_ratio'] = 0.0
 
     if node_level_supp is not None and (qualtool_filter == 'stage'):
         # if supported info supplied and filtering by supported stage
-        # add a column with fraction of total task time supported for each sql ID
+        # add the total task time of the supported and of the unsupported stages of each sql ID
         time_ratio = (
             job_stage_agg_tbl[['appId', 'sqlID', 'Exec Is Supported', 'duration_sum']]
             .set_index(['appId', 'sqlID', 'Exec Is Supported'])
@@ -427,90 +590,24 @@ def extract_raw_features(
             time_ratio[True] = 0.0
         if False not in time_ratio.columns:
             time_ratio[False] = 0.0
-        time_ratio['fraction_supported'] = time_ratio[True] / (
-            time_ratio[False] + time_ratio[True]
-        )
-        time_ratio = time_ratio.drop(columns=[True, False])
+        time_ratio = time_ratio.rename(columns={True: SUPPORTED_DURATION, False: UNSUPPORTED_DURATION})
         full_tbl = full_tbl.merge(time_ratio, on=['appId', 'sqlID'], how='inner')
 
-    # add data source features
+    # add data source totals
     ds_tbl = combine_tables('ds_tbl')
     grouped_ds_tbl = ds_tbl.groupby(['appId', 'sqlID'], as_index=False).sum()
-    grouped_ds_tbl['scan_bw'] = (
-        1.0 * grouped_ds_tbl['data_size'] / grouped_ds_tbl['scan_time']
-    )
-    ds_cols = [
-        'appId',
-        'sqlID',
-        'scan_bw',
-        'scan_time',
-        'decode_time',
-        'data_size',
-    ]
     full_tbl = full_tbl.merge(
-        grouped_ds_tbl[ds_cols], on=['appId', 'sqlID'], how='left'
+        grouped_ds_tbl[['appId', 'sqlID'] + DATA_SOURCE_TOTALS], on=['appId', 'sqlID'], how='left'
     )
 
-    # add shuffle bandwidth aggregate features
-    full_tbl['shuffle_read_bw'] = (
-        (full_tbl['sr_totalBytesRead_sum'] / full_tbl['sr_fetchWaitTime_sum'])
-        .replace([np.inf, -np.inf], 0)
-        .fillna(0)
-    )
-    full_tbl['shuffle_write_bw'] = (
-        (full_tbl['sw_bytesWritten_sum'] / full_tbl['sw_writeTime_sum'])
-        .replace([np.inf, -np.inf], 0)
-        .fillna(0)
-    )
+    # the table now has the totals of each SQL: reduce them to the totals of each app, if asked
+    if level == 'app':
+        full_tbl = _reduce_to_app(full_tbl, app_cols)
+    elif level != 'sql':
+        raise ValueError(f"level must be 'sql' or 'app', got: {level}")
 
-    # normalize byte features
-    byte_features = [
-        'diskBytesSpilled',
-        'memoryBytesSpilled',
-        'input_bytesRead',
-        'output_bytesWritten',
-        'sr_localBytesRead',
-        'sr_remoteBytesRead',
-        'sr_remoteBytesReadToDisk',
-        'sr_totalBytesRead',
-        'sw_bytesWritten',
-    ]
-
-    for cc in byte_features:
-        full_tbl[cc + 'Ratio'] = full_tbl[cc + '_sum'] / full_tbl['input_bytesRead_sum']
-        full_tbl[cc + 'Ratio'] = (
-            full_tbl[cc + 'Ratio'].replace([np.inf, -np.inf], 0).fillna(0)
-        )
-
-    for cc in byte_features:
-        full_tbl[cc + '_mean'] = full_tbl[cc + '_sum'] / full_tbl['numTasks_sum']
-        full_tbl[cc + '_mean'] = (
-            full_tbl[cc + '_mean'].replace([np.inf, -np.inf], 0).fillna(0)
-        )
-
-    # normalize time features
-    time_features = [
-        'executorCPUTime',
-        'executorDeserializeCPUTime',
-        'executorDeserializeTime',
-        'executorRunTime',
-        'jvmGCTime',
-        'sr_fetchWaitTime',
-        'sw_writeTime',
-    ]
-
-    for cc in time_features:
-        full_tbl[cc + '_mean'] = full_tbl[cc + '_sum'] / full_tbl['numTasks_sum']
-        full_tbl[cc + '_mean'] = (
-            full_tbl[cc + '_mean'].replace([np.inf, -np.inf], 0).fillna(0)
-        )
-
-    # remove sum features
-    full_tbl.drop(columns=[cc + '_sum' for cc in byte_features], inplace=True)
-    full_tbl.drop(columns=[cc + '_sum' for cc in time_features], inplace=True)
-
-    # impute inf/nan
-    full_tbl[ds_cols] = full_tbl[ds_cols].replace([np.inf, -np.inf], 0).fillna(0)
+    # derive the features from the totals
+    full_tbl = _derive_features(full_tbl, leading_cols)
 
     # warn if any appIds are missing after preprocessing
     missing_app_ids = list(set(unique_app_ids) - set(full_tbl['appId'].unique()))

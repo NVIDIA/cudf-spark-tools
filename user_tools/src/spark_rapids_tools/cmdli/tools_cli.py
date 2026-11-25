@@ -52,6 +52,7 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                       target_cluster_info: str = None,
                       tuning_configs: str = None,
                       qualx_config: str = None,
+                      speedup_threshold: float = None,
                       **rapids_options) -> Optional[str]:
         """The Qualification cmd provides estimated speedups by migrating Apache Spark applications
         to GPU accelerated clusters.
@@ -105,6 +106,10 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
         :param qualx_config: Path to a qualx-conf.yaml file to use for configuration.
                If not provided, the wrapper will use the default:
                https://github.com/NVIDIA/cudf-spark-tools/blob/main/user_tools/src/spark_rapids_pytools/resources/qualx-conf.yaml.
+        :param speedup_threshold: Optional positive finite number specifying the lowest estimated GPU
+                speedup recommended by the qualification tool. When set, it replaces the speedup lower
+                bound in qualification-conf.yaml for every runtime and starts the speedup categories
+                at this threshold.
         :return: The output folder where the qualification tool output is stored.
         :rtype: Optional[str]
         """
@@ -140,7 +145,8 @@ class ToolsCLI(object):  # pylint: disable=too-few-public-methods
                                                          tools_config_path=tools_config_file,
                                                          submission_mode=submission_mode,
                                                          target_cluster_info=target_cluster_info,
-                                                         tuning_configs=tuning_configs)
+                                                         tuning_configs=tuning_configs,
+                                                         speedup_threshold=speedup_threshold)
         if qual_args:
             rapids_options.update(qual_args['rapidOptions'])
             tool_obj = QualificationAsLocal(platform_type=qual_args['runtimePlatform'],

@@ -343,6 +343,26 @@ class TestToolArgProcessor(SparkRapidsToolsUT):  # pylint: disable=too-few-publi
         uri_args = self.create_estimation_model_args_should_pass(custom_model_file=existing_model.as_uri())
         assert uri_args['customModelFile'] == existing_model.as_uri()
 
+    def test_qualification_speedup_threshold(self, get_ut_data_dir):
+        eventlogs = f'{get_ut_data_dir}/eventlogs'
+        default_args = AbsToolUserArgModel.create_tool_args(
+            'qualification', platform='onprem', eventlogs=eventlogs
+        )
+        assert default_args['speedupThreshold'] is None
+
+        # thresholds under 1.0 are valid (e.g. calibrated speedup)
+        for threshold in [0.8, 1, 1.3, 2.5]:
+            tool_args = AbsToolUserArgModel.create_tool_args(
+                'qualification', platform='onprem', eventlogs=eventlogs, speedup_threshold=threshold
+            )
+            assert tool_args['speedupThreshold'] == float(threshold)
+
+        for invalid in [0, 0.0, -1.5, float('nan'), float('inf'), True, False, 'high']:
+            with pytest.raises(SystemExit):
+                AbsToolUserArgModel.create_tool_args(
+                    'qualification', platform='onprem', eventlogs=eventlogs, speedup_threshold=invalid
+                )
+
     def test_arg_cases_coverage(self):
         """
         This test ensures that above tests have covered all possible states of the `platform`, `cluster`,

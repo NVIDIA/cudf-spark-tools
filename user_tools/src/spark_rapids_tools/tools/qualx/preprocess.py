@@ -39,11 +39,14 @@ from spark_rapids_tools.tools.qualx.util import (
 )
 
 PREPROCESSED_FILE = 'preprocessed.parquet'
+FEATURE_LEVELS = ('sql', 'app')  # one row of raw features per-SQL or per-app
 
 logger = get_logger(__name__)
 
 _featurizers = None  # global cache of featurizers
+_featurizers_config = None  # the config that the featurizers were loaded for
 _modifiers = None  # global cache of modifiers
+_modifiers_config = None  # the config that the modifiers were loaded for
 
 
 def get_alignment() -> pd.DataFrame:
@@ -85,27 +88,30 @@ def get_alignment() -> pd.DataFrame:
 
 
 def get_featurizers(reload: bool = False) -> List[Callable[[pd.DataFrame], pd.DataFrame]]:
-    """Lazily load featurizer modules, using global cache."""
-    global _featurizers  # pylint: disable=global-statement
-    if _featurizers is not None and not reload:
+    """Lazily load featurizer modules, using global cache. The cache is rebuilt when the config is reloaded."""
+    global _featurizers, _featurizers_config  # pylint: disable=global-statement
+    config = get_config()
+    if _featurizers is not None and _featurizers_config is config and not reload:
         return _featurizers
 
     # get absolute paths for featurizers
-    featurizer_paths = get_config().featurizers
+    featurizer_paths = config.featurizers
     abs_paths = [get_abs_path(f, 'featurizers') for f in featurizer_paths]
 
     # load featurizers
     _featurizers = [load_plugin(f) for f in abs_paths]
+    _featurizers_config = config
     return _featurizers
 
 
 def get_modifiers(reload: bool = False) -> List[Callable[[pd.DataFrame], pd.DataFrame]]:
-    """Lazily load modifier modules, using global cache."""
-    global _modifiers  # pylint: disable=global-statement
-    if _modifiers is not None and not reload:
+    """Lazily load modifier modules, using global cache. The cache is rebuilt when the config is reloaded."""
+    global _modifiers, _modifiers_config  # pylint: disable=global-statement
+    config = get_config()
+    if _modifiers is not None and _modifiers_config is config and not reload:
         return _modifiers
 
-    modifier_paths = get_config().modifiers
+    modifier_paths = config.modifiers
     if not modifier_paths:
         return []
 
@@ -113,7 +119,13 @@ def get_modifiers(reload: bool = False) -> List[Callable[[pd.DataFrame], pd.Data
 
     # load modifiers
     _modifiers = [load_plugin(f) for f in abs_paths]
+    _modifiers_config = config
     return _modifiers
+
+
+def _supports_level(featurizer, level: str = 'app') -> bool:
+    """Whether a featurizer declares support for the given aggregation level (SQL-only by default)."""
+    return level in getattr(featurizer, 'supported_levels', ('sql',))
 
 
 def expected_raw_features() -> Set[str]:
@@ -251,8 +263,17 @@ def load_profiles(
     qual_tool_filter: Optional[str] = None,
     qual_tool_output: Optional[pd.DataFrame] = None,
     remove_failed_sql: bool = True,
+    level: str = 'sql',
 ) -> pd.DataFrame:
-    """Load dataset profiler CSV files as a pd.DataFrame."""
+    """
+    Load dataset profiler CSV files as a pd.DataFrame, with one row per SQL or, for level 'app', one per app.
+
+    qual_tool_filter applies to the rows of level 'sql' only. The rows of level 'app' always cover the whole app:
+    they are currently extracted as with the filter 'none'.
+    """
+    if level not in FEATURE_LEVELS:
+        raise ValueError(f'level must be one of {FEATURE_LEVELS}, got: {level}')
+
     plugins = {}
     modifiers = {}
     all_raw_features = []
@@ -260,6 +281,20 @@ def load_profiles(
     alignment_df = get_alignment()
     featurizers = get_featurizers()
     modifiers = get_modifiers()
+
+    if level == 'app':
+        # App-level rows cover the whole app and currently do not support filtering.
+        # TODO: in the future, app-level rows can be aggregated from filtered SQL-level rows.
+        qual_tool_filter = 'none'
+        # Skip featurizers that do not produce app-level rows.
+        skipped = [f.__name__ for f in featurizers if not _supports_level(f)]
+        if skipped:
+            logger.debug('Skipping featurizers without app-level features: %s', skipped)
+        featurizers = [f for f in featurizers if _supports_level(f)]
+        if not featurizers:
+            raise ValueError('None of the featurizers can extract app-level features')
+
+    feature_keys = ['appId', 'sqlID'] if level == 'sql' else ['appId']
 
     for ds_name, ds_meta in datasets.items():
         # get platform from dataset metadata, or use onprem if not provided
@@ -340,12 +375,15 @@ def load_profiles(
         # invoke featurizers to extract raw features from profiler output
         raw_features = pd.DataFrame()
         for i, featurizer in enumerate(featurizers):
+            # a featurizer takes the level only if it has app-level features
+            level_args = {'level': level} if level != 'sql' else {}
             features = featurizer.extract_raw_features(
                 toc,
                 node_level_supp,
                 qual_tool_filter,
                 qual_tool_output,
                 remove_failed_sql,
+                **level_args,
             )
             if features.empty:
                 logger.warning(
@@ -364,9 +402,9 @@ def load_profiles(
                 # first featurizer, use as is
                 raw_features = features
             else:
-                # otherwise merge on appId and sqlID
+                # otherwise merge on appId and sqlID, or on appId alone for app-level features
                 raw_features = raw_features.merge(
-                    features, on=['appId', 'sqlID'], how='left'
+                    features, on=feature_keys, how='left'
                 )
 
         # skip if no raw features

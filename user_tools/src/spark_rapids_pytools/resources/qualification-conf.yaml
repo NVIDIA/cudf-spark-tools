@@ -358,6 +358,10 @@ local:
           name: 'shap_values.csv'
         featureImportance:
           name: 'feature_importance.csv'
+        rawFeatures:
+          name: 'raw_features.parquet'
+        rawFeaturesApp:
+          name: 'raw_features_app.parquet'
       updateResult:
         subsetColumns:
           - 'appId'

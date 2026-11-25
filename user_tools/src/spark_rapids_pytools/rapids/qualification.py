@@ -34,7 +34,11 @@ from spark_rapids_tools.tools.additional_heuristics import AdditionalHeuristics
 from spark_rapids_tools.tools.cluster_config_recommender import ClusterConfigRecommender
 from spark_rapids_tools.tools.qualification_stats_report import SparkQualificationStats
 from spark_rapids_tools.tools.qualx.qualx_main import predict
-from spark_rapids_tools.tools.speedup_category import SpeedupCategory
+from spark_rapids_tools.tools.speedup_category import (
+    SpeedupCategory,
+    validate_speedup_threshold,
+    with_speedup_threshold,
+)
 from spark_rapids_tools.tools.top_candidates import TopCandidates
 from spark_rapids_tools.tools.unsupported_ops_stage_duration import UnsupportedOpsStageDuration
 from spark_rapids_tools.utils.util import Utilities
@@ -157,6 +161,16 @@ class Qualification(QualificationCore):
             submission_mode = SubmissionMode.fromstring(submission_mode_arg)
         self.ctxt.set_ctxt('submissionMode', submission_mode)
 
+    def _process_speedup_threshold_arg(self) -> None:
+        """
+        Process the optional `--speedup_threshold` argument.
+        """
+        threshold = self.wrapper_options.get('speedupThreshold')
+        self.ctxt.set_ctxt(
+            'speedupThreshold',
+            None if threshold is None else validate_speedup_threshold(threshold),
+        )
+
     def _process_custom_args(self) -> None:
         """
         Qualification tool processes extra arguments:
@@ -185,6 +199,7 @@ class Qualification(QualificationCore):
         self._process_estimation_model_args()
         self._process_offline_cluster_args()
         self._process_submission_mode_arg()
+        self._process_speedup_threshold_arg()
         # This is noise to dump everything
         # self.logger.debug('%s custom arguments = %s', self.pretty_name(), self.ctxt.props['wrapperCtx'])
         super()._process_custom_args()
@@ -318,7 +333,8 @@ class Qualification(QualificationCore):
 
         apps_with_runtime_df = self.__assign_spark_runtime_to_apps(apps_grouped_df)
 
-        speedup_category_confs = self.ctxt.get_value('local', 'output', 'speedupCategories')
+        speedup_category_confs = self.__apply_speedup_threshold(
+            self.ctxt.get_value('local', 'output', 'speedupCategories'))
         speedup_category_ob = SpeedupCategory(speedup_category_confs)
         # Adds the Speedup Category Column to the DataFrame.
         # Also processes the SpeedUp assigned using some eligibility conditions present in the qualification-conf.yaml
@@ -353,6 +369,19 @@ class Qualification(QualificationCore):
         return QualificationSummary(total_apps=total_apps,
                                     tools_processed_apps=df_final_result,
                                     comments=report_comments)
+
+    def __apply_speedup_threshold(self, speedup_category_confs: dict) -> dict:
+        """
+        Use the speedup threshold argument, if set, as the lower bound of the eligibility
+        condition on the estimated GPU speedup. The bound is otherwise the one in qualification-conf.yaml.
+        The speedup categories start at the threshold, and their other bounds stay as configured.
+        """
+        threshold = self.ctxt.get_ctxt('speedupThreshold')
+        if threshold is None:
+            return speedup_category_confs
+
+        self.logger.info('Using speedup threshold as the lowest recommended speedup: %s', threshold)
+        return with_speedup_threshold(speedup_category_confs, threshold)
 
     @staticmethod
     def __map_cluster_info_table() -> dict:

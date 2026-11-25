@@ -14,10 +14,54 @@
 
 """Implementation class for Speedup Category logic."""
 
+import copy
+import math
 from dataclasses import dataclass, field
-from typing import Optional, Dict
+from typing import Any, Optional, Dict
 
 import pandas as pd
+
+
+def validate_speedup_threshold(value: Any) -> float:
+    """Validate that a speedup threshold is a positive non-boolean finite number."""
+    if isinstance(value, bool):
+        raise ValueError(f'speedup_threshold must be positive and finite, got: {value}')
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'speedup_threshold must be positive and finite, got: {value}') from exc
+    if not 0 < threshold < math.inf:
+        raise ValueError(f'speedup_threshold must be positive and finite, got: {value}')
+    return threshold
+
+
+def with_speedup_threshold(props: dict, threshold: float) -> dict:
+    """
+    Return a copy of the speedup category properties, with the given speedup threshold in place of the
+    configured one. Eligibility for qualification uses this threshold as the lower bound. The 'Not Applicable'
+    category applies to any speedup below the threshold. The other bounds remain as configured.
+
+    Example:
+    with_speedup_threshold(props, 1.5)['strategies']['spark']['categories'] = [
+        {'title': 'Not Applicable', 'lowerBound': -1000000.0, 'upperBound': 1.5},
+        {'title': 'Small',          'lowerBound': 1.5,        'upperBound': 2.0},
+        {'title': 'Medium',         'lowerBound': 2.0,        'upperBound': 3.0},
+        {'title': 'Large',          'lowerBound': 3.0,        'upperBound': 1000000.0}
+    ]
+    """
+    props = copy.deepcopy(props)
+    speedup_col_name = props.get('speedupColumnName')
+    for strategy in props.get('strategies', {}).values():
+        for condition in strategy.get('eligibilityConditions', []):
+            if condition.get('columnName') == speedup_col_name:
+                condition['lowerBound'] = threshold
+        # The categories are in ascending order, and each one starts where the one before it ends.
+        categories = strategy.get('categories', [])
+        for index in range(1, len(categories)):
+            bound = threshold if index == 1 else max(categories[index]['lowerBound'], threshold)
+            categories[index - 1]['upperBound'] = bound
+            categories[index]['lowerBound'] = bound
+    return props
 
 
 class SpeedupStrategy:

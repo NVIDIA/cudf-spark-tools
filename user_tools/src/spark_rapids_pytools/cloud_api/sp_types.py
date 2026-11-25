@@ -94,7 +94,7 @@ class ClusterState(EnumeratedType):
 
 class SparkNodeType(EnumeratedType):
     """
-    Node type from Spark perspective. We either have a master node or a worker node.
+    Node type from Spark perspective. We either have a driver node or a worker node.
     Note that the provider could have different grouping.
     For example EMR has: master, task, and core.
     Another categorization: onDemand..etc.
@@ -1079,7 +1079,7 @@ class ClusterBase(ClusterGetAccessor):
                         i.e., writing to a file.
         :return:
         """
-        # get the master node
+        # get the driver node
         master_node: ClusterNode = self.get_master_node()
         return self.cli.ssh_cmd_node(master_node, ssh_cmd, cmd_input=cmd_input)
 

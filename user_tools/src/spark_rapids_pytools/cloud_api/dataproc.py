@@ -485,7 +485,7 @@ class DataprocCluster(ClusterBase):
         self.name = self.props.get_value('clusterName')
 
     def _init_nodes(self):
-        # assume that only one master node
+        # assume that only one primary node
         master_nodes_from_conf = self.props.get_value('config', 'masterConfig', 'instanceNames')
         raw_worker_prop = self.props.get_value_silent('config', 'workerConfig')
         worker_nodes: list = []

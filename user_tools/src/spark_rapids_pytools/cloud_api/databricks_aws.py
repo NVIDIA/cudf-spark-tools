@@ -191,7 +191,7 @@ class DatabricksCluster(ClusterBase):
         self.name = self.props.get_value('cluster_name')
 
     def _init_nodes(self):
-        # assume that only one master node
+        # assume that only one driver node
         master_nodes_from_conf = self.props.get_value_silent('driver')
         # a zero-worker (single-node) cluster has no `executors` entry at all
         worker_nodes_from_conf = self.props.get_value_silent('executors') or []
@@ -211,7 +211,7 @@ class DatabricksCluster(ClusterBase):
         if num_workers is None:
             self.logger.info('Unable to find number of workers for cluster, will default to 0')
             num_workers = 0
-        # construct master node info when cluster is inactive
+        # construct driver node info when cluster is inactive
         if master_nodes_from_conf is None:
             master_node_type_id = self.props.get_value('driver_node_type_id')
             if master_node_type_id is None:

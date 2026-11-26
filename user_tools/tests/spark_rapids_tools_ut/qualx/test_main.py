@@ -134,11 +134,11 @@ class TestMain(SparkRapidsToolsUT):
 
         def fake_get_model(platform, model_arg=None, variant=None):
             calls['model'] = (platform, model_arg, variant)
-            raise _Stop()
+            return object()
 
         def fake_get_calib_params(platform, model_arg=None, variant=None):
             calls['calib'] = (platform, model_arg, variant)
-            return {}
+            raise _Stop()
 
         qual_tool_output = pd.DataFrame({'appId': ['app-1'], 'appName': ['app one']})
         profile_df = pd.DataFrame({
@@ -158,4 +158,6 @@ class TestMain(SparkRapidsToolsUT):
         with pytest.raises(_Stop):
             qualx_main.predict('databricks-azure', 'qual_dir', {}, model=model, qual_handlers=[handler])
 
-        assert calls['model'] == ('databricks-azure', model, expected_variant)
+        expected = ('databricks-azure', model, expected_variant)
+        assert calls['model'] == expected
+        assert calls['calib'] == expected

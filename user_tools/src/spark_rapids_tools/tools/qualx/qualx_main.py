@@ -783,9 +783,11 @@ def predict(
             ]
             prediction_groups[xgb_model] = (variant_profile_df, calib_params)
     else:
-        # single platform
-        xgb_model = _get_model(platform, model)
-        calib_params = _get_calib_params(platform, model)
+        # single platform: with no explicit model, still pick the pre-trained model of the only runtime
+        # found (e.g. PHOTON), the same one a mixed-runtime run would use for it
+        variant = variants[0] if (model is None and variants) else None
+        xgb_model = _get_model(platform, model, variant)
+        calib_params = _get_calib_params(platform, model, variant)
         prediction_groups = {
             xgb_model: (profile_df, calib_params)
         }

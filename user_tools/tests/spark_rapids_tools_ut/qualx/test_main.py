@@ -14,9 +14,12 @@
 
 """Test qualx_main module"""
 
+from types import SimpleNamespace
+
 import pytest  # pylint: disable=import-error
 import pandas as pd
 
+from spark_rapids_tools.tools.qualx import qualx_main
 from spark_rapids_tools.tools.qualx.qualx_main import (
     _get_model_path,
     _get_model,
@@ -116,3 +119,45 @@ class TestMain(SparkRapidsToolsUT):
         assert 'wasPredicted' in result.columns
         assert sum(result['wasPredicted']) == 2  # Two apps were predicted
         assert not result.loc[result['appId'] == 'id3', 'wasPredicted'].iloc[0]  # id3 was not predicted
+
+    @pytest.mark.parametrize('runtimes, model, expected_variant', [
+        (['PHOTON'], None, 'PHOTON'),
+        (['SPARK'], None, 'SPARK'),
+        (['PHOTON'], 'databricks-azure', None),
+    ])
+    def test_predict_single_runtime_selects_model_variant(self, monkeypatch, runtimes, model, expected_variant):
+        '''predict() should load the runtime-specific model also when all inputs share one runtime'''
+        class _Stop(Exception):
+            pass
+
+        calls = {}
+
+        def fake_get_model(platform, model_arg=None, variant=None):
+            calls['model'] = (platform, model_arg, variant)
+            return object()
+
+        def fake_get_calib_params(platform, model_arg=None, variant=None):
+            calls['calib'] = (platform, model_arg, variant)
+            raise _Stop()
+
+        qual_tool_output = pd.DataFrame({'appId': ['app-1'], 'appName': ['app one']})
+        profile_df = pd.DataFrame({
+            'appId': ['app-1'] * len(runtimes),
+            'appName': ['app one'] * len(runtimes),
+            'runType': ['CPU'] * len(runtimes),
+            'sparkRuntime': runtimes,
+        })
+        handler = SimpleNamespace(is_empty=lambda: False)
+        monkeypatch.setattr(qualx_main, '_get_combined_qual_data',
+                            lambda _handlers: (None, qual_tool_output, qual_tool_output))
+        monkeypatch.setattr(qualx_main, 'create_row_with_default_speedup', lambda row: row)
+        monkeypatch.setattr(qualx_main, 'load_profiles', lambda **_kwargs: profile_df)
+        monkeypatch.setattr(qualx_main, '_get_model', fake_get_model)
+        monkeypatch.setattr(qualx_main, '_get_calib_params', fake_get_calib_params)
+
+        with pytest.raises(_Stop):
+            qualx_main.predict('databricks-azure', 'qual_dir', {}, model=model, qual_handlers=[handler])
+
+        expected = ('databricks-azure', model, expected_variant)
+        assert calls['model'] == expected
+        assert calls['calib'] == expected

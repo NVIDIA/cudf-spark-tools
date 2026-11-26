@@ -22,4 +22,6 @@ Each page identifies the properties the heuristic recommends, the inputs it read
 | --- | --- | --- |
 | [GPU task concurrency](gpu-concurrency.md) | `spark.rapids.sql.concurrentGpuTasks` | Selects the legacy device-capacity calculation or a profiling evidence path that seeds GPU memory admission from the largest historical task footprint. |
 
+For the keys accepted by the `--target-cluster-info` file, see the [target cluster file reference](target-cluster-info.md).
+
 This catalog is intentionally incremental and is not an exhaustive inventory of AutoTuner behavior.

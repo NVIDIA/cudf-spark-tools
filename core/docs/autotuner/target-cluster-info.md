@@ -9,9 +9,9 @@ The target cluster file is a YAML file passed to the Profiling and Qualification
 | Core JAR (Profiling and Qualification) | `--target-cluster-info <path>` |
 | Python CLI (`spark_rapids`) | `--target_cluster_info <path>` |
 
-The option is optional. If the file cannot be opened (an `IOException`), the tool logs a warning and continues without target cluster information. The file is parsed with SnakeYAML into `TargetClusterProps` and validated right after loading; a validation failure throws `IllegalArgumentException`.
+The option is optional. In the core JAR, if the file cannot be opened (an `IOException`), the tool logs a warning and continues without target cluster information. The Python CLI checks the path before launching the JAR and fails with a validation error if it is not an existing `.yaml` or `.yml` file. The core JAR parses the file with SnakeYAML into `TargetClusterProps` and validates it right after loading; a validation failure throws `IllegalArgumentException`.
 
-When the Python CLI finds a non-empty `workerInfo` in the file, it records that worker information was provided (`targetWorkerInfoProvided`). The source comment says this is used to decide whether the speedup calculation is skipped for the Qualification Tool.
+When the Python CLI finds a non-empty `workerInfo` in the file, it records that worker information was provided (`targetWorkerInfoProvided`). For the Qualification Tool, this adds a warning to the console output that speedup estimates may be inaccurate; it does not skip the speedup calculation.
 
 Example files are in [`core/docs/sampleFiles/targetClusterInfo/`](../sampleFiles/targetClusterInfo/).
 

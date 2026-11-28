@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ object IOAccumDiagnosticMetrics {
   val SHUFFLE_WRITE_TIME_METRIC_KEY = "shuffle write time"
   val FETCH_WAIT_TIME_METRIC_KEY = "fetch wait time"
   val GPU_DECODE_TIME_METRIC_KEY = "GPU decode time"
+  val DECODED_BATCH_BYTES_METRIC_KEY = "decoded batch bytes"
 
   val OUTPUT_ROW_METRIC_NAMES = Set(
     "number of output rows", // common across all Spark eventlogs
@@ -84,6 +85,10 @@ object IOAccumDiagnosticMetrics {
     "GPU decode time" // only in GPU eventlogs
   )
 
+  val DECODED_BATCH_BYTES_METRIC_NAMES = Set(
+    "decoded batch bytes" // only in GPU eventlogs, on scan nodes
+  )
+
   private val metricNamesToKeyMap: Map[String, String] = (
     OUTPUT_ROW_METRIC_NAMES.map(_ -> OUTPUT_ROWS_METRIC_KEY) ++
     SCAN_TIME_METRIC_NAMES.map(_ -> SCAN_TIME_METRIC_KEY) ++
@@ -91,7 +96,8 @@ object IOAccumDiagnosticMetrics {
     BUFFER_TIME_METRIC_NAMES.map(_ -> BUFFER_TIME_METRIC_KEY) ++
     SHUFFLE_WRITE_TIME_METRIC_NAMES.map(_ -> SHUFFLE_WRITE_TIME_METRIC_KEY) ++
     FETCH_WAIT_TIME_METRIC_NAMES.map(_ -> FETCH_WAIT_TIME_METRIC_KEY) ++
-    GPU_DECODE_TIME_METRIC_NAMES.map(_ -> GPU_DECODE_TIME_METRIC_KEY)).toMap
+    GPU_DECODE_TIME_METRIC_NAMES.map(_ -> GPU_DECODE_TIME_METRIC_KEY) ++
+    DECODED_BATCH_BYTES_METRIC_NAMES.map(_ -> DECODED_BATCH_BYTES_METRIC_KEY)).toMap
 
   /**
    * Set of all IO diagnostic metrics names

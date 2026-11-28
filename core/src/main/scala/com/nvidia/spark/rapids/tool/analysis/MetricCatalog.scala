@@ -223,7 +223,7 @@ class MetricCatalog(
    *
    * Values are stored as integers, so a metric declared with `storageScale: 1000` is held in
    * thousandths and must be divided before it is shown. Unscaled metrics render exactly as
-   * before, so this is a no-op for 30 of the 31 declared metrics.
+   * before, so this is a no-op for 31 of the 32 declared metrics.
    */
   def formatValue(name: String, value: Long): String = {
     MetricCatalog.formatStoredValue(value, storageScaleFor(name))

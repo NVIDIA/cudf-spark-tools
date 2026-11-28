@@ -1,16 +1,16 @@
-appName,appId,sqlId,stageId,stageDurationMs,nodeId,nodeName,outputRowsMin,outputRowsMedian,outputRowsMax,outputRowsTotal,scanTimeMin,scanTimeMedian,scanTimeMax,scanTimeTotal,outputBatchesMin,outputBatchesMedian,outputBatchesMax,outputBatchesTotal,bufferTimeMin,bufferTimeMedian,bufferTimeMax,bufferTimeTotal,shuffleWriteTimeMin,shuffleWriteTimeMedian,shuffleWriteTimeMax,shuffleWriteTimeTotal,fetchWaitTimeMin,fetchWaitTimeMedian,fetchWaitTimeMax,fetchWaitTimeTotal,gpuDecodeTimeMin,gpuDecodeTimeMedian,gpuDecodeTimeMax,gpuDecodeTimeTotal
-Spark shell,local-1622814619968,0,0,1743,16,"GpuColumnarExchange",1666666,1666666,1666667,10000000,0,0,0,0,200,200,200,1200,0,0,0,0,41434653,66714083,100858775,400284505,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,0,1743,21,"Scan",1666666,1666666,1666667,10000000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,1,1631,8,"GpuColumnarExchange",1666666,1666666,1666667,10000000,0,0,0,0,200,200,200,1200,0,0,0,0,37444140,84791745,108992798,508750471,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,1,1631,13,"Scan",1666666,1666666,1666667,10000000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,3,"GpuColumnarExchange",1,1,1,200,0,0,0,0,1,1,1,200,0,0,0,0,139875,465911,9747416,93193331,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,4,"GpuHashAggregate",1,1,1,200,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,6,"GpuShuffledHashJoin",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,7,"GpuShuffleCoalesce",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,8,"GpuColumnarExchange",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,14,"GpuCoalesceBatches",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,15,"GpuShuffleCoalesce",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,2,688,16,"GpuColumnarExchange",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,3,83,1,"GpuHashAggregate",1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,3,83,2,"GpuShuffleCoalesce",200,200,200,200,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Spark shell,local-1622814619968,0,3,83,3,"GpuColumnarExchange",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+appName,appId,sqlId,stageId,stageDurationMs,nodeId,nodeName,outputRowsMin,outputRowsMedian,outputRowsMax,outputRowsTotal,scanTimeMin,scanTimeMedian,scanTimeMax,scanTimeTotal,outputBatchesMin,outputBatchesMedian,outputBatchesMax,outputBatchesTotal,bufferTimeMin,bufferTimeMedian,bufferTimeMax,bufferTimeTotal,shuffleWriteTimeMin,shuffleWriteTimeMedian,shuffleWriteTimeMax,shuffleWriteTimeTotal,fetchWaitTimeMin,fetchWaitTimeMedian,fetchWaitTimeMax,fetchWaitTimeTotal,gpuDecodeTimeMin,gpuDecodeTimeMedian,gpuDecodeTimeMax,gpuDecodeTimeTotal,decodedBatchBytesMin,decodedBatchBytesMedian,decodedBatchBytesMax,decodedBatchBytesTotal
+Spark shell,local-1622814619968,0,0,1743,16,"GpuColumnarExchange",1666666,1666666,1666667,10000000,0,0,0,0,200,200,200,1200,0,0,0,0,41434653,66714083,100858775,400284505,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,0,1743,21,"Scan",1666666,1666666,1666667,10000000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,1,1631,8,"GpuColumnarExchange",1666666,1666666,1666667,10000000,0,0,0,0,200,200,200,1200,0,0,0,0,37444140,84791745,108992798,508750471,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,1,1631,13,"Scan",1666666,1666666,1666667,10000000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,3,"GpuColumnarExchange",1,1,1,200,0,0,0,0,1,1,1,200,0,0,0,0,139875,465911,9747416,93193331,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,4,"GpuHashAggregate",1,1,1,200,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,6,"GpuShuffledHashJoin",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,7,"GpuShuffleCoalesce",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,8,"GpuColumnarExchange",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,14,"GpuCoalesceBatches",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,15,"GpuShuffleCoalesce",49480,49948,50559,10000000,0,0,0,0,1,1,1,200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,2,688,16,"GpuColumnarExchange",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,3,83,1,"GpuHashAggregate",1,1,1,1,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,3,83,2,"GpuShuffleCoalesce",200,200,200,200,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Spark shell,local-1622814619968,0,3,83,3,"GpuColumnarExchange",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
